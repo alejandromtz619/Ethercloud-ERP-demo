@@ -45,6 +45,10 @@ class TipoPago(str, Enum):
     CHEQUE = "CHEQUE"
     CREDITO = "CREDITO"
 
+class TipoDocumento(str, Enum):
+    BOLETA = "BOLETA"
+    FACTURA = "FACTURA"
+
 # Base Schemas
 class EmpresaBase(BaseModel):
     nombre: str
@@ -553,3 +557,23 @@ class Alerta(BaseModel):
     mensaje: str
     nivel: str  # info, warning, danger
     referencia_id: Optional[int] = None
+
+# Documentos Temporales
+class DocumentoTemporalBase(BaseModel):
+    venta_id: int
+    tipo_documento: TipoDocumento
+
+class DocumentoTemporalCreate(DocumentoTemporalBase):
+    pass
+
+class DocumentoTemporal(DocumentoTemporalBase):
+    id: int
+    token: str
+    file_path: str
+    fecha_creacion: datetime
+    fecha_expiracion: datetime
+    descargas: int
+    empresa_id: int
+    url_publica: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)

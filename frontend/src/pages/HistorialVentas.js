@@ -54,6 +54,7 @@ const HistorialVentas = () => {
   // Print modal state
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [printVentaId, setPrintVentaId] = useState(null);
+  const [printVentaEstado, setPrintVentaEstado] = useState(null);
   
   // Filters
   const [filters, setFilters] = useState({
@@ -139,8 +140,9 @@ const HistorialVentas = () => {
     }
   };
 
-  const handlePrint = (ventaId) => {
+  const handlePrint = (ventaId, ventaEstado) => {
     setPrintVentaId(ventaId);
+    setPrintVentaEstado(ventaEstado);
     setPrintModalOpen(true);
   };
 
@@ -440,7 +442,7 @@ const HistorialVentas = () => {
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            onClick={() => handlePrint(venta.id)}
+                            onClick={() => handlePrint(venta.id, venta.estado)}
                             title="Imprimir"
                             disabled={venta.estado === 'ANULADA'}
                           >
@@ -547,7 +549,7 @@ const HistorialVentas = () => {
                 </Button>
                 <Button onClick={() => {
                   setDetailDialogOpen(false);
-                  handlePrint(selectedVenta.id);
+                  handlePrint(selectedVenta.id, selectedVenta.estado);
                 }}>
                   <Printer className="mr-2 h-4 w-4" />
                   Imprimir
@@ -563,6 +565,7 @@ const HistorialVentas = () => {
         open={printModalOpen} 
         onOpenChange={setPrintModalOpen}
         ventaId={printVentaId}
+        ventaEstado={printVentaEstado}
       />
     </div>
   );

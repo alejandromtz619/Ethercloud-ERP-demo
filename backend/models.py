@@ -61,7 +61,29 @@ class TipoPago(str, enum.Enum):
     CHEQUE = "CHEQUE"
     CREDITO = "CREDITO"
 
+class TipoDocumento(str, enum.Enum):
+    BOLETA = "BOLETA"
+    FACTURA = "FACTURA"
+
 # Models
+class DocumentoTemporal(Base):
+    """Tabla para almacenar documentos PDF temporales con enlaces públicos"""
+    __tablename__ = "documentos_temporales"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(255), unique=True, nullable=False, index=True)  # UUID para URL pública
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
+    tipo_documento = Column(Enum(TipoDocumento), nullable=False)  # BOLETA o FACTURA
+    file_path = Column(String(500), nullable=False)  # Ruta del archivo en disco
+    fecha_creacion = Column(DateTime, default=now_paraguay)
+    fecha_expiracion = Column(DateTime, nullable=False)  # 30 días desde creación
+    descargas = Column(Integer, default=0)  # Contador de descargas
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    
+    # Relationships
+    venta = relationship("Venta", backref="documentos_temporales")
+    empresa = relationship("Empresa")
+
 class Empresa(Base):
     __tablename__ = "empresas"
     

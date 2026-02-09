@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func as func_sql, and_, or_, update, text
 from sqlalchemy.orm import selectinload
@@ -36,7 +36,8 @@ from models import (
     Venta, VentaItem, EstadoVenta, TipoPago,
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
-    Factura, DocumentoElectronico, PreferenciaUsuario
+    Factura, DocumentoElectronico, PreferenciaUsuario,
+    DocumentoTemporal, TipoDocumento
 )
 from schemas import (
     EmpresaCreate, EmpresaResponse,
@@ -57,7 +58,8 @@ from schemas import (
     EntregaCreate, EntregaResponse, EntregaConDetalles, AsignarEntrega,
     FacturaCreate, FacturaResponse,
     PreferenciaUsuarioCreate, PreferenciaUsuarioResponse,
-    DashboardStats, VentasPorHora, StockBajo, CotizacionDivisa, Alerta
+    DashboardStats, VentasPorHora, StockBajo, CotizacionDivisa, Alerta,
+    DocumentoTemporalCreate, DocumentoTemporal as DocumentoTemporalSchema
 )
 
 # ==================== TIMEZONE CONFIGURATION ====================
@@ -1944,6 +1946,394 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
             'total_iva': round(iva_10, 0)
         }
     }
+
+# ==================== DOCUMENTOS TEMPORALES ====================
+# Configuración de directorio para documentos temporales
+DOCS_DIR = Path("tmp/documentos")
+DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+@api_router.post("/ventas/{venta_id}/generar-enlace")
+async def generar_enlace_documento(
+    venta_id: int,
+    tipo_documento: TipoDocumento,
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario)
+):
+    """
+    Genera un PDF del documento (boleta o factura), lo guarda en disco
+    y retorna un enlace público de descarga válido por 30 días
+    """
+    # Verificar que la venta exista y esté confirmada
+    result = await db.execute(
+        select(Venta).where(Venta.id == venta_id)
+    )
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    
+    if venta.estado != EstadoVenta.CONFIRMADA:
+        raise HTTPException(status_code=400, detail="Solo se pueden generar enlaces para ventas confirmadas")
+    
+    # Verificar si ya existe un documento temporal para esta venta y tipo
+    existing = await db.execute(
+        select(DocumentoTemporal).where(
+            and_(
+                DocumentoTemporal.venta_id == venta_id,
+                DocumentoTemporal.tipo_documento == tipo_documento,
+                DocumentoTemporal.fecha_expiracion > now_paraguay()
+            )
+        )
+    )
+    existing_doc = existing.scalar_one_or_none()
+    
+    # Si existe y no ha expirado, retornar el existente
+    if existing_doc:
+        base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        return {
+            "url": f"{base_url}/api/documentos/{existing_doc.token}",
+            "token": existing_doc.token,
+            "tipo_documento": tipo_documento.value,
+            "fecha_expiracion": existing_doc.fecha_expiracion,
+            "ya_existia": True
+        }
+    
+    # Generar datos del documento según tipo
+    if tipo_documento == TipoDocumento.BOLETA:
+        # Reutilizar lógica del endpoint /ventas/{venta_id}/boleta
+        result = await db.execute(
+            select(Venta, Cliente, Usuario, Empresa)
+            .join(Cliente, Venta.cliente_id == Cliente.id)
+            .join(Usuario, Venta.usuario_id == Usuario.id)
+            .join(Empresa, Venta.empresa_id == Empresa.id)
+            .where(Venta.id == venta_id)
+        )
+        row = result.first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
+        
+        venta_obj, cliente, vendedor, empresa = row
+        pdf_content = await generar_pdf_boleta(venta_obj, cliente, vendedor, empresa, db)
+        filename_prefix = f"boleta_{venta_id}"
+    else:  # FACTURA
+        result = await db.execute(
+            select(Venta, Cliente, Usuario, Empresa)
+            .join(Cliente, Venta.cliente_id == Cliente.id)
+            .join(Usuario, Venta.usuario_id == Usuario.id)
+            .join(Empresa, Venta.empresa_id == Empresa.id)
+            .where(Venta.id == venta_id)
+        )
+        row = result.first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
+        
+        venta_obj, cliente, vendedor, empresa = row
+        
+        if not cliente.ruc:
+            raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+        
+        pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
+        filename_prefix = f"factura_{venta_id}"
+    
+    # Generar token único
+    token = str(uuid.uuid4())
+    filename = f"{filename_prefix}_{token}.pdf"
+    file_path = DOCS_DIR / filename
+    
+    # Guardar PDF en disco
+    with open(file_path, "wb") as f:
+        f.write(pdf_content)
+    
+    # Crear registro en base de datos
+    fecha_expiracion = now_paraguay() + timedelta(days=30)
+    nuevo_doc = DocumentoTemporal(
+        token=token,
+        venta_id=venta_id,
+        tipo_documento=tipo_documento,
+        file_path=str(file_path),
+        fecha_creacion=now_paraguay(),
+        fecha_expiracion=fecha_expiracion,
+        empresa_id=venta.empresa_id
+    )
+    
+    db.add(nuevo_doc)
+    await db.commit()
+    await db.refresh(nuevo_doc)
+    
+    # Retornar URL pública
+    base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+    return {
+        "url": f"{base_url}/api/documentos/{token}",
+        "token": token,
+        "tipo_documento": tipo_documento.value,
+        "fecha_expiracion": fecha_expiracion,
+        "ya_existia": False
+    }
+
+
+@api_router.get("/documentos/{token}")
+async def descargar_documento(token: str, db: AsyncSession = Depends(get_db)):
+    """
+    Endpoint público para descargar documentos mediante token único.
+    No requiere autenticación - cualquiera con el enlace puede descargar.
+    """
+    # Buscar documento por token
+    result = await db.execute(
+        select(DocumentoTemporal, Venta)
+        .join(Venta, DocumentoTemporal.venta_id == Venta.id)
+        .where(DocumentoTemporal.token == token)
+    )
+    row = result.first()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    
+    documento, venta = row
+    
+    # Verificar que no haya expirado
+    if documento.fecha_expiracion < now_paraguay():
+        raise HTTPException(status_code=410, detail="Este enlace ha expirado")
+    
+    # Verificar que el archivo existe
+    file_path = Path(documento.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="El archivo ya no está disponible")
+    
+    # Incrementar contador de descargas
+    documento.descargas += 1
+    await db.commit()
+    
+    # Servir el archivo
+    tipo_doc = "Boleta" if documento.tipo_documento == TipoDocumento.BOLETA else "Factura"
+    filename = f"{tipo_doc}_Venta_{venta.id}.pdf"
+    
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/pdf",
+        filename=filename
+    )
+
+
+@api_router.delete("/documentos/limpiar-expirados")
+async def limpiar_documentos_expirados(
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario)
+):
+    """
+    Tarea de limpieza: Elimina documentos expirados tanto de la BD como del disco.
+    Solo accesible por administradores.
+    """
+    # Verificar permisos de admin
+    if not any(rol.rol.nombre == "ADMINISTRADOR" for rol in usuario.roles):
+        raise HTTPException(status_code=403, detail="No tienes permisos para esta acción")
+    
+    # Buscar documentos expirados
+    result = await db.execute(
+        select(DocumentoTemporal).where(
+            DocumentoTemporal.fecha_expiracion < now_paraguay()
+        )
+    )
+    documentos_expirados = result.scalars().all()
+    
+    eliminados_bd = 0
+    eliminados_disco = 0
+    errores = []
+    
+    for doc in documentos_expirados:
+        try:
+            # Eliminar archivo del disco
+            file_path = Path(doc.file_path)
+            if file_path.exists():
+                file_path.unlink()
+                eliminados_disco += 1
+        except Exception as e:
+            errores.append(f"Error al eliminar {doc.file_path}: {str(e)}")
+        
+        # Eliminar registro de BD
+        await db.delete(doc)
+        eliminados_bd += 1
+    
+    await db.commit()
+    
+    return {
+        "mensaje": "Limpieza completada",
+        "documentos_eliminados_bd": eliminados_bd,
+        "archivos_eliminados_disco": eliminados_disco,
+        "errores": errores
+    }
+
+
+# Funciones auxiliares para generar PDFs
+async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
+    """Genera PDF de boleta y retorna los bytes"""
+    # Obtener items
+    items_result = await db.execute(
+        select(VentaItem, Producto, MateriaLaboratorio)
+        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+        .where(VentaItem.venta_id == venta.id)
+    )
+    
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Título
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=18, alignment=TA_CENTER)
+    elements.append(Paragraph(f"BOLETA - {empresa.nombre}", title_style))
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Info básica
+    info_data = [
+        ['Número:', str(venta.id), 'Fecha:', venta.creado_en.strftime('%d/%m/%Y')],
+        ['Cliente:', f"{cliente.nombre} {cliente.apellido or ''}".strip(), 'RUC:', cliente.ruc or 'N/A'],
+        ['Vendedor:', f"{vendedor.nombre} {vendedor.apellido or ''}".strip(), 'Pago:', venta.tipo_pago.value if venta.tipo_pago else 'EFECTIVO']
+    ]
+    info_table = Table(info_data, colWidths=[1.5*inch, 2*inch, 1.5*inch, 2*inch])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Items
+    items_data = [['Cant.', 'Descripción', 'Precio Unit.', 'Total']]
+    for item_row in items_result.all():
+        item, producto, materia = item_row
+        descripcion = producto.nombre if producto else (materia.nombre if materia else 'Producto')
+        items_data.append([
+            str(item.cantidad),
+            descripcion,
+            f"Gs. {int(item.precio_unitario):,}",
+            f"Gs. {int(item.total):,}"
+        ])
+    
+    items_table = Table(items_data, colWidths=[0.8*inch, 3.5*inch, 1.5*inch, 1.5*inch])
+    items_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Total
+    total_data = [
+        ['Descuento:', f"Gs. {int(venta.descuento or 0):,}"],
+        ['IVA 10%:', f"Gs. {int(venta.iva or 0):,}"],
+        ['TOTAL:', f"Gs. {int(venta.total):,}"]
+    ]
+    total_table = Table(total_data, colWidths=[5*inch, 2*inch])
+    total_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, -1), (-1, -1), 14),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black)
+    ]))
+    elements.append(total_table)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
+
+
+async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
+    """Genera PDF de factura y retorna los bytes"""
+    # Similar a boleta pero con más detalles fiscales
+    items_result = await db.execute(
+        select(VentaItem, Producto, MateriaLaboratorio)
+        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+        .where(VentaItem.venta_id == venta.id)
+    )
+    
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Título
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=TA_CENTER)
+    elements.append(Paragraph(f"FACTURA - {empresa.nombre}", title_style))
+    elements.append(Paragraph(f"RUC: {empresa.ruc}", ParagraphStyle('Subtitle', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER)))
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Info del cliente
+    cliente_data = [
+        ['CLIENTE:', f"{cliente.nombre} {cliente.apellido or ''}".strip()],
+        ['RUC:', cliente.ruc],
+        ['Dirección:', cliente.direccion or 'N/A'],
+        ['Fecha:', venta.creado_en.strftime('%d/%m/%Y %H:%M')],
+        ['Factura N°:', str(venta.id)]
+    ]
+    cliente_table = Table(cliente_data, colWidths=[2*inch, 5*inch])
+    cliente_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    elements.append(cliente_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Items con IVA
+    items_data = [['Cant.', 'Descripción', 'P. Unit.', 'Exenta', 'IVA 5%', 'IVA 10%']]
+    subtotal_iva_10 = 0
+    
+    for item_row in items_result.all():
+        item, producto, materia = item_row
+        descripcion = producto.nombre if producto else (materia.nombre if materia else 'Producto')
+        subtotal_iva_10 += float(item.total)
+        
+        items_data.append([
+            str(item.cantidad),
+            descripcion,
+            f"Gs. {int(item.precio_unitario):,}",
+            '0',
+            '0',
+            f"Gs. {int(item.total):,}"
+        ])
+    
+    items_table = Table(items_data, colWidths=[0.7*inch, 3*inch, 1.2*inch, 0.9*inch, 0.9*inch, 1.2*inch])
+    items_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Totales fiscales
+    iva_10 = subtotal_iva_10 / 11
+    total_data = [
+        ['Subtotal IVA 10%:', f"Gs. {int(subtotal_iva_10 + venta.descuento):,}"],
+        ['Descuento:', f"Gs. {int(venta.descuento or 0):,}"],
+        ['Liquidación IVA 10%:', f"Gs. {int(iva_10):,}"],
+        ['TOTAL A PAGAR:', f"Gs. {int(venta.total):,}"]
+    ]
+    total_table = Table(total_data, colWidths=[5*cm, 4*cm])
+    total_table.setStyle(TableStyle([
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, -1), (-1, -1), 14),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    elements.append(total_table)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
+
 
 # ==================== FUNCIONARIOS ====================
 @api_router.post("/funcionarios", response_model=FuncionarioResponse)

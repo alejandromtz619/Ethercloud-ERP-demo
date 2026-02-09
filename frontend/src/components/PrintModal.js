@@ -245,7 +245,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
   );
 });
 
-const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
+const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
   const { api } = useApp();
   const [printBoleta, setPrintBoleta] = useState(true);
   const [printFactura, setPrintFactura] = useState(false);
@@ -331,42 +331,67 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
       return;
     }
     
-    // Load data if not already loaded
-    if (!boletaData && !facturaData) {
-      await fetchPrintData();
-    }
+    setLoading(true);
     
-    // Get data from whichever document is selected
-    const data = printBoleta ? boletaData : facturaData;
-    
-    if (!data) {
-      toast.error('Error al cargar datos de venta');
-      return;
-    }
-    
-    // Check if client has phone number
-    const telefono = data.cliente?.telefono;
-    if (!telefono) {
-      toast.error('El cliente no tiene número de teléfono registrado');
-      return;
-    }
-    
-    // Clean phone number (remove spaces, dashes, parentheses)
-    const cleanPhone = telefono.replace(/[\s\-\(\)]/g, '');
-    
-    // Format phone for WhatsApp (Paraguay code +595)
-    let whatsappNumber = cleanPhone;
-    if (!whatsappNumber.startsWith('+')) {
-      if (whatsappNumber.startsWith('0')) {
-        whatsappNumber = '595' + whatsappNumber.substring(1);
-      } else if (!whatsappNumber.startsWith('595')) {
-        whatsappNumber = '595' + whatsappNumber;
+    try {
+      // Determinar tipo de documento
+      const tipoDocumento = printBoleta ? 'BOLETA' : 'FACTURA';
+      
+      // Llamar al backend para generar enlace
+      const response = await api(`/ventas/${ventaId}/generar-enlace?tipo_documento=${tipoDocumento}`, {
+        method: 'POST'
+      });
+      
+      if (!response.url) {
+        throw new Error('No se pudo generar el enlace');
       }
-    }
-    
-    // Generate message
-    const docType = printBoleta ? 'Boleta' : 'Factura';
-    const message = `
+      
+      // Mostrar si es un enlace reutilizado o nuevo
+      if (response.ya_existia) {
+        toast.info('Reutilizando enlace existente', { duration: 2000 });
+      } else {
+        toast.success('Documento PDF generado', { duration: 2000 });
+      }
+      
+      // Load data if not already loaded para obtener info del cliente
+      if (!boletaData && !facturaData) {
+        await fetchPrintData();
+      }
+      
+      // Get data from whichever document is selected
+      const data = printBoleta ? boletaData : facturaData;
+      
+      if (!data) {
+        toast.error('Error al cargar datos de venta');
+        setLoading(false);
+        return;
+      }
+      
+      // Check if client has phone number
+      const telefono = data.cliente?.telefono;
+      if (!telefono) {
+        toast.error('El cliente no tiene número de teléfono registrado');
+        setLoading(false);
+        return;
+      }
+      
+      // Clean phone number (remove spaces, dashes, parentheses)
+      const cleanPhone = telefono.replace(/[\s\-\(\)]/g, '');
+      
+      // Format phone for WhatsApp (Paraguay code +595)
+      let whatsappNumber = cleanPhone;
+      if (!whatsappNumber.startsWith('+')) {
+        if (whatsappNumber.startsWith('0')) {
+          whatsappNumber = '595' + whatsappNumber.substring(1);
+        } else if (!whatsappNumber.startsWith('595')) {
+          whatsappNumber = '595' + whatsappNumber;
+        }
+      }
+      
+      // Generate message with download link
+      const docType = printBoleta ? 'Boleta' : 'Factura';
+      const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY');
+      const message = `
 🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*
 
 📋 *Número:* ${data.numero}
@@ -374,17 +399,31 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
 📅 *Fecha:* ${data.fecha}
 💰 *Total:* Gs. ${data.total?.toLocaleString('es-PY')}
 
-Gracias por su compra! 🙏
+📄 *Descargar documento:*
+${response.url}
 
-_Este es un comprobante de venta generado automáticamente._
-    `.trim();
-    
-    // Open WhatsApp
-    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
-    window.open(whatsappUrl, '_blank');
-    
-    toast.success('Abriendo WhatsApp...');
-  }, [printBoleta, printFactura, boletaData, facturaData]);
+_Enlace válido hasta el ${expirationDate}_
+
+Gracias por su compra! 🙏
+      `.trim();
+      
+      // Open WhatsApp
+      const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+      
+      if (response.ya_existia) {
+        toast.success('Enlace reenviado por WhatsApp');
+      } else {
+        toast.success('PDF generado y enviado por WhatsApp');
+      }
+      
+    } catch (error) {
+      console.error('Error generating document link:', error);
+      toast.error(error.message || 'Error al generar enlace de documento');
+    } finally {
+      setLoading(false);
+    }
+  }, [printBoleta, printFactura, ventaId, boletaData, facturaData, api, fetchPrintData]);
 
   // Fetch data when modal opens
   React.useEffect(() => {
@@ -461,19 +500,31 @@ _Este es un comprobante de venta generado automáticamente._
             </div>
           </div>
           
+          {ventaEstado === 'CONFIRMADA' && (
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-800">
+              <p className="font-medium mb-1">📱 WhatsApp - Enlace inteligente:</p>
+              <p className="mb-1">• Se genera un PDF único al presionar el botón</p>
+              <p className="mb-1">• El cliente puede descargar el documento por 30 días</p>
+              <p>• Si vuelves a enviar, se reutiliza el mismo enlace (sin duplicados)</p>
+            </div>
+          )}
+          
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button 
-              onClick={handleSendWhatsApp}
-              variant="outline"
-              disabled={loading || (!printBoleta && !printFactura)}
-              className="bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 border-green-200"
-            >
-              <Send className="mr-2 h-4 w-4" />
-              WhatsApp
-            </Button>
+            {ventaEstado === 'CONFIRMADA' && (
+              <Button 
+                onClick={handleSendWhatsApp}
+                variant="outline"
+                disabled={loading || (!printBoleta && !printFactura)}
+                className="bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 border-green-200"
+                title="Enviar resumen por WhatsApp (solo texto)"
+              >
+                <Send className="mr-2 h-4 w-4" />
+                WhatsApp
+              </Button>
+            )}
             <Button 
               onClick={handlePrint} 
               disabled={loading || (!printBoleta && !printFactura)}
