@@ -1969,16 +1969,24 @@ async def generar_enlace_documento(
     y retorna un enlace público de descarga válido por 30 días
     """
     try:
+        logger.info(f"Iniciando generación de enlace para venta {venta_id}, tipo {tipo_documento}")
+        
         # Verificar que la venta exista y esté confirmada
         result = await db.execute(
             select(Venta).where(Venta.id == venta_id)
         )
         venta = result.scalar_one_or_none()
         if not venta:
+            logger.warning(f"Venta {venta_id} no encontrada")
             raise HTTPException(status_code=404, detail="Venta no encontrada")
         
+        logger.info(f"Venta encontrada con estado: {venta.estado}")
+        
         if venta.estado != EstadoVenta.CONFIRMADA:
+            logger.warning(f"Venta {venta_id} no está confirmada, estado: {venta.estado}")
             raise HTTPException(status_code=400, detail="Solo se pueden generar enlaces para ventas confirmadas")
+        
+        logger.info("Verificando documentos existentes...")
         
         # Verificar si ya existe un documento temporal para esta venta y tipo
         existing = await db.execute(
@@ -1994,6 +2002,7 @@ async def generar_enlace_documento(
         
         # Si existe y no ha expirado, retornar el existente
         if existing_doc:
+            logger.info(f"Documento existente encontrado: {existing_doc.token}")
             base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
             return {
                 "url": f"{base_url}/api/documentos/{existing_doc.token}",
@@ -2002,6 +2011,8 @@ async def generar_enlace_documento(
                 "fecha_expiracion": existing_doc.fecha_expiracion,
                 "ya_existia": True
             }
+        
+        logger.info("Generando nuevo documento PDF...")
         
         # Generar datos del documento según tipo
         if tipo_documento == TipoDocumento.BOLETA:
@@ -2040,17 +2051,25 @@ async def generar_enlace_documento(
             pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
             filename_prefix = f"factura_{venta_id}"
         
+        logger.info(f"PDF generado exitosamente, tamaño: {len(pdf_content)} bytes")
+        
         # Generar token único
         token = str(uuid.uuid4())
         filename = f"{filename_prefix}_{token}.pdf"
         file_path = DOCS_DIR / filename
         
+        logger.info(f"Guardando PDF en: {file_path}")
+        
         # Guardar PDF en disco
         with open(file_path, "wb") as f:
             f.write(pdf_content)
         
+        logger.info(f"PDF guardado exitosamente")
+        
         # Crear registro en base de datos
         fecha_expiracion = now_paraguay() + timedelta(days=30)
+        logger.info(f"Creando registro en base de datos...")
+        
         nuevo_doc = DocumentoTemporal(
             token=token,
             venta_id=venta_id,
@@ -2065,8 +2084,12 @@ async def generar_enlace_documento(
         await db.commit()
         await db.refresh(nuevo_doc)
         
+        logger.info(f"Documento guardado en BD con ID: {nuevo_doc.id}, token: {token}")
+        
         # Retornar URL pública
         base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        logger.info(f"Enlace generado: {base_url}/api/documentos/{token}")
+        
         return {
             "url": f"{base_url}/api/documentos/{token}",
             "token": token,
@@ -2077,7 +2100,7 @@ async def generar_enlace_documento(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generando enlace de documento: {str(e)}")
+        logger.error(f"Error generando enlace de documento: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error al generar documento: {str(e)}")
 
 
@@ -4288,6 +4311,16 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
 
 # Include router
 app.include_router(api_router)
+
+# Health check endpoint para debugging
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "docs_dir": str(DOCS_DIR),
+        "docs_dir_exists": DOCS_DIR.exists(),
+        "backend_url": os.getenv("BACKEND_URL", "NOT_SET")
+    }
 
 # Startup event
 @app.on_event("startup")
