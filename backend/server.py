@@ -1949,8 +1949,14 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
 
 # ==================== DOCUMENTOS TEMPORALES ====================
 # Configuración de directorio para documentos temporales
-DOCS_DIR = Path("tmp/documentos")
+# Usar /tmp en producción (Linux/Docker) o crear en directorio relativo en desarrollo
+if os.path.exists('/tmp'):
+    DOCS_DIR = Path("/tmp/documentos")
+else:
+    DOCS_DIR = Path("tmp/documentos")
+
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
+logger.info(f"Directorio de documentos temporales: {DOCS_DIR}")
 
 @api_router.post("/ventas/{venta_id}/generar-enlace")
 async def generar_enlace_documento(
@@ -1962,111 +1968,117 @@ async def generar_enlace_documento(
     Genera un PDF del documento (boleta o factura), lo guarda en disco
     y retorna un enlace público de descarga válido por 30 días
     """
-    # Verificar que la venta exista y esté confirmada
-    result = await db.execute(
-        select(Venta).where(Venta.id == venta_id)
-    )
-    venta = result.scalar_one_or_none()
-    if not venta:
-        raise HTTPException(status_code=404, detail="Venta no encontrada")
-    
-    if venta.estado != EstadoVenta.CONFIRMADA:
-        raise HTTPException(status_code=400, detail="Solo se pueden generar enlaces para ventas confirmadas")
-    
-    # Verificar si ya existe un documento temporal para esta venta y tipo
-    existing = await db.execute(
-        select(DocumentoTemporal).where(
-            and_(
-                DocumentoTemporal.venta_id == venta_id,
-                DocumentoTemporal.tipo_documento == tipo_documento,
-                DocumentoTemporal.fecha_expiracion > now_paraguay()
+    try:
+        # Verificar que la venta exista y esté confirmada
+        result = await db.execute(
+            select(Venta).where(Venta.id == venta_id)
+        )
+        venta = result.scalar_one_or_none()
+        if not venta:
+            raise HTTPException(status_code=404, detail="Venta no encontrada")
+        
+        if venta.estado != EstadoVenta.CONFIRMADA:
+            raise HTTPException(status_code=400, detail="Solo se pueden generar enlaces para ventas confirmadas")
+        
+        # Verificar si ya existe un documento temporal para esta venta y tipo
+        existing = await db.execute(
+            select(DocumentoTemporal).where(
+                and_(
+                    DocumentoTemporal.venta_id == venta_id,
+                    DocumentoTemporal.tipo_documento == tipo_documento,
+                    DocumentoTemporal.fecha_expiracion > now_paraguay()
+                )
             )
         )
-    )
-    existing_doc = existing.scalar_one_or_none()
-    
-    # Si existe y no ha expirado, retornar el existente
-    if existing_doc:
+        existing_doc = existing.scalar_one_or_none()
+        
+        # Si existe y no ha expirado, retornar el existente
+        if existing_doc:
+            base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+            return {
+                "url": f"{base_url}/api/documentos/{existing_doc.token}",
+                "token": existing_doc.token,
+                "tipo_documento": tipo_documento.value,
+                "fecha_expiracion": existing_doc.fecha_expiracion,
+                "ya_existia": True
+            }
+        
+        # Generar datos del documento según tipo
+        if tipo_documento == TipoDocumento.BOLETA:
+            # Reutilizar lógica del endpoint /ventas/{venta_id}/boleta
+            result = await db.execute(
+                select(Venta, Cliente, Usuario, Empresa)
+                .join(Cliente, Venta.cliente_id == Cliente.id)
+                .join(Usuario, Venta.usuario_id == Usuario.id)
+                .join(Empresa, Venta.empresa_id == Empresa.id)
+                .where(Venta.id == venta_id)
+            )
+            row = result.first()
+            if not row:
+                raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
+            
+            venta_obj, cliente, vendedor, empresa = row
+            pdf_content = await generar_pdf_boleta(venta_obj, cliente, vendedor, empresa, db)
+            filename_prefix = f"boleta_{venta_id}"
+        else:  # FACTURA
+            result = await db.execute(
+                select(Venta, Cliente, Usuario, Empresa)
+                .join(Cliente, Venta.cliente_id == Cliente.id)
+                .join(Usuario, Venta.usuario_id == Usuario.id)
+                .join(Empresa, Venta.empresa_id == Empresa.id)
+                .where(Venta.id == venta_id)
+            )
+            row = result.first()
+            if not row:
+                raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
+            
+            venta_obj, cliente, vendedor, empresa = row
+            
+            if not cliente.ruc:
+                raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+            
+            pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
+            filename_prefix = f"factura_{venta_id}"
+        
+        # Generar token único
+        token = str(uuid.uuid4())
+        filename = f"{filename_prefix}_{token}.pdf"
+        file_path = DOCS_DIR / filename
+        
+        # Guardar PDF en disco
+        with open(file_path, "wb") as f:
+            f.write(pdf_content)
+        
+        # Crear registro en base de datos
+        fecha_expiracion = now_paraguay() + timedelta(days=30)
+        nuevo_doc = DocumentoTemporal(
+            token=token,
+            venta_id=venta_id,
+            tipo_documento=tipo_documento,
+            file_path=str(file_path),
+            fecha_creacion=now_paraguay(),
+            fecha_expiracion=fecha_expiracion,
+            empresa_id=venta.empresa_id
+        )
+        
+        db.add(nuevo_doc)
+        await db.commit()
+        await db.refresh(nuevo_doc)
+        
+        # Retornar URL pública
         base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
         return {
-            "url": f"{base_url}/api/documentos/{existing_doc.token}",
-            "token": existing_doc.token,
+            "url": f"{base_url}/api/documentos/{token}",
+            "token": token,
             "tipo_documento": tipo_documento.value,
-            "fecha_expiracion": existing_doc.fecha_expiracion,
-            "ya_existia": True
+            "fecha_expiracion": fecha_expiracion,
+            "ya_existia": False
         }
-    
-    # Generar datos del documento según tipo
-    if tipo_documento == TipoDocumento.BOLETA:
-        # Reutilizar lógica del endpoint /ventas/{venta_id}/boleta
-        result = await db.execute(
-            select(Venta, Cliente, Usuario, Empresa)
-            .join(Cliente, Venta.cliente_id == Cliente.id)
-            .join(Usuario, Venta.usuario_id == Usuario.id)
-            .join(Empresa, Venta.empresa_id == Empresa.id)
-            .where(Venta.id == venta_id)
-        )
-        row = result.first()
-        if not row:
-            raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
-        
-        venta_obj, cliente, vendedor, empresa = row
-        pdf_content = await generar_pdf_boleta(venta_obj, cliente, vendedor, empresa, db)
-        filename_prefix = f"boleta_{venta_id}"
-    else:  # FACTURA
-        result = await db.execute(
-            select(Venta, Cliente, Usuario, Empresa)
-            .join(Cliente, Venta.cliente_id == Cliente.id)
-            .join(Usuario, Venta.usuario_id == Usuario.id)
-            .join(Empresa, Venta.empresa_id == Empresa.id)
-            .where(Venta.id == venta_id)
-        )
-        row = result.first()
-        if not row:
-            raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
-        
-        venta_obj, cliente, vendedor, empresa = row
-        
-        if not cliente.ruc:
-            raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
-        
-        pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
-        filename_prefix = f"factura_{venta_id}"
-    
-    # Generar token único
-    token = str(uuid.uuid4())
-    filename = f"{filename_prefix}_{token}.pdf"
-    file_path = DOCS_DIR / filename
-    
-    # Guardar PDF en disco
-    with open(file_path, "wb") as f:
-        f.write(pdf_content)
-    
-    # Crear registro en base de datos
-    fecha_expiracion = now_paraguay() + timedelta(days=30)
-    nuevo_doc = DocumentoTemporal(
-        token=token,
-        venta_id=venta_id,
-        tipo_documento=tipo_documento,
-        file_path=str(file_path),
-        fecha_creacion=now_paraguay(),
-        fecha_expiracion=fecha_expiracion,
-        empresa_id=venta.empresa_id
-    )
-    
-    db.add(nuevo_doc)
-    await db.commit()
-    await db.refresh(nuevo_doc)
-    
-    # Retornar URL pública
-    base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-    return {
-        "url": f"{base_url}/api/documentos/{token}",
-        "token": token,
-        "tipo_documento": tipo_documento.value,
-        "fecha_expiracion": fecha_expiracion,
-        "ya_existia": False
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando enlace de documento: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al generar documento: {str(e)}")
 
 
 @api_router.get("/documentos/{token}")
