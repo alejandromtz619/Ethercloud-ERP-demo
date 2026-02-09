@@ -4322,6 +4322,29 @@ async def health_check():
         "backend_url": os.getenv("BACKEND_URL", "NOT_SET")
     }
 
+# Endpoint temporal para migrar tabla documentos_temporales
+@app.post("/api/admin/migrate-documentos-temporales")
+async def migrate_documentos_temporales():
+    """
+    Migra la tabla documentos_temporales para usar TIMESTAMP WITH TIME ZONE
+    """
+    try:
+        async with engine.begin() as conn:
+            # Primero eliminar datos existentes si los hay (temporales de todas formas)
+            await conn.execute(text("DROP TABLE IF EXISTS documentos_temporales CASCADE"))
+            
+            # Recrear la tabla con el nuevo esquema
+            await conn.run_sync(Base.metadata.create_all)
+            
+        logger.info("Tabla documentos_temporales migrada exitosamente")
+        return {
+            "status": "success",
+            "message": "Tabla documentos_temporales migrada a TIMESTAMP WITH TIME ZONE"
+        }
+    except Exception as e:
+        logger.error(f"Error al migrar tabla: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error en migración: {str(e)}")
+
 # Startup event
 @app.on_event("startup")
 async def startup():

@@ -75,8 +75,8 @@ class DocumentoTemporal(Base):
     venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
     tipo_documento = Column(Enum(TipoDocumento), nullable=False)  # BOLETA o FACTURA
     file_path = Column(String(500), nullable=False)  # Ruta del archivo en disco
-    fecha_creacion = Column(DateTime, default=now_paraguay)
-    fecha_expiracion = Column(DateTime, nullable=False)  # 30 días desde creación
+    fecha_creacion = Column(DateTime(timezone=True), default=now_paraguay)
+    fecha_expiracion = Column(DateTime(timezone=True), nullable=False)  # 30 días desde creación
     descargas = Column(Integer, default=0)  # Contador de descargas
     empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     
