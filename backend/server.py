@@ -1956,8 +1956,7 @@ DOCS_DIR.mkdir(parents=True, exist_ok=True)
 async def generar_enlace_documento(
     venta_id: int,
     tipo_documento: TipoDocumento = Query(...),
-    db: AsyncSession = Depends(get_db),
-    usuario: Usuario = Depends(get_current_usuario)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Genera un PDF del documento (boleta o factura), lo guarda en disco
@@ -2115,17 +2114,12 @@ async def descargar_documento(token: str, db: AsyncSession = Depends(get_db)):
 
 @api_router.delete("/documentos/limpiar-expirados")
 async def limpiar_documentos_expirados(
-    db: AsyncSession = Depends(get_db),
-    usuario: Usuario = Depends(get_current_usuario)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Tarea de limpieza: Elimina documentos expirados tanto de la BD como del disco.
-    Solo accesible por administradores.
+    Endpoint para ser llamado por cronjobs o tareas programadas.
     """
-    # Verificar permisos de admin
-    if not any(rol.rol.nombre == "ADMINISTRADOR" for rol in usuario.roles):
-        raise HTTPException(status_code=403, detail="No tienes permisos para esta acción")
-    
     # Buscar documentos expirados
     result = await db.execute(
         select(DocumentoTemporal).where(
