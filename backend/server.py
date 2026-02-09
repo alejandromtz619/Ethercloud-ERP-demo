@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
@@ -1955,7 +1955,7 @@ DOCS_DIR.mkdir(parents=True, exist_ok=True)
 @api_router.post("/ventas/{venta_id}/generar-enlace")
 async def generar_enlace_documento(
     venta_id: int,
-    tipo_documento: TipoDocumento,
+    tipo_documento: TipoDocumento = Query(...),
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(get_current_usuario)
 ):
