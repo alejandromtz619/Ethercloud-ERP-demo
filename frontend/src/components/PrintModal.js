@@ -9,7 +9,7 @@ import {
 } from '../components/ui/dialog';
 import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
-import { Loader2, Printer, Receipt, FileText } from 'lucide-react';
+import { Loader2, Printer, Receipt, FileText, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
 // Boleta Print Template
@@ -325,6 +325,67 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
     }, 500);
   }, [printBoleta, printFactura, ventaId, onOpenChange, onPrintComplete]);
 
+  const handleSendWhatsApp = useCallback(async () => {
+    if (!printBoleta && !printFactura) {
+      toast.error('Seleccione al menos un documento');
+      return;
+    }
+    
+    // Load data if not already loaded
+    if (!boletaData && !facturaData) {
+      await fetchPrintData();
+    }
+    
+    // Get data from whichever document is selected
+    const data = printBoleta ? boletaData : facturaData;
+    
+    if (!data) {
+      toast.error('Error al cargar datos de venta');
+      return;
+    }
+    
+    // Check if client has phone number
+    const telefono = data.cliente?.telefono;
+    if (!telefono) {
+      toast.error('El cliente no tiene número de teléfono registrado');
+      return;
+    }
+    
+    // Clean phone number (remove spaces, dashes, parentheses)
+    const cleanPhone = telefono.replace(/[\s\-\(\)]/g, '');
+    
+    // Format phone for WhatsApp (Paraguay code +595)
+    let whatsappNumber = cleanPhone;
+    if (!whatsappNumber.startsWith('+')) {
+      if (whatsappNumber.startsWith('0')) {
+        whatsappNumber = '595' + whatsappNumber.substring(1);
+      } else if (!whatsappNumber.startsWith('595')) {
+        whatsappNumber = '595' + whatsappNumber;
+      }
+    }
+    
+    // Generate message
+    const docType = printBoleta ? 'Boleta' : 'Factura';
+    const message = `
+🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*
+
+📋 *Número:* ${data.numero}
+👤 *Cliente:* ${data.cliente?.nombre || 'Cliente'}
+📅 *Fecha:* ${data.fecha}
+💰 *Total:* Gs. ${data.total?.toLocaleString('es-PY')}
+
+Gracias por su compra! 🙏
+
+_Este es un comprobante de venta generado automáticamente._
+    `.trim();
+    
+    // Open WhatsApp
+    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
+    
+    toast.success('Abriendo WhatsApp...');
+  }, [printBoleta, printFactura, boletaData, facturaData]);
+
   // Fetch data when modal opens
   React.useEffect(() => {
     if (open && ventaId) {
@@ -403,6 +464,15 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
+            </Button>
+            <Button 
+              onClick={handleSendWhatsApp}
+              variant="outline"
+              disabled={loading || (!printBoleta && !printFactura)}
+              className="bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 border-green-200"
+            >
+              <Send className="mr-2 h-4 w-4" />
+              WhatsApp
             </Button>
             <Button 
               onClick={handlePrint} 
