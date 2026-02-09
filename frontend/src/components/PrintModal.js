@@ -18,101 +18,104 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
   
   return (
     <div ref={ref} className="print-document boleta-print" style={{ 
-      fontFamily: 'Arial, sans-serif',
+      fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
       fontSize: '12px',
-      width: '80mm',
-      padding: '10px',
+      width: '240mm', // Papel continuo 24cm
+      height: '140mm', // Altura papel boleta
+      padding: '8mm 10mm', // Márgenes para matriz de puntos
+      margin: '0',
       backgroundColor: 'white',
-      color: 'black'
+      color: 'black',
+      lineHeight: '1.4'
     }}>
-      <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-        <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0' }}>LuzBrill</h1>
-        <p style={{ margin: '2px 0', fontSize: '10px' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
-        <p style={{ margin: '2px 0', fontSize: '10px' }}>0983 628249 0973 598415</p>
+      <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LuzBrill</h1>
+        <p style={{ margin: '3px 0', fontSize: '11px', fontWeight: 'bold' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
+        <p style={{ margin: '2px 0', fontSize: '11px', fontWeight: 'bold' }}>0983 628249 0973 598415</p>
       </div>
       
-      <div style={{ textAlign: 'right', marginBottom: '10px' }}>
+      <div style={{ textAlign: 'right', marginBottom: '8px', fontSize: '13px' }}>
         <span style={{ fontWeight: 'bold' }}>NOTA NRO: </span>
-        <span>{data.numero}</span>
+        <span style={{ fontWeight: 'bold' }}>{data.numero}</span>
       </div>
       
-      <div style={{ borderTop: '1px dashed black', borderBottom: '1px dashed black', padding: '5px 0', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Razon Social:</span>
-          <span>{data.cliente?.nombre || 'OCACIONAL'}</span>
+      <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '6px 0', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
+          <span style={{ fontWeight: 'bold' }}>Razon Social:</span>
+          <span style={{ textAlign: 'right', fontWeight: 'bold' }}>{data.cliente?.nombre || 'OCACIONAL'}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Dirección:</span>
-          <span>{data.cliente?.direccion || '0'}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
+          <span style={{ fontWeight: 'bold' }}>Dirección:</span>
+          <span style={{ textAlign: 'right' }}>{data.cliente?.direccion || '0'}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Telefono:</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
+          <span style={{ fontWeight: 'bold' }}>Telefono:</span>
           <span>{data.cliente?.telefono || '0'}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Ruc:</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
+          <span style={{ fontWeight: 'bold' }}>Ruc:</span>
           <span>{data.cliente?.ruc || '0'}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Fecha de Venta:</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
+          <span style={{ fontWeight: 'bold' }}>Fecha de Venta:</span>
           <span>{data.fecha}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Tipo Comprob:</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
+          <span style={{ fontWeight: 'bold' }}>Tipo Comprob:</span>
           <span>{data.tipo_pago}</span>
         </div>
       </div>
       
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '10px' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
         <thead>
-          <tr style={{ borderBottom: '1px solid black' }}>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '2px' }}>Codigo</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '2px' }}>Cant.</th>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '2px' }}>Descripcion</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '2px' }}>IVA</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '2px' }}>Precio</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '2px' }}>Total</th>
+          <tr style={{ borderBottom: '2px solid black', borderTop: '2px solid black' }}>
+            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cod</th>
+            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cant</th>
+            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Descripción</th>
+            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>IVA</th>
+            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Precio</th>
+            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Total</th>
           </tr>
         </thead>
         <tbody>
           {data.items?.map((item, idx) => (
-            <tr key={idx}>
-              <td style={{ fontSize: '9px', padding: '2px' }}>{item.codigo}</td>
-              <td style={{ textAlign: 'center', fontSize: '9px', padding: '2px' }}>{item.cantidad?.toFixed(2)}</td>
-              <td style={{ fontSize: '9px', padding: '2px' }}>{item.descripcion}</td>
-              <td style={{ textAlign: 'center', fontSize: '9px', padding: '2px' }}>{item.iva}</td>
-              <td style={{ textAlign: 'right', fontSize: '9px', padding: '2px' }}>{item.precio?.toLocaleString('es-PY')}</td>
-              <td style={{ textAlign: 'right', fontSize: '9px', padding: '2px' }}>{item.total?.toLocaleString('es-PY')}</td>
+            <tr key={idx} style={{ borderBottom: '1px solid #ccc' }}>
+              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.codigo}</td>
+              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.cantidad?.toFixed(2)}</td>
+              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.descripcion}</td>
+              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.iva}</td>
+              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.precio?.toLocaleString('es-PY')}</td>
+              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.total?.toLocaleString('es-PY')}</td>
             </tr>
           ))}
         </tbody>
       </table>
       
-      <div style={{ borderTop: '1px dashed black', paddingTop: '5px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-          <span>Subtotal:</span>
-          <span>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
+      <div style={{ borderTop: '2px solid black', paddingTop: '6px', marginTop: '5px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
+          <span style={{ fontWeight: 'bold' }}>Subtotal:</span>
+          <span style={{ fontWeight: 'bold' }}>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
         </div>
         {data.descuento > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px', color: '#059669' }}>
-            <span>Descuento ({data.descuento_porcentaje}%):</span>
-            <span>-{data.descuento?.toLocaleString('es-PY')}</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
+            <span style={{ fontWeight: 'bold' }}>Descuento ({data.descuento_porcentaje}%):</span>
+            <span style={{ fontWeight: 'bold' }}>-{data.descuento?.toLocaleString('es-PY')}</span>
           </div>
         )}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-          <span>En Letras:</span>
-          <span style={{ fontSize: '10px', textTransform: 'lowercase' }}>{data.total_letras}</span>
+        <div style={{ marginBottom: '6px', fontSize: '10px', borderTop: '1px solid black', paddingTop: '4px' }}>
+          <span style={{ fontWeight: 'bold' }}>En Letras: </span>
+          <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{data.total_letras}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px' }}>
-          <span>Total a Pagar:</span>
-          <span>{data.total?.toLocaleString('es-PY')}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px', marginTop: '5px', borderTop: '3px double black', paddingTop: '6px' }}>
+          <span>TOTAL A PAGAR:</span>
+          <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
         </div>
       </div>
       
-      <div style={{ marginTop: '20px', textAlign: 'center' }}>
-        <p style={{ margin: '0 0 5px 0' }}>________________________</p>
-        <p style={{ margin: '0', fontSize: '10px' }}>Firma Cliente</p>
-        <p style={{ margin: '15px 0 0 0', fontSize: '9px', fontStyle: 'italic' }}>
+      <div style={{ marginTop: '12px', textAlign: 'center' }}>
+        <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>________________________________</p>
+        <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Cliente</p>
+        <p style={{ margin: '10px 0 0 0', fontSize: '9px', fontStyle: 'italic', fontWeight: 'bold' }}>
           Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.
         </p>
       </div>
@@ -120,125 +123,128 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
   );
 });
 
-// Factura Print Template  
+// Factura Print Template (Papel pre-impreso 240mm ancho)
 const FacturaPrint = React.forwardRef(({ data }, ref) => {
   if (!data) return null;
   
   return (
     <div ref={ref} className="print-document factura-print" style={{ 
-      fontFamily: 'Arial, sans-serif',
+      fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
       fontSize: '12px',
-      width: '210mm',
-      padding: '20px',
+      width: '240mm', // Papel continuo pre-impreso 24cm
+      minHeight: '200mm', // Altura mínima, se ajusta al contenido
+      padding: '10mm 12mm', // Márgenes para matriz de puntos
       backgroundColor: 'white',
-      color: 'black'
+      color: 'black',
+      lineHeight: '1.4',
+      boxSizing: 'border-box'
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0' }}>{data.empresa?.nombre || 'Luz Brill S.A.'}</h1>
-          <p style={{ margin: '2px 0' }}>RUC: {data.empresa?.ruc}</p>
-          <p style={{ margin: '2px 0' }}>{data.empresa?.direccion}</p>
-          <p style={{ margin: '2px 0' }}>Tel: {data.empresa?.telefono}</p>
+          <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>{data.empresa?.nombre || 'Luz Brill S.A.'}</h1>
+          <p style={{ margin: '3px 0', fontSize: '12px', fontWeight: 'bold' }}>RUC: {data.empresa?.ruc}</p>
+          <p style={{ margin: '2px 0', fontSize: '12px', fontWeight: 'bold' }}>{data.empresa?.direccion}</p>
+          <p style={{ margin: '2px 0', fontSize: '12px', fontWeight: 'bold' }}>Tel: {data.empresa?.telefono}</p>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <p style={{ fontSize: '18px', fontWeight: 'bold' }}>FACTURA</p>
-          <p style={{ fontSize: '16px' }}>N° {data.numero}</p>
+        <div style={{ textAlign: 'right', border: '3px double black', padding: '10px 20px' }}>
+          <p style={{ fontSize: '18px', fontWeight: 'bold', margin: '0', letterSpacing: '1px' }}>FACTURA</p>
+          <p style={{ fontSize: '16px', margin: '5px 0 0 0', fontWeight: 'bold' }}>N° {data.numero}</p>
         </div>
       </div>
       
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '15px' }}>
+      <div style={{ display: 'flex', gap: '30px', marginBottom: '12px', fontSize: '12px' }}>
         <div>
-          <span>Ciudad del Este, </span>
-          <span>{data.fecha}</span>
+          <span style={{ fontWeight: 'bold' }}>Ciudad del Este, </span>
+          <span style={{ fontWeight: 'bold' }}>{data.fecha}</span>
         </div>
         <div>
-          <span>Condición: </span>
+          <span style={{ fontWeight: 'bold' }}>Condición: </span>
           <strong>{data.condicion}</strong>
         </div>
       </div>
       
-      <div style={{ border: '1px solid black', padding: '10px', marginBottom: '15px' }}>
-        <div style={{ display: 'flex', gap: '20px', marginBottom: '5px' }}>
+      <div style={{ border: '2px solid black', padding: '10px', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', gap: '30px', marginBottom: '5px', fontSize: '12px' }}>
           <span><strong>Cliente:</strong> {data.cliente?.nombre}</span>
           <span><strong>RUC:</strong> {data.cliente?.ruc}</span>
         </div>
-        <div>
+        <div style={{ fontSize: '12px' }}>
           <span><strong>Dirección:</strong> {data.cliente?.direccion || '-'}</span>
         </div>
       </div>
       
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '15px' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }}>
         <thead>
-          <tr style={{ backgroundColor: '#f0f0f0' }}>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'center' }}>Cant.</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'left' }}>Descripción</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>P. Unitario</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>Exenta</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>IVA 5%</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>IVA 10%</th>
+          <tr style={{ borderTop: '2px solid black', borderBottom: '2px solid black' }}>
+            <th style={{ padding: '6px', textAlign: 'center', fontSize: '11px', fontWeight: 'bold' }}>Cant.</th>
+            <th style={{ padding: '6px', textAlign: 'left', fontSize: '11px', fontWeight: 'bold' }}>Descripción</th>
+            <th style={{ padding: '6px', textAlign: 'right', fontSize: '11px', fontWeight: 'bold' }}>P. Unitario</th>
+            <th style={{ padding: '6px', textAlign: 'right', fontSize: '11px', fontWeight: 'bold' }}>Exenta</th>
+            <th style={{ padding: '6px', textAlign: 'right', fontSize: '11px', fontWeight: 'bold' }}>IVA 5%</th>
+            <th style={{ padding: '6px', textAlign: 'right', fontSize: '11px', fontWeight: 'bold' }}>IVA 10%</th>
           </tr>
         </thead>
         <tbody>
           {data.items?.map((item, idx) => (
-            <tr key={idx}>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'center' }}>{item.cantidad}</td>
-              <td style={{ border: '1px solid black', padding: '5px' }}>{item.descripcion}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.precio_unitario?.toLocaleString('es-PY')}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.exenta || 0}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.iva_5 || 0}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.iva_10?.toLocaleString('es-PY')}</td>
+            <tr key={idx} style={{ borderBottom: '1px solid #999' }}>
+              <td style={{ padding: '5px', textAlign: 'center', fontSize: '11px' }}>{item.cantidad}</td>
+              <td style={{ padding: '5px', fontSize: '11px' }}>{item.descripcion}</td>
+              <td style={{ padding: '5px', textAlign: 'right', fontSize: '11px', fontWeight: 'bold' }}>{item.precio_unitario?.toLocaleString('es-PY')}</td>
+              <td style={{ padding: '5px', textAlign: 'right', fontSize: '11px' }}>{item.exenta || 0}</td>
+              <td style={{ padding: '5px', textAlign: 'right', fontSize: '11px' }}>{item.iva_5 || 0}</td>
+              <td style={{ padding: '5px', textAlign: 'right', fontSize: '11px', fontWeight: 'bold' }}>{item.iva_10?.toLocaleString('es-PY')}</td>
             </tr>
           ))}
         </tbody>
       </table>
       
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <div style={{ maxWidth: '60%' }}>
-          <p><strong>Total en letras:</strong></p>
-          <p style={{ textTransform: 'lowercase', fontStyle: 'italic' }}>{data.total_letras}</p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
+        <div style={{ maxWidth: '50%' }}>
+          <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: 'bold' }}>Total en letras:</p>
+          <p style={{ margin: '0', fontSize: '11px', textTransform: 'uppercase', fontWeight: 'bold' }}>{data.total_letras}</p>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <table style={{ marginLeft: 'auto' }}>
+          <table style={{ marginLeft: 'auto', fontSize: '12px' }}>
             <tbody>
               <tr>
-                <td style={{ paddingRight: '20px' }}>Subtotal Exenta:</td>
-                <td style={{ textAlign: 'right' }}>{data.subtotal_exenta?.toLocaleString('es-PY') || 0}</td>
+                <td style={{ paddingRight: '20px', paddingBottom: '4px', fontWeight: 'bold' }}>Subtotal Exenta:</td>
+                <td style={{ textAlign: 'right', paddingBottom: '4px', fontWeight: 'bold' }}>{data.subtotal_exenta?.toLocaleString('es-PY') || 0}</td>
               </tr>
               <tr>
-                <td style={{ paddingRight: '20px' }}>Subtotal IVA 5%:</td>
-                <td style={{ textAlign: 'right' }}>{data.subtotal_iva_5?.toLocaleString('es-PY') || 0}</td>
+                <td style={{ paddingRight: '20px', paddingBottom: '4px', fontWeight: 'bold' }}>Subtotal IVA 5%:</td>
+                <td style={{ textAlign: 'right', paddingBottom: '4px', fontWeight: 'bold' }}>{data.subtotal_iva_5?.toLocaleString('es-PY') || 0}</td>
               </tr>
               <tr>
-                <td style={{ paddingRight: '20px' }}>Subtotal IVA 10%:</td>
-                <td style={{ textAlign: 'right' }}>{data.subtotal_iva_10?.toLocaleString('es-PY')}</td>
+                <td style={{ paddingRight: '20px', paddingBottom: '4px', fontWeight: 'bold' }}>Subtotal IVA 10%:</td>
+                <td style={{ textAlign: 'right', paddingBottom: '4px', fontWeight: 'bold' }}>{data.subtotal_iva_10?.toLocaleString('es-PY')}</td>
               </tr>
               {data.descuento > 0 && (
-                <tr style={{ color: '#059669' }}>
-                  <td style={{ paddingRight: '20px' }}>Descuento ({data.descuento_porcentaje}%):</td>
-                  <td style={{ textAlign: 'right' }}>-{data.descuento?.toLocaleString('es-PY')}</td>
+                <tr>
+                  <td style={{ paddingRight: '20px', paddingBottom: '4px', fontWeight: 'bold' }}>Descuento ({data.descuento_porcentaje}%):</td>
+                  <td style={{ textAlign: 'right', paddingBottom: '4px', fontWeight: 'bold' }}>-{data.descuento?.toLocaleString('es-PY')}</td>
                 </tr>
               )}
               <tr>
-                <td style={{ paddingRight: '20px' }}>IVA 10%:</td>
-                <td style={{ textAlign: 'right' }}>{data.iva_10?.toLocaleString('es-PY')}</td>
+                <td style={{ paddingRight: '20px', paddingBottom: '4px', fontWeight: 'bold' }}>IVA 10%:</td>
+                <td style={{ textAlign: 'right', paddingBottom: '4px', fontWeight: 'bold' }}>{data.iva_10?.toLocaleString('es-PY')}</td>
               </tr>
               <tr style={{ fontWeight: 'bold', fontSize: '14px' }}>
-                <td style={{ paddingRight: '20px', borderTop: '2px solid black', paddingTop: '5px' }}>TOTAL:</td>
-                <td style={{ textAlign: 'right', borderTop: '2px solid black', paddingTop: '5px' }}>Gs. {data.total?.toLocaleString('es-PY')}</td>
+                <td style={{ paddingRight: '20px', borderTop: '3px double black', paddingTop: '6px' }}>TOTAL:</td>
+                <td style={{ textAlign: 'right', borderTop: '3px double black', paddingTop: '6px' }}>Gs. {data.total?.toLocaleString('es-PY')}</td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
       
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '50px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '20mm' }}>
         <div style={{ textAlign: 'center' }}>
-          <p style={{ margin: '0 0 5px 0' }}>________________________</p>
-          <p style={{ margin: '0' }}>Firma Vendedor</p>
+          <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: 'bold' }}>________________________________</p>
+          <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Vendedor</p>
         </div>
         <div style={{ textAlign: 'center' }}>
-          <p style={{ margin: '0 0 5px 0' }}>________________________</p>
-          <p style={{ margin: '0' }}>Firma Cliente</p>
+          <p style={{ margin: '0 0 5px 0', fontSize: '12px', fontWeight: 'bold' }}>________________________________</p>
+          <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Cliente</p>
         </div>
       </div>
     </div>
@@ -301,10 +307,74 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
             <html>
               <head>
                 <title>Imprimir - Venta #${ventaId}</title>
+                <meta charset="UTF-8">
                 <style>
-                  body { margin: 0; padding: 20px; }
+                  * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                  }
+                  
+                  body { 
+                    margin: 0; 
+                    padding: 0; 
+                    background: white;
+                  }
+                  
+                  /* Estilos para impresora matriz de puntos Epson LX-350 */
+                  .boleta-print {
+                    margin: 0;
+                    page-break-after: always;
+                  }
+                  
+                  .factura-print {
+                    margin: 0;
+                    page-break-after: always;
+                  }
+                  
                   @media print {
-                    .page-break { page-break-after: always; }
+                    @page {
+                      size: 240mm auto; /* Papel continuo 240mm de ancho, altura automática */
+                      margin: 0; /* Sin márgenes, los controlamos desde el documento */
+                    }
+                    
+                    body {
+                      margin: 0;
+                      padding: 0;
+                      -webkit-print-color-adjust: exact;
+                      print-color-adjust: exact;
+                    }
+                    
+                    .page-break { 
+                      page-break-after: always;
+                      break-after: page;
+                    }
+                    
+                    /* Para boletas - papel continuo 240mm x 140mm */
+                    .boleta-print {
+                      width: 240mm;
+                      height: 140mm;
+                      margin: 0;
+                      page-break-after: always;
+                    }
+                    
+                    /* Para facturas - papel continuo pre-impreso 240mm */
+                    .factura-print {
+                      width: 240mm;
+                      min-height: 200mm;
+                      margin: 0;
+                      page-break-after: always;
+                    }
+                    
+                    /* Evitar cortes de página indeseados */
+                    table, tr, td, th {
+                      page-break-inside: avoid;
+                    }
+                    
+                    /* Mejor contraste para matriz de puntos */
+                    strong, b, .bold {
+                      font-weight: 900 !important;
+                    }
                   }
                 </style>
               </head>
