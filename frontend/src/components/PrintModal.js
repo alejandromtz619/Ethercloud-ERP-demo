@@ -461,15 +461,36 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       // Generate message with download link
       const docType = printBoleta ? 'Boleta' : 'Factura';
       const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY');
+      
+      // Format items list
+      let itemsText = '';
+      if (data.items && data.items.length > 0) {
+        itemsText = '\n*PRODUCTOS:*\n';
+        itemsText += '━━━━━━━━━━━━━━━━━━━━━━\n';
+        data.items.forEach((item, idx) => {
+          itemsText += `${idx + 1}. *${item.descripcion}*\n`;
+          itemsText += `   Cant: ${item.cantidad?.toFixed(2)} | Precio: Gs. ${item.precio?.toLocaleString('es-PY')}\n`;
+          itemsText += `   Subtotal: Gs. ${item.total?.toLocaleString('es-PY')}\n`;
+        });
+        itemsText += '━━━━━━━━━━━━━━━━━━━━━━\n';
+      }
+      
       const message = `
 🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*
 
 📋 *Número:* ${data.numero}
 👤 *Cliente:* ${data.cliente?.nombre || 'Cliente'}
 📅 *Fecha:* ${data.fecha}
-💰 *Total:* Gs. ${data.total?.toLocaleString('es-PY')}
+🏠 *Dirección:* ${data.cliente?.direccion || 'N/A'}
+📞 *Teléfono:* ${data.cliente?.telefono || 'N/A'}
+📝 *RUC:* ${data.cliente?.ruc || 'N/A'}
+💳 *Tipo Pago:* ${data.tipo_pago}
+${itemsText}
+💵 *Subtotal:* Gs. ${data.subtotal_sin_descuento?.toLocaleString('es-PY')}${data.descuento > 0 ? `
+🎁 *Descuento (${data.descuento_porcentaje}%):* -Gs. ${data.descuento?.toLocaleString('es-PY')}` : ''}
+💰 *TOTAL A PAGAR:* Gs. ${data.total?.toLocaleString('es-PY')}
 
-📄 *Descargar documento:*
+📄 *Descargar documento PDF:*
 ${response.url}
 
 _Enlace válido hasta el ${expirationDate}_
