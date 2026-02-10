@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as func_sql, and_, or_, update, text
+from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text
 from sqlalchemy.orm import selectinload
 from dotenv import load_dotenv
 from pathlib import Path
@@ -889,9 +889,16 @@ async def eliminar_producto(producto_id: int, db: AsyncSession = Depends(get_db)
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     
+    # Eliminar registros de stock asociados
+    await db.execute(delete(StockActual).where(StockActual.producto_id == producto_id))
+    
+    # Eliminar movimientos de stock asociados
+    await db.execute(delete(MovimientoStock).where(MovimientoStock.producto_id == producto_id))
+    
+    # Desactivar el producto
     producto.activo = False
     await db.commit()
-    return {"message": "Producto desactivado"}
+    return {"message": "Producto y stock asociado eliminados"}
 
 # ==================== UPLOAD IMAGEN PRODUCTO ====================
 @api_router.post("/productos/{producto_id}/imagen")

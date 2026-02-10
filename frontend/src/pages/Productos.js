@@ -149,13 +149,13 @@ const Productos = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('¿Desactivar este producto?')) return;
+    if (!window.confirm('⚠️ ADVERTENCIA: Al eliminar este producto se eliminará PERMANENTEMENTE todo el stock asociado en todos los almacenes y el historial de movimientos.\n\n¿Está seguro de continuar?')) return;
     try {
       await api(`/productos/${id}`, { method: 'DELETE' });
-      toast.success('Producto desactivado');
+      toast.success('Producto y stock eliminados correctamente');
       fetchData();
     } catch (e) {
-      toast.error('Error al eliminar');
+      toast.error('Error al eliminar producto');
     }
   };
 
