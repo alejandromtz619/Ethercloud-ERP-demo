@@ -22,7 +22,7 @@ import io
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, cm
+from reportlab.lib.units import inch, cm, mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
@@ -2207,9 +2207,7 @@ async def limpiar_documentos_expirados(
 
 # Funciones auxiliares para generar PDFs
 async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
-    """Genera PDF de boleta usando WeasyPrint con el mismo formato que PrintModal.js"""
-    from weasyprint import HTML
-    
+    """Genera PDF de boleta con formato similar a matriz de puntos"""
     # Obtener items
     items_result = await db.execute(
         select(VentaItem, Producto, MateriaLaboratorio)
@@ -2218,7 +2216,79 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
         .where(VentaItem.venta_id == venta.id)
     )
     
-    items = []
+    buffer = io.BytesIO()
+    # Tamaño de papel: 240mm x 140mm para matriz de puntos
+    from reportlab.lib.pagesizes import landscape
+    page_width = 240 * mm
+    page_height = 140 * mm
+    custom_size = (page_width, page_height)
+    
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=custom_size,
+        leftMargin=10*mm,
+        rightMargin=10*mm,
+        topMargin=8*mm,
+        bottomMargin=8*mm
+    )
+    
+    elements = []
+    
+    # Estilos con fuente monoespaciada (Courier) para simular matriz de puntos
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        fontName='Courier-Bold',
+        fontSize=16,
+        alignment=TA_CENTER,
+        spaceAfter=2,
+        textDecoration='underline'
+    )
+    
+    normal_style = ParagraphStyle(
+        'CustomNormal',
+        fontName='Courier',
+        fontSize=9,
+        alignment=TA_CENTER,
+        spaceAfter=1
+    )
+    
+    # Encabezado
+    elements.append(Paragraph('LuzBrill', title_style))
+    elements.append(Paragraph(empresa.telefono or '061 572516 573408', normal_style))
+    elements.append(Paragraph('0983 628249 0973 598415', normal_style))
+    elements.append(Spacer(1, 3*mm))
+    
+    # Número de nota (alineado a la derecha)
+    nota_style = ParagraphStyle('Nota', fontName='Courier-Bold', fontSize=10, alignment=TA_RIGHT)
+    elements.append(Paragraph(f'<b>NOTA NRO: {venta.id}</b>', nota_style))
+    elements.append(Spacer(1, 2*mm))
+    
+    # Información del cliente
+    info_data = [
+        ['Razon Social:', f"{cliente.nombre} {cliente.apellido or ''}".strip()],
+        ['Dirección:', cliente.direccion or '0'],
+        ['Telefono:', cliente.telefono or '0'],
+        ['Ruc:', cliente.ruc or '0'],
+        ['Fecha de Venta:', venta.creado_en.strftime('%d/%m/%Y %I:%M %p')],
+        ['Tipo Comprob:', venta.tipo_pago.value if venta.tipo_pago else 'CONTADO']
+    ]
+    
+    info_table = Table(info_data, colWidths=[45*mm, 115*mm])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, -1), (-1, -1), 2, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Items
+    items_data = [['Cod', 'Cant', 'Descripción', 'IVA', 'Precio', 'Total']]
+    
     for item_row in items_result.all():
         item, producto, materia = item_row
         
@@ -2232,161 +2302,82 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
             codigo = 'N/A'
             descripcion = 'Item'
         
-        items.append({
-            'codigo': codigo,
-            'cantidad': float(item.cantidad),
-            'descripcion': descripcion,
-            'precio': float(item.precio_unitario),
-            'total': float(item.total)
-        })
+        items_data.append([
+            codigo[:10],  # Limitar código
+            f"{item.cantidad:.2f}",
+            descripcion[:35],  # Limitar descripción
+            '10',
+            f"{int(item.precio_unitario):,}",
+            f"{int(item.total):,}"
+        ])
     
-    # Calcular totales
+    items_table = Table(items_data, colWidths=[25*mm, 15*mm, 80*mm, 12*mm, 25*mm, 25*mm])
+    items_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, 0), 'Courier-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Courier'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, -1), (-1, -1), 1, colors.grey),
+        ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # Código
+        ('ALIGN', (1, 0), (1, -1), 'CENTER'),  # Cantidad
+        ('ALIGN', (2, 0), (2, -1), 'LEFT'),  # Descripción
+        ('ALIGN', (3, 0), (3, -1), 'CENTER'),  # IVA
+        ('ALIGN', (4, 0), (-1, -1), 'RIGHT'),  # Precio y Total
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Totales
     subtotal_sin_descuento = float(venta.total + venta.descuento)
     descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
     total_letras = numero_a_letras(int(venta.total)) + ' Guaraníes'
     
-    # Items HTML rows
-    items_html = ''
-    for item in items:
-        items_html += f'''
-            <tr style="border-bottom: 1px solid #ccc;">
-                <td style="font-size: 10px; padding: 3px 4px;">{item['codigo']}</td>
-                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">{item['cantidad']:.2f}</td>
-                <td style="font-size: 10px; padding: 3px 4px;">{item['descripcion']}</td>
-                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">10</td>
-                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['precio']):,}</td>
-                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['total']):,}</td>
-            </tr>
-        '''
+    totales_data = [
+        ['Subtotal:', f"{int(subtotal_sin_descuento):,}"]
+    ]
     
-    # Descuento row (only if > 0)
-    descuento_html = ''
     if venta.descuento > 0:
-        descuento_html = f'''
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
-                <span style="font-weight: bold;">Descuento ({descuento_porcentaje}%):</span>
-                <span style="font-weight: bold;">-{int(venta.descuento):,}</span>
-            </div>
-        '''
+        totales_data.append([f'Descuento ({descuento_porcentaje}%):', f"-{int(venta.descuento):,}"])
     
-    # HTML Template idéntico a PrintModal.js BoletaPrint
-    html_content = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            @page {{
-                size: 240mm 140mm;
-                margin: 8mm 10mm;
-            }}
-            body {{
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                margin: 0;
-                padding: 0;
-                background-color: white;
-                color: black;
-                line-height: 1.4;
-            }}
-            .boleta-print {{
-                width: 100%;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="boleta-print">
-            <div style="text-align: center; margin-bottom: 8px;">
-                <h1 style="font-size: 22px; font-weight: bold; margin: 0; letter-spacing: 2px; text-decoration: underline;">LuzBrill</h1>
-                <p style="margin: 3px 0; font-size: 11px; font-weight: bold;">{empresa.telefono or '061 572516 573408'}</p>
-                <p style="margin: 2px 0; font-size: 11px; font-weight: bold;">0983 628249 0973 598415</p>
-            </div>
-            
-            <div style="text-align: right; margin-bottom: 8px; font-size: 13px;">
-                <span style="font-weight: bold;">NOTA NRO: </span>
-                <span style="font-weight: bold;">{venta.id}</span>
-            </div>
-            
-            <div style="border-top: 2px solid black; border-bottom: 2px solid black; padding: 6px 0; margin-bottom: 8px;">
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
-                    <span style="font-weight: bold;">Razon Social:</span>
-                    <span style="text-align: right; font-weight: bold;">{cliente.nombre} {cliente.apellido or ''}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
-                    <span style="font-weight: bold;">Dirección:</span>
-                    <span style="text-align: right;">{cliente.direccion or '0'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
-                    <span style="font-weight: bold;">Telefono:</span>
-                    <span>{cliente.telefono or '0'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
-                    <span style="font-weight: bold;">Ruc:</span>
-                    <span>{cliente.ruc or '0'}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
-                    <span style="font-weight: bold;">Fecha de Venta:</span>
-                    <span>{venta.creado_en.strftime('%d/%m/%Y %I:%M %p')}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
-                    <span style="font-weight: bold;">Tipo Comprob:</span>
-                    <span>{venta.tipo_pago.value if venta.tipo_pago else 'CONTADO'}</span>
-                </div>
-            </div>
-            
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px;">
-                <thead>
-                    <tr style="border-bottom: 2px solid black; border-top: 2px solid black;">
-                        <th style="text-align: left; font-size: 10px; padding: 4px; font-weight: bold;">Cod</th>
-                        <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">Cant</th>
-                        <th style="text-align: left; font-size: 10px; padding: 4px; font-weight: bold;">Descripción</th>
-                        <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">IVA</th>
-                        <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">Precio</th>
-                        <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">Total</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {items_html}
-                </tbody>
-            </table>
-            
-            <div style="border-top: 2px solid black; padding-top: 6px; margin-top: 5px;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
-                    <span style="font-weight: bold;">Subtotal:</span>
-                    <span style="font-weight: bold;">{int(subtotal_sin_descuento):,}</span>
-                </div>
-                {descuento_html}
-                <div style="margin-bottom: 6px; font-size: 10px; border-top: 1px solid black; padding-top: 4px;">
-                    <span style="font-weight: bold;">En Letras: </span>
-                    <span style="text-transform: uppercase; font-weight: bold;">{total_letras}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; margin-top: 5px; border-top: 3px double black; padding-top: 6px;">
-                    <span>TOTAL A PAGAR:</span>
-                    <span>Gs. {int(venta.total):,}</span>
-                </div>
-            </div>
-            
-            <div style="margin-top: 12px; text-align: center;">
-                <p style="margin: 0 0 4px 0; font-size: 12px;">________________________________</p>
-                <p style="margin: 0; font-size: 11px; font-weight: bold;">Firma Cliente</p>
-                <p style="margin: 10px 0 0 0; font-size: 9px; font-style: italic; font-weight: bold;">
-                    Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.
-                </p>
-            </div>
-        </div>
-    </body>
-    </html>
-    '''
+    totales_data.append(['En Letras:', total_letras.upper()])
+    totales_data.append(['TOTAL A PAGAR:', f'Gs. {int(venta.total):,}'])
     
-    # Generar PDF con WeasyPrint
-    pdf = HTML(string=html_content).write_pdf()
-    return pdf
+    totales_table = Table(totales_data, colWidths=[100*mm, 82*mm])
+    totales_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -2), 'Courier-Bold'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -2), 8),
+        ('FONTSIZE', (0, -1), (-1, -1), 10),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(totales_table)
+    elements.append(Spacer(1, 5*mm))
+    
+    # Firma
+    firma_style = ParagraphStyle('Firma', fontName='Courier', fontSize=8, alignment=TA_CENTER)
+    elements.append(Paragraph('_' * 40, firma_style))
+    elements.append(Paragraph('<b>Firma Cliente</b>', firma_style))
+    elements.append(Spacer(1, 2*mm))
+    
+    footer_style = ParagraphStyle('Footer', fontName='Courier', fontSize=7, alignment=TA_CENTER, fontStyle='italic')
+    elements.append(Paragraph('<b>Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.</b>', footer_style))
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
 
 
 async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
-    """Genera PDF de factura usando WeasyPrint con el mismo formato que PrintModal.js"""
-    from weasyprint import HTML
-    
+    """Genera PDF de factura con formato similar a matriz de puntos"""
     # Obtener items
     items_result = await db.execute(
         select(VentaItem, Producto, MateriaLaboratorio)
@@ -2395,8 +2386,102 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
         .where(VentaItem.venta_id == venta.id)
     )
     
-    items = []
+    buffer = io.BytesIO()
+    # Tamaño de papel: 240mm x 200mm para factura
+    page_width = 240 * mm
+    page_height = 200 * mm
+    custom_size = (page_width, page_height)
+    
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=custom_size,
+        leftMargin=12*mm,
+        rightMargin=12*mm,
+        topMargin=10*mm,
+        bottomMargin=10*mm
+    )
+    
+    elements = []
+    
+    # Estilos
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        fontName='Courier-Bold',
+        fontSize=16,
+        alignment=TA_LEFT,
+        spaceAfter=1,
+        textDecoration='underline'
+    )
+    
+    normal_bold = ParagraphStyle(
+        'NormalBold',
+        fontName='Courier-Bold',
+        fontSize=9,
+        alignment=TA_LEFT
+    )
+    
+    # Header con empresa y número de factura
+    header_data = [
+        [
+            Paragraph(f'<b>{empresa.nombre or "Luz Brill S.A."}</b>', title_style),
+            Paragraph('<b>FACTURA</b>', ParagraphStyle('FacturaTit', fontName='Courier-Bold', fontSize=14, alignment=TA_CENTER))
+        ],
+        [
+            Paragraph(f'<b>RUC:</b> {empresa.ruc}', normal_bold),
+            Paragraph(f'<b>N° {venta.id:07d}</b>', ParagraphStyle('FacturaNum', fontName='Courier-Bold', fontSize=11, alignment=TA_CENTER))
+        ],
+        [
+            Paragraph(f'<b>{empresa.direccion}</b>', normal_bold),
+            ''
+        ],
+        [
+            Paragraph(f'<b>Tel:</b> {empresa.telefono}', normal_bold),
+            ''
+        ]
+    ]
+    
+    header_table = Table(header_data, colWidths=[140*mm, 56*mm])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOX', (1, 0), (1, 1), 2, colors.black),
+        ('ALIGN', (1, 0), (1, 1), 'CENTER'),
+        ('VALIGN', (1, 0), (1, 1), 'MIDDLE'),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 4*mm))
+    
+    # Información del cliente
+    cliente_data = [
+        [
+            f'Señor(es): {cliente.nombre} {cliente.apellido or ""}',
+            f'Fecha: {venta.creado_en.strftime("%d/%m/%Y")}'
+        ],
+        [
+            f'Dirección: {cliente.direccion or ""}',
+            f'RUC: {cliente.ruc}'
+        ],
+        [
+            f'Teléfono: {cliente.telefono or ""}',
+            f'Condición: {venta.tipo_pago.value if venta.tipo_pago else "CONTADO"}'
+        ]
+    ]
+    
+    cliente_table = Table(cliente_data, colWidths=[140*mm, 56*mm])
+    cliente_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('BOX', (0, 0), (-1, -1), 2, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(cliente_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Items
+    items_data = [['Cant.', 'Descripción', 'P. Unit.', 'Exenta', 'IVA 5%', 'IVA 10%']]
     subtotal_iva_10 = 0
+    
     for item_row in items_result.all():
         item, producto, materia = item_row
         
@@ -2407,166 +2492,90 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
         else:
             descripcion = 'Item'
         
-        items.append({
-            'cantidad': float(item.cantidad),
-            'descripcion': descripcion,
-            'precio_unitario': float(item.precio_unitario),
-            'iva_10': float(item.total)
-        })
         subtotal_iva_10 += float(item.total)
+        
+        items_data.append([
+            f"{item.cantidad:.2f}",
+            descripcion[:40],  # Limitar descripción
+            f"{int(item.precio_unitario):,}",
+            '0',
+            '0',
+            f"{int(item.total):,}"
+        ])
     
-    # Calcular totales
+    items_table = Table(items_data, colWidths=[18*mm, 95*mm, 25*mm, 18*mm, 18*mm, 25*mm])
+    items_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, 0), 'Courier-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Courier'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, -1), (-1, -1), 1, colors.grey),
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),  # Cantidad
+        ('ALIGN', (1, 0), (1, -1), 'LEFT'),  # Descripción
+        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),  # Resto a la derecha
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Totales
     base_imponible = float(venta.total) / 1.10
     iva_10 = float(venta.total) - base_imponible
     descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
     total_letras = numero_a_letras(int(venta.total))
     
-    # Items HTML rows
-    items_html = ''
-    for item in items:
-        items_html += f'''
-            <tr style="border-bottom: 1px solid #ccc;">
-                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">{item['cantidad']:.2f}</td>
-                <td style="font-size: 10px; padding: 3px 4px;">{item['descripcion']}</td>
-                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['precio_unitario']):,}</td>
-                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">0</td>
-                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">0</td>
-                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['iva_10']):,}</td>
-            </tr>
-        '''
+    totales_data = [
+        ['Subtotal IVA 10%:', f"Gs. {int(subtotal_iva_10 + venta.descuento):,}"]
+    ]
     
-    # Descuento row (only if > 0)
-    descuento_html = ''
     if venta.descuento > 0:
-        descuento_html = f'''
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
-                <span style="font-weight: bold;">Descuento ({descuento_porcentaje}%):</span>
-                <span style="font-weight: bold;">-Gs. {int(venta.descuento):,}</span>
-            </div>
-        '''
+        totales_data.append([f'Descuento ({descuento_porcentaje}%):', f"-Gs. {int(venta.descuento):,}"])
     
-    # HTML Template idéntico a PrintModal.js FacturaPrint
-    html_content = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            @page {{
-                size: 240mm 200mm;
-                margin: 10mm 12mm;
-            }}
-            body {{
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                margin: 0;
-                padding: 0;
-                background-color: white;
-                color: black;
-                line-height: 1.4;
-            }}
-        </style>
-    </head>
-    <body>
-        <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
-            <div>
-                <h1 style="font-size: 22px; font-weight: bold; margin: 0; letter-spacing: 2px; text-decoration: underline;">{empresa.nombre or 'Luz Brill S.A.'}</h1>
-                <p style="margin: 3px 0; font-size: 12px; font-weight: bold;">RUC: {empresa.ruc}</p>
-                <p style="margin: 2px 0; font-size: 12px; font-weight: bold;">{empresa.direccion}</p>
-                <p style="margin: 2px 0; font-size: 12px; font-weight: bold;">Tel: {empresa.telefono}</p>
-            </div>
-            <div style="text-align: right; border: 3px double black; padding: 10px 20px;">
-                <p style="font-size: 18px; font-weight: bold; margin: 0; letter-spacing: 1px;">FACTURA</p>
-                <p style="font-size: 14px; margin: 4px 0; font-weight: bold;">N° {venta.id:07d}</p>
-            </div>
-        </div>
-        
-        <div style="border: 2px solid black; padding: 8px; margin-bottom: 12px;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
-                <div style="width: 70%;">
-                    <span style="font-weight: bold;">Señor(es): </span>
-                    <span>{cliente.nombre} {cliente.apellido or ''}</span>
-                </div>
-                <div style="text-align: right;">
-                    <span style="font-weight: bold;">Fecha: </span>
-                    <span>{venta.creado_en.strftime('%d/%m/%Y')}</span>
-                </div>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
-                <div style="width: 70%;">
-                    <span style="font-weight: bold;">Dirección: </span>
-                    <span>{cliente.direccion or ''}</span>
-                </div>
-                <div style="text-align: right;">
-                    <span style="font-weight: bold;">RUC: </span>
-                    <span>{cliente.ruc}</span>
-                </div>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 11px;">
-                <div>
-                    <span style="font-weight: bold;">Teléfono: </span>
-                    <span>{cliente.telefono or ''}</span>
-                </div>
-                <div style="text-align: right;">
-                    <span style="font-weight: bold;">Condición: </span>
-                    <span>{venta.tipo_pago.value if venta.tipo_pago else 'CONTADO'}</span>
-                </div>
-            </div>
-        </div>
-        
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
-            <thead>
-                <tr style="border-top: 2px solid black; border-bottom: 2px solid black; background-color: #f0f0f0;">
-                    <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">Cant.</th>
-                    <th style="text-align: left; font-size: 10px; padding: 4px; font-weight: bold;">Descripción</th>
-                    <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">P. Unit.</th>
-                    <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">Exenta</th>
-                    <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">IVA 5%</th>
-                    <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">IVA 10%</th>
-                </tr>
-            </thead>
-            <tbody>
-                {items_html}
-            </tbody>
-        </table>
-        
-        <div style="border: 2px solid black; padding: 10px; margin-bottom: 12px;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
-                <span style="font-weight: bold;">Subtotal IVA 10%:</span>
-                <span style="font-weight: bold;">Gs. {int(subtotal_iva_10 + venta.descuento):,}</span>
-            </div>
-            {descuento_html}
-            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px; border-top: 1px solid black; padding-top: 4px;">
-                <span style="font-weight: bold;">Liquidación IVA 10%:</span>
-                <span style="font-weight: bold;">Gs. {round(iva_10, 0):,.0f}</span>
-            </div>
-            <div style="margin-bottom: 6px; font-size: 10px; border-top: 1px solid black; padding-top: 4px;">
-                <span style="font-weight: bold;">Son: </span>
-                <span style="text-transform: uppercase; font-weight: bold;">{total_letras} Guaraníes</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; border-top: 3px double black; padding-top: 6px;">
-                <span>TOTAL A PAGAR:</span>
-                <span>Gs. {int(venta.total):,}</span>
-            </div>
-        </div>
-        
-        <div style="margin-top: 20px; font-size: 10px;">
-            <div style="display: flex; justify-content: space-around;">
-                <div style="text-align: center;">
-                    <p style="border-top: 1px solid black; padding-top: 4px; margin: 0;">Firma y Sello Empresa</p>
-                </div>
-                <div style="text-align: center;">
-                    <p style="border-top: 1px solid black; padding-top: 4px; margin: 0;">Firma Cliente</p>
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    '''
+    totales_data.extend([
+        ['Liquidación IVA 10%:', f"Gs. {round(iva_10, 0):,.0f}"],
+        ['Son:', f"{total_letras.upper()} GUARANÍES"],
+        ['TOTAL A PAGAR:', f'Gs. {int(venta.total):,}']
+    ])
     
-    # Generar PDF con WeasyPrint
-    pdf = HTML(string=html_content).write_pdf()
-    return pdf
+    totales_table = Table(totales_data, colWidths=[100*mm, 80*mm])
+    totales_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -2), 'Courier-Bold'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -2), 8),
+        ('FONTSIZE', (0, -1), (-1, -1), 10),
+        ('BOX', (0, 0), (-1, -1), 2, colors.black),
+        ('LINEABOVE', (0, -2), (-1, -2), 1, colors.black),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(totales_table)
+    elements.append(Spacer(1, 8*mm))
+    
+    # Firmas
+    firmas_data = [
+        ['Firma y Sello Empresa', 'Firma Cliente']
+    ]
+    firmas_table = Table(firmas_data, colWidths=[90*mm, 90*mm])
+    firmas_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Courier'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('LINEABOVE', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(firmas_table)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
 
 
 # ==================== FUNCIONARIOS ====================
