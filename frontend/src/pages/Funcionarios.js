@@ -24,7 +24,7 @@ import { UserCog, Plus, Loader2, Search, Edit, Trash2, Wallet, Check } from 'luc
 import { toast } from 'sonner';
 
 const Funcionarios = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [funcionarios, setFuncionarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -211,13 +211,14 @@ const Funcionarios = () => {
           <h1 className="text-2xl font-bold">Funcionarios</h1>
           <p className="text-muted-foreground">Gestión de personal y adelantos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-funcionario-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Funcionario
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('funcionarios.crear') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-funcionario-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Funcionario
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Funcionario</DialogTitle>
@@ -323,18 +324,20 @@ const Funcionarios = () => {
             </div>
 
             {/* New Adelanto Form */}
-            <form onSubmit={handleCrearAdelanto} className="flex gap-2">
-              <Input
-                type="number"
-                placeholder="Monto del adelanto"
-                value={adelantoMonto}
-                onChange={(e) => setAdelantoMonto(e.target.value)}
-                className="flex-1"
-              />
-              <Button type="submit">
-                <Plus className="h-4 w-4 mr-1" /> Adelanto
-              </Button>
-            </form>
+            {userPermisos.includes('funcionarios.adelantos') && (
+              <form onSubmit={handleCrearAdelanto} className="flex gap-2">
+                <Input
+                  type="number"
+                  placeholder="Monto del adelanto"
+                  value={adelantoMonto}
+                  onChange={(e) => setAdelantoMonto(e.target.value)}
+                  className="flex-1"
+                />
+                <Button type="submit">
+                  <Plus className="h-4 w-4 mr-1" /> Adelanto
+                </Button>
+              </form>
+            )}
             
             {/* Adelantos List */}
             <div className="space-y-2 max-h-48 overflow-y-auto">
@@ -414,15 +417,16 @@ const Funcionarios = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleVerAdelantos(funcionario)}>
-                        <Wallet className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(funcionario)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(funcionario.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('funcionarios.ver_salarios') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleVerAdelantos(funcionario)}>
+                          <Wallet className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {userPermisos.includes('funcionarios.editar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(funcionario)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

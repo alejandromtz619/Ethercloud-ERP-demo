@@ -36,7 +36,7 @@ const formatCurrency = (val) => {
 };
 
 const Clientes = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [clientes, setClientes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -226,13 +226,14 @@ const Clientes = () => {
           <h1 className="text-2xl font-bold">Clientes</h1>
           <p className="text-muted-foreground">Gestión de clientes y créditos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-cliente-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Cliente
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('clientes.crear') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-cliente-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Cliente
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Cliente</DialogTitle>
@@ -393,20 +394,21 @@ const Clientes = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={() => handleOpenCreditos(cliente)}
-                        title="Ver créditos"
-                      >
-                        <CreditCard className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(cliente)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(cliente.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('clientes.ver_creditos') && (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleOpenCreditos(cliente)}
+                          title="Ver créditos"
+                        >
+                          <CreditCard className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {userPermisos.includes('clientes.editar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(cliente)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

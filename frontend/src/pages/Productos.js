@@ -32,7 +32,7 @@ import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand } from 'lu
 import { toast } from 'sonner';
 
 const Productos = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -187,13 +187,14 @@ const Productos = () => {
           <h1 className="text-2xl font-bold">Productos</h1>
           <p className="text-muted-foreground">Gestión del catálogo de productos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-producto-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Producto
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('productos.crear') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-producto-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Producto
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Producto</DialogTitle>
@@ -364,12 +365,16 @@ const Productos = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(producto)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(producto.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('productos.editar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(producto)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {userPermisos.includes('productos.eliminar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(producto.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

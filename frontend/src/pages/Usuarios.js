@@ -31,7 +31,7 @@ import { Users, Plus, Loader2, Search, Edit, Trash2, Shield, Key } from 'lucide-
 import { toast } from 'sonner';
 
 const Usuarios = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [usuarios, setUsuarios] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -321,12 +321,16 @@ const Usuarios = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(usuario)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(usuario.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('usuarios.gestionar') && (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => handleEdit(usuario)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleDelete(usuario.id)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

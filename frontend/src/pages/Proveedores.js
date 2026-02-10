@@ -24,7 +24,7 @@ import { Building2, Plus, Loader2, Search, Edit, Trash2, DollarSign, Check } fro
 import { toast } from 'sonner';
 
 const Proveedores = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -203,13 +203,14 @@ const Proveedores = () => {
           <h1 className="text-2xl font-bold">Proveedores</h1>
           <p className="text-muted-foreground">Gestión de proveedores y deudas</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-proveedor-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Proveedor
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('proveedores.crear') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-proveedor-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Proveedor
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Proveedor</DialogTitle>
@@ -408,15 +409,16 @@ const Proveedores = () => {
                   <TableCell>{proveedor.email || '-'}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleVerDeudas(proveedor)}>
-                        <DollarSign className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(proveedor)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(proveedor.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('proveedores.gestionar_deudas') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleVerDeudas(proveedor)}>
+                          <DollarSign className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {userPermisos.includes('proveedores.editar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(proveedor)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
