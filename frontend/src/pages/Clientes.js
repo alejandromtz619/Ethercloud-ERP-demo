@@ -335,6 +335,7 @@ const Clientes = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <Card>

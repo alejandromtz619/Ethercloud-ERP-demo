@@ -290,6 +290,7 @@ const Funcionarios = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Adelantos Dialog */}

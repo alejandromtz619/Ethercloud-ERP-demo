@@ -265,6 +265,7 @@ const Proveedores = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Deudas Dialog */}

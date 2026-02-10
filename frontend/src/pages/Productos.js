@@ -289,6 +289,7 @@ const Productos = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <Card>
