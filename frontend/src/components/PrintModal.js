@@ -463,17 +463,17 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY');
       
       // Format items list
-      let itemsText = '';
-      if (data.items && data.items.length > 0) {
-        itemsText = '\n*PRODUCTOS:*\n';
-        itemsText += '━━━━━━━━━━━━━━━━━━━━━━\n';
-        data.items.forEach((item, idx) => {
-          itemsText += `${idx + 1}. *${item.descripcion}*\n`;
-          itemsText += `   Cant: ${item.cantidad?.toFixed(2)} | Precio: Gs. ${item.precio?.toLocaleString('es-PY')}\n`;
-          itemsText += `   Subtotal: Gs. ${item.total?.toLocaleString('es-PY')}\n`;
-        });
-        itemsText += '━━━━━━━━━━━━━━━━━━━━━━\n';
-      }
+      //let itemsText = '';
+      //if (data.items && data.items.length > 0) {
+      //  itemsText = '\n*PRODUCTOS:*\n';
+      //  itemsText += '━━━━━━━━━━━━━━━━━━━━━━\n';
+      //  data.items.forEach((item, idx) => {
+      //    itemsText += `${idx + 1}. *${item.descripcion}*\n`;
+      //    itemsText += `   Cant: ${item.cantidad?.toFixed(2)} | Precio: Gs. ${item.precio?.toLocaleString('es-PY')}\n`;
+      //    itemsText += `   Subtotal: Gs. ${item.total?.toLocaleString('es-PY')}\n`;
+      //  });
+      //  itemsText += '━━━━━━━━━━━━━━━━━━━━━━\n';
+      //}
       
       const message = `
 🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*

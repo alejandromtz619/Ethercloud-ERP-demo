@@ -232,6 +232,12 @@ const Ventas = () => {
         return;
       }
       
+      // Check max items limit (10 items para no desbordar boleta)
+      if (cart.length >= 10) {
+        toast.error('Máximo 10 productos por venta. Cree una nueva venta para más items.');
+        return;
+      }
+      
       setCart([...cart, {
         materia_laboratorio_id: item.id,
         nombre: item.nombre,
@@ -239,6 +245,11 @@ const Ventas = () => {
         precio_unitario: parseFloat(item.precio),
         observaciones: ''
       }]);
+      
+      // Warning when approaching limit
+      if (cart.length >= 7) {
+        toast.warning(`⚠️ ${cart.length + 1}/10 productos. La boleta tiene espacio limitado.`);
+      }
     } else {
       // Products can be added multiple times
       if (existingIndex >= 0) {
@@ -259,6 +270,12 @@ const Ventas = () => {
           return;
         }
         
+        // Check max items limit (10 items para no desbordar boleta)
+        if (cart.length >= 10) {
+          toast.error('Máximo 10 productos por venta. Cree una nueva venta para más items.');
+          return;
+        }
+        
         setCart([...cart, {
           producto_id: item.id,
           nombre: item.nombre,
@@ -267,6 +284,11 @@ const Ventas = () => {
           stock_disponible: item.stock_total,
           observaciones: ''
         }]);
+        
+        // Warning when approaching limit
+        if (cart.length >= 7) {
+          toast.warning(`⚠️ ${cart.length + 1}/10 productos. La boleta tiene espacio limitado.`);
+        }
       }
     }
     
@@ -731,7 +753,12 @@ const Ventas = () => {
               <ShoppingCart className="h-5 w-5" />
               Carrito
               {cart.length > 0 && (
-                <Badge className="ml-auto">{cart.length}</Badge>
+                <Badge 
+                  className="ml-auto" 
+                  variant={cart.length >= 8 ? "destructive" : cart.length >= 6 ? "warning" : "default"}
+                >
+                  {cart.length}/10
+                </Badge>
               )}
             </CardTitle>
           </CardHeader>
