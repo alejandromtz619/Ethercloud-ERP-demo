@@ -219,7 +219,7 @@ const AppRoutes = () => {
       <Route 
         path="/usuarios" 
         element={
-          <ProtectedRoute permission="usuarios.gestionar">
+          <ProtectedRoute permission="usuarios.ver">
             <Layout>
               <Usuarios />
             </Layout>

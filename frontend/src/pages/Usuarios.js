@@ -174,13 +174,14 @@ const Usuarios = () => {
           <h1 className="text-2xl font-bold">Usuarios y Perfiles</h1>
           <p className="text-muted-foreground">Gestión de accesos y permisos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-usuario-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Usuario
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('usuarios.gestionar') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-usuario-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Usuario
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Usuario</DialogTitle>
@@ -239,6 +240,7 @@ const Usuarios = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Roles Available */}
@@ -300,19 +302,25 @@ const Usuarios = () => {
                   <TableCell className="text-sm">{usuario.email}</TableCell>
                   <TableCell>{usuario.telefono || '-'}</TableCell>
                   <TableCell>
-                    <Select 
-                      value={usuario.rol_id?.toString() || ""} 
-                      onValueChange={(v) => handleAsignarRol(usuario.id, parseInt(v))}
-                    >
-                      <SelectTrigger className="w-40">
-                        <SelectValue placeholder="Sin asignar" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roles.map(r => (
-                          <SelectItem key={r.id} value={r.id.toString()}>{r.nombre}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {userPermisos.includes('usuarios.gestionar') ? (
+                      <Select 
+                        value={usuario.rol_id?.toString() || ""} 
+                        onValueChange={(v) => handleAsignarRol(usuario.id, parseInt(v))}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue placeholder="Sin asignar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {roles.map(r => (
+                            <SelectItem key={r.id} value={r.id.toString()}>{r.nombre}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        {roles.find(r => r.id === usuario.rol_id)?.nombre || 'Sin asignar'}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge className={usuario.activo ? "badge-success" : "badge-warning"}>
