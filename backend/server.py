@@ -3011,6 +3011,26 @@ async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Dep
     ventas_hoy = ventas_row[0] if ventas_row else Decimal('0')
     cantidad_ventas = ventas_row[1] if ventas_row else 0
     
+    # Ventas del mes corriente
+    month_start = datetime.combine(today.replace(day=1), datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    month_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=PARAGUAY_TZ)
+    
+    ventas_mes_result = await db.execute(
+        select(
+            func_sql.coalesce(func_sql.sum(Venta.total), 0),
+            func_sql.count(Venta.id)
+        )
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= month_start,
+            Venta.creado_en <= month_end
+        )
+    )
+    ventas_mes_row = ventas_mes_result.first()
+    ventas_mes = ventas_mes_row[0] if ventas_mes_row else Decimal('0')
+    cantidad_ventas_mes = ventas_mes_row[1] if ventas_mes_row else 0
+    
     deliverys_result = await db.execute(
         select(func_sql.count(Entrega.id))
         .join(Venta, Entrega.venta_id == Venta.id)
@@ -3101,6 +3121,8 @@ async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Dep
     return DashboardStats(
         ventas_hoy=ventas_hoy,
         cantidad_ventas_hoy=cantidad_ventas,
+        ventas_mes=ventas_mes,
+        cantidad_ventas_mes=cantidad_ventas_mes,
         deliverys_pendientes=deliverys_pendientes,
         productos_stock_bajo=len(productos_bajo_stock),
         creditos_por_vencer=0,

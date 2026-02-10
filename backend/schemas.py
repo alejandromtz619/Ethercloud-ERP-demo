@@ -537,6 +537,8 @@ class StockBajo(BaseModel):
 class DashboardStats(BaseModel):
     ventas_hoy: Decimal = 0
     cantidad_ventas_hoy: int = 0
+    ventas_mes: Decimal = 0
+    cantidad_ventas_mes: int = 0
     deliverys_pendientes: int = 0
     productos_stock_bajo: int = 0
     creditos_por_vencer: int = 0
