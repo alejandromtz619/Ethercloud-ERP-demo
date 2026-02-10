@@ -44,7 +44,7 @@ import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 
 const Stock = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [stock, setStock] = useState([]);
   const [almacenes, setAlmacenes] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -283,13 +283,14 @@ const Stock = () => {
           </Dialog>
 
           {/* Traspaso */}
-          <Dialog open={traspasoDialogOpen} onOpenChange={setTraspasoDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <ArrowRight className="mr-2 h-4 w-4" />
-                Traspaso
-              </Button>
-            </DialogTrigger>
+          {userPermisos.includes('stock.traspasar') && (
+            <Dialog open={traspasoDialogOpen} onOpenChange={setTraspasoDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline">
+                  <ArrowRight className="mr-2 h-4 w-4" />
+                  Traspaso
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Traspaso entre Almacenes</DialogTitle>
@@ -394,15 +395,17 @@ const Stock = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
 
           {/* Entrada Stock */}
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="entrada-stock-btn">
-                <Plus className="mr-2 h-4 w-4" />
-                Entrada
-              </Button>
-            </DialogTrigger>
+          {userPermisos.includes('stock.entrada') && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="entrada-stock-btn">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Entrada
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Entrada de Stock</DialogTitle>
@@ -494,15 +497,17 @@ const Stock = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
 
           {/* Salida Stock */}
-          <Dialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="destructive" data-testid="salida-stock-btn">
-                <Minus className="mr-2 h-4 w-4" />
-                Salida
-              </Button>
-            </DialogTrigger>
+          {userPermisos.includes('stock.salida') && (
+            <Dialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="destructive" data-testid="salida-stock-btn">
+                  <Minus className="mr-2 h-4 w-4" />
+                  Salida
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Salida/Eliminación de Stock</DialogTitle>
@@ -602,6 +607,7 @@ const Stock = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
         </div>
       </div>
 

@@ -43,7 +43,7 @@ const formatCurrency = (val) => {
 };
 
 const HistorialVentas = () => {
-  const { api, empresa, API_URL, token } = useApp();
+  const { api, empresa, API_URL, token, userPermisos } = useApp();
   const [ventas, setVentas] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
@@ -448,7 +448,7 @@ const HistorialVentas = () => {
                           >
                             <Printer className="h-4 w-4" />
                           </Button>
-                          {venta.estado !== 'ANULADA' && (
+                          {venta.estado !== 'ANULADA' && userPermisos.includes('ventas.anular') && (
                             <Button 
                               variant="ghost" 
                               size="icon" 

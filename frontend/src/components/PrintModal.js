@@ -252,7 +252,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 });
 
 const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
-  const { api } = useApp();
+  const { api, userPermisos } = useApp();
   const [printBoleta, setPrintBoleta] = useState(true);
   const [printFactura, setPrintFactura] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -573,22 +573,24 @@ Gracias por su compra! 🙏
               </div>
             </div>
             
-            <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
-              <Checkbox 
-                id="factura" 
-                checked={printFactura} 
-                onCheckedChange={setPrintFactura}
-              />
-              <div className="flex-1">
-                <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
-                  <FileText className="h-4 w-4" />
-                  Factura
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Documento fiscal con desglose de IVA (requiere RUC)
-                </p>
+            {userPermisos.includes('ventas.imprimir_factura') && (
+              <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
+                <Checkbox 
+                  id="factura" 
+                  checked={printFactura} 
+                  onCheckedChange={setPrintFactura}
+                />
+                <div className="flex-1">
+                  <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
+                    <FileText className="h-4 w-4" />
+                    Factura
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Documento fiscal con desglose de IVA (requiere RUC)
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
           
           {ventaEstado === 'CONFIRMADA' && (

@@ -24,7 +24,7 @@ const ROUTE_PERMISSIONS = {
   '/stock': 'stock.ver',
   '/flota': 'flota.ver',
   '/facturas': 'facturas.ver',
-  '/usuarios': 'usuarios.gestionar',
+  '/usuarios': 'usuarios.ver',
   '/permisos': 'usuarios.gestionar',
   '/sistema': 'sistema.configurar',
   '/historial-ventas': 'ventas.ver_historial',
