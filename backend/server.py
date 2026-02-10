@@ -1792,160 +1792,174 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
 @api_router.get("/ventas/{venta_id}/boleta")
 async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
     """Generate boleta data for printing"""
-    result = await db.execute(
-        select(Venta, Cliente, Usuario, Empresa)
-        .join(Cliente, Venta.cliente_id == Cliente.id)
-        .join(Usuario, Venta.usuario_id == Usuario.id)
-        .join(Empresa, Venta.empresa_id == Empresa.id)
-        .where(Venta.id == venta_id)
-    )
-    row = result.first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Venta no encontrada")
-    
-    venta, cliente, usuario, empresa = row
-    
-    items_result = await db.execute(
-        select(VentaItem, Producto, MateriaLaboratorio)
-        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
-        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-        .where(VentaItem.venta_id == venta_id)
-    )
-    
-    items = []
-    for item_row in items_result.all():
-        item, producto, materia = item_row
+    try:
+        result = await db.execute(
+            select(Venta, Cliente, Usuario, Empresa)
+            .join(Cliente, Venta.cliente_id == Cliente.id)
+            .join(Usuario, Venta.usuario_id == Usuario.id)
+            .join(Empresa, Venta.empresa_id == Empresa.id)
+            .where(Venta.id == venta_id)
+        )
+        row = result.first()
+        if not row:
+            logger.warning(f"Venta {venta_id} no encontrada o datos relacionados eliminados")
+            raise HTTPException(status_code=404, detail="Venta no encontrada o datos relacionados faltantes")
         
-        if producto:
-            codigo = producto.codigo_barra or str(producto.id)
-            descripcion = producto.nombre
-        elif materia:
-            codigo = f"LAB-{materia.id}"
-            descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
-        else:
-            codigo = 'N/A'
-            descripcion = 'Item'
+        venta, cliente, usuario, empresa = row
         
-        items.append({
-            'codigo': codigo,
-            'cantidad': float(item.cantidad),
-            'descripcion': descripcion,
-            'iva': 10,
-            'precio': float(item.precio_unitario),
-            'total': float(item.total)
-        })
-    
-    return {
-        'tipo': 'BOLETA',
-        'numero': venta.id,
-        'fecha': venta.creado_en.strftime('%d/%m/%Y %I:%M %p'),
-        'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
-        'empresa': {
-            'nombre': empresa.nombre,
-            'ruc': empresa.ruc,
-            'telefono': empresa.telefono,
-            'direccion': empresa.direccion
-        },
-        'cliente': {
-            'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
-            'ruc': cliente.ruc or '0',
-            'direccion': cliente.direccion or '0',
-            'telefono': cliente.telefono or '0'
-        },
-        'vendedor': f"{usuario.nombre} {usuario.apellido or ''}".strip(),
-        'items': items,
-        'subtotal_sin_descuento': float(venta.total + venta.descuento),
-        'descuento': float(venta.descuento),
-        'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
-        'subtotal': float(venta.total + venta.descuento),
-        'iva': float(venta.iva),
-        'total': float(venta.total),
-        'total_letras': numero_a_letras(int(venta.total)) + ' Guaraníes'
-    }
+        items_result = await db.execute(
+            select(VentaItem, Producto, MateriaLaboratorio)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+            .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+            .where(VentaItem.venta_id == venta_id)
+        )
+        
+        items = []
+        for item_row in items_result.all():
+            item, producto, materia = item_row
+            
+            if producto:
+                codigo = producto.codigo_barra or str(producto.id)
+                descripcion = producto.nombre
+            elif materia:
+                codigo = f"LAB-{materia.id}"
+                descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
+            else:
+                codigo = 'N/A'
+                descripcion = 'Item'
+            
+            items.append({
+                'codigo': codigo,
+                'cantidad': float(item.cantidad),
+                'descripcion': descripcion,
+                'iva': 10,
+                'precio': float(item.precio_unitario),
+                'total': float(item.total)
+            })
+        
+        return {
+            'tipo': 'BOLETA',
+            'numero': venta.id,
+            'fecha': venta.creado_en.strftime('%d/%m/%Y %I:%M %p'),
+            'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
+            'empresa': {
+                'nombre': empresa.nombre,
+                'ruc': empresa.ruc,
+                'telefono': empresa.telefono,
+                'direccion': empresa.direccion
+            },
+            'cliente': {
+                'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
+                'ruc': cliente.ruc or '0',
+                'direccion': cliente.direccion or '0',
+                'telefono': cliente.telefono or '0'
+            },
+            'vendedor': f"{usuario.nombre} {usuario.apellido or ''}".strip(),
+            'items': items,
+            'subtotal_sin_descuento': float(venta.total + venta.descuento),
+            'descuento': float(venta.descuento),
+            'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
+            'subtotal': float(venta.total + venta.descuento),
+            'iva': float(venta.iva),
+            'total': float(venta.total),
+            'total_letras': numero_a_letras(int(venta.total)) + ' Guaraníes'
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando datos de boleta para venta {venta_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al generar boleta: {str(e)}")
 
 @api_router.get("/ventas/{venta_id}/factura")
 async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
     """Generate factura data for printing"""
-    result = await db.execute(
-        select(Venta, Cliente, Usuario, Empresa)
-        .join(Cliente, Venta.cliente_id == Cliente.id)
-        .join(Usuario, Venta.usuario_id == Usuario.id)
-        .join(Empresa, Venta.empresa_id == Empresa.id)
-        .where(Venta.id == venta_id)
-    )
-    row = result.first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Venta no encontrada")
-    
-    venta, cliente, usuario, empresa = row
-    
-    # Check if client has RUC for factura
-    if not cliente.ruc:
-        raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
-    
-    items_result = await db.execute(
-        select(VentaItem, Producto, MateriaLaboratorio)
-        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
-        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-        .where(VentaItem.venta_id == venta_id)
-    )
-    
-    items = []
-    for item_row in items_result.all():
-        item, producto, materia = item_row
+    try:
+        result = await db.execute(
+            select(Venta, Cliente, Usuario, Empresa)
+            .join(Cliente, Venta.cliente_id == Cliente.id)
+            .join(Usuario, Venta.usuario_id == Usuario.id)
+            .join(Empresa, Venta.empresa_id == Empresa.id)
+            .where(Venta.id == venta_id)
+        )
+        row = result.first()
+        if not row:
+            logger.warning(f"Venta {venta_id} no encontrada o datos relacionados eliminados")
+            raise HTTPException(status_code=404, detail="Venta no encontrada o datos relacionados faltantes")
         
-        if producto:
-            descripcion = producto.nombre
-        elif materia:
-            descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
-        else:
-            descripcion = 'Item'
+        venta, cliente, usuario, empresa = row
         
-        items.append({
-            'cantidad': float(item.cantidad),
-            'descripcion': descripcion,
-            'precio_unitario': float(item.precio_unitario),
-            'exenta': 0,
-            'iva_5': 0,
-            'iva_10': float(item.total)
-        })
-    
-    # Calculate IVA breakdown
-    base_imponible = float(venta.total) / 1.10
-    iva_10 = float(venta.total) - base_imponible
-    
-    return {
-        'tipo': 'FACTURA',
-        'numero': f"{venta.id:07d}",
-        'fecha': venta.creado_en.strftime('%d de %B de %Y'),
-        'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
-        'empresa': {
-            'nombre': empresa.nombre,
-            'ruc': empresa.ruc,
-            'telefono': empresa.telefono,
-            'direccion': empresa.direccion
-        },
-        'cliente': {
-            'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
-            'ruc': cliente.ruc,
-            'direccion': cliente.direccion or '',
-            'telefono': cliente.telefono or ''
-        },
-        'items': items,
-        'subtotal_exenta': 0,
-        'subtotal_iva_5': 0,
-        'subtotal_iva_10': float(venta.total + venta.descuento),
-        'descuento': float(venta.descuento),
-        'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
-        'iva_10': round(iva_10, 0),
-        'total': float(venta.total),
-        'total_letras': numero_a_letras(int(venta.total)),
-        'liquidacion_iva': {
-            'iva_5': 0,
+        # Check if client has RUC for factura
+        if not cliente.ruc:
+            raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+        
+        items_result = await db.execute(
+            select(VentaItem, Producto, MateriaLaboratorio)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+            .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+            .where(VentaItem.venta_id == venta_id)
+        )
+        
+        items = []
+        for item_row in items_result.all():
+            item, producto, materia = item_row
+            
+            if producto:
+                descripcion = producto.nombre
+            elif materia:
+                descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
+            else:
+                descripcion = 'Item'
+            
+            items.append({
+                'cantidad': float(item.cantidad),
+                'descripcion': descripcion,
+                'precio_unitario': float(item.precio_unitario),
+                'exenta': 0,
+                'iva_5': 0,
+                'iva_10': float(item.total)
+            })
+        
+        # Calculate IVA breakdown
+        base_imponible = float(venta.total) / 1.10
+        iva_10 = float(venta.total) - base_imponible
+        
+        return {
+            'tipo': 'FACTURA',
+            'numero': f"{venta.id:07d}",
+            'fecha': venta.creado_en.strftime('%d de %B de %Y'),
+            'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
+            'empresa': {
+                'nombre': empresa.nombre,
+                'ruc': empresa.ruc,
+                'telefono': empresa.telefono,
+                'direccion': empresa.direccion
+            },
+            'cliente': {
+                'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
+                'ruc': cliente.ruc,
+                'direccion': cliente.direccion or '',
+                'telefono': cliente.telefono or ''
+            },
+            'items': items,
+            'subtotal_exenta': 0,
+            'subtotal_iva_5': 0,
+            'subtotal_iva_10': float(venta.total + venta.descuento),
+            'descuento': float(venta.descuento),
+            'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
             'iva_10': round(iva_10, 0),
-            'total_iva': round(iva_10, 0)
+            'total': float(venta.total),
+            'total_letras': numero_a_letras(int(venta.total)),
+            'liquidacion_iva': {
+                'iva_5': 0,
+                'iva_10': round(iva_10, 0),
+                'total_iva': round(iva_10, 0)
+            }
         }
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando datos de factura para venta {venta_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al generar factura: {str(e)}")
 
 # ==================== DOCUMENTOS TEMPORALES ====================
 # Configuración de directorio para documentos temporales
@@ -2193,7 +2207,9 @@ async def limpiar_documentos_expirados(
 
 # Funciones auxiliares para generar PDFs
 async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
-    """Genera PDF de boleta y retorna los bytes"""
+    """Genera PDF de boleta usando WeasyPrint con el mismo formato que PrintModal.js"""
+    from weasyprint import HTML
+    
     # Obtener items
     items_result = await db.execute(
         select(VentaItem, Producto, MateriaLaboratorio)
@@ -2202,79 +2218,176 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
         .where(VentaItem.venta_id == venta.id)
     )
     
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
-    styles = getSampleStyleSheet()
-    
-    # Título
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=18, alignment=TA_CENTER)
-    elements.append(Paragraph(f"BOLETA - {empresa.nombre}", title_style))
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Info básica
-    info_data = [
-        ['Número:', str(venta.id), 'Fecha:', venta.creado_en.strftime('%d/%m/%Y')],
-        ['Cliente:', f"{cliente.nombre} {cliente.apellido or ''}".strip(), 'RUC:', cliente.ruc or 'N/A'],
-        ['Vendedor:', f"{vendedor.nombre} {vendedor.apellido or ''}".strip(), 'Pago:', venta.tipo_pago.value if venta.tipo_pago else 'EFECTIVO']
-    ]
-    info_table = Table(info_data, colWidths=[1.5*inch, 2*inch, 1.5*inch, 2*inch])
-    info_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(info_table)
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Items
-    items_data = [['Cant.', 'Descripción', 'Precio Unit.', 'Total']]
+    items = []
     for item_row in items_result.all():
         item, producto, materia = item_row
-        descripcion = producto.nombre if producto else (materia.nombre if materia else 'Producto')
-        items_data.append([
-            str(item.cantidad),
-            descripcion,
-            f"Gs. {int(item.precio_unitario):,}",
-            f"Gs. {int(item.total):,}"
-        ])
+        
+        if producto:
+            codigo = producto.codigo_barra or str(producto.id)
+            descripcion = producto.nombre
+        elif materia:
+            codigo = f"LAB-{materia.id}"
+            descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
+        else:
+            codigo = 'N/A'
+            descripcion = 'Item'
+        
+        items.append({
+            'codigo': codigo,
+            'cantidad': float(item.cantidad),
+            'descripcion': descripcion,
+            'precio': float(item.precio_unitario),
+            'total': float(item.total)
+        })
     
-    items_table = Table(items_data, colWidths=[0.8*inch, 3.5*inch, 1.5*inch, 1.5*inch])
-    items_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    elements.append(items_table)
-    elements.append(Spacer(1, 0.3*inch))
+    # Calcular totales
+    subtotal_sin_descuento = float(venta.total + venta.descuento)
+    descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
+    total_letras = numero_a_letras(int(venta.total)) + ' Guaraníes'
     
-    # Total
-    total_data = [
-        ['Descuento:', f"Gs. {int(venta.descuento or 0):,}"],
-        ['IVA 10%:', f"Gs. {int(venta.iva or 0):,}"],
-        ['TOTAL:', f"Gs. {int(venta.total):,}"]
-    ]
-    total_table = Table(total_data, colWidths=[5*inch, 2*inch])
-    total_table.setStyle(TableStyle([
-        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, -1), (-1, -1), 14),
-        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black)
-    ]))
-    elements.append(total_table)
+    # Items HTML rows
+    items_html = ''
+    for item in items:
+        items_html += f'''
+            <tr style="border-bottom: 1px solid #ccc;">
+                <td style="font-size: 10px; padding: 3px 4px;">{item['codigo']}</td>
+                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">{item['cantidad']:.2f}</td>
+                <td style="font-size: 10px; padding: 3px 4px;">{item['descripcion']}</td>
+                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">10</td>
+                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['precio']):,}</td>
+                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['total']):,}</td>
+            </tr>
+        '''
     
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer.read()
+    # Descuento row (only if > 0)
+    descuento_html = ''
+    if venta.descuento > 0:
+        descuento_html = f'''
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
+                <span style="font-weight: bold;">Descuento ({descuento_porcentaje}%):</span>
+                <span style="font-weight: bold;">-{int(venta.descuento):,}</span>
+            </div>
+        '''
+    
+    # HTML Template idéntico a PrintModal.js BoletaPrint
+    html_content = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: 240mm 140mm;
+                margin: 8mm 10mm;
+            }}
+            body {{
+                font-family: 'Courier New', monospace;
+                font-size: 12px;
+                margin: 0;
+                padding: 0;
+                background-color: white;
+                color: black;
+                line-height: 1.4;
+            }}
+            .boleta-print {{
+                width: 100%;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="boleta-print">
+            <div style="text-align: center; margin-bottom: 8px;">
+                <h1 style="font-size: 22px; font-weight: bold; margin: 0; letter-spacing: 2px; text-decoration: underline;">LuzBrill</h1>
+                <p style="margin: 3px 0; font-size: 11px; font-weight: bold;">{empresa.telefono or '061 572516 573408'}</p>
+                <p style="margin: 2px 0; font-size: 11px; font-weight: bold;">0983 628249 0973 598415</p>
+            </div>
+            
+            <div style="text-align: right; margin-bottom: 8px; font-size: 13px;">
+                <span style="font-weight: bold;">NOTA NRO: </span>
+                <span style="font-weight: bold;">{venta.id}</span>
+            </div>
+            
+            <div style="border-top: 2px solid black; border-bottom: 2px solid black; padding: 6px 0; margin-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
+                    <span style="font-weight: bold;">Razon Social:</span>
+                    <span style="text-align: right; font-weight: bold;">{cliente.nombre} {cliente.apellido or ''}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
+                    <span style="font-weight: bold;">Dirección:</span>
+                    <span style="text-align: right;">{cliente.direccion or '0'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
+                    <span style="font-weight: bold;">Telefono:</span>
+                    <span>{cliente.telefono or '0'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
+                    <span style="font-weight: bold;">Ruc:</span>
+                    <span>{cliente.ruc or '0'}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
+                    <span style="font-weight: bold;">Fecha de Venta:</span>
+                    <span>{venta.creado_en.strftime('%d/%m/%Y %I:%M %p')}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0;">
+                    <span style="font-weight: bold;">Tipo Comprob:</span>
+                    <span>{venta.tipo_pago.value if venta.tipo_pago else 'CONTADO'}</span>
+                </div>
+            </div>
+            
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 8px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid black; border-top: 2px solid black;">
+                        <th style="text-align: left; font-size: 10px; padding: 4px; font-weight: bold;">Cod</th>
+                        <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">Cant</th>
+                        <th style="text-align: left; font-size: 10px; padding: 4px; font-weight: bold;">Descripción</th>
+                        <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">IVA</th>
+                        <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">Precio</th>
+                        <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items_html}
+                </tbody>
+            </table>
+            
+            <div style="border-top: 2px solid black; padding-top: 6px; margin-top: 5px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
+                    <span style="font-weight: bold;">Subtotal:</span>
+                    <span style="font-weight: bold;">{int(subtotal_sin_descuento):,}</span>
+                </div>
+                {descuento_html}
+                <div style="margin-bottom: 6px; font-size: 10px; border-top: 1px solid black; padding-top: 4px;">
+                    <span style="font-weight: bold;">En Letras: </span>
+                    <span style="text-transform: uppercase; font-weight: bold;">{total_letras}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; margin-top: 5px; border-top: 3px double black; padding-top: 6px;">
+                    <span>TOTAL A PAGAR:</span>
+                    <span>Gs. {int(venta.total):,}</span>
+                </div>
+            </div>
+            
+            <div style="margin-top: 12px; text-align: center;">
+                <p style="margin: 0 0 4px 0; font-size: 12px;">________________________________</p>
+                <p style="margin: 0; font-size: 11px; font-weight: bold;">Firma Cliente</p>
+                <p style="margin: 10px 0 0 0; font-size: 9px; font-style: italic; font-weight: bold;">
+                    Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+    
+    # Generar PDF con WeasyPrint
+    pdf = HTML(string=html_content).write_pdf()
+    return pdf
 
 
 async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
-    """Genera PDF de factura y retorna los bytes"""
-    # Similar a boleta pero con más detalles fiscales
+    """Genera PDF de factura usando WeasyPrint con el mismo formato que PrintModal.js"""
+    from weasyprint import HTML
+    
+    # Obtener items
     items_result = await db.execute(
         select(VentaItem, Producto, MateriaLaboratorio)
         .outerjoin(Producto, VentaItem.producto_id == Producto.id)
@@ -2282,86 +2395,178 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
         .where(VentaItem.venta_id == venta.id)
     )
     
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
-    elements = []
-    styles = getSampleStyleSheet()
-    
-    # Título
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=TA_CENTER)
-    elements.append(Paragraph(f"FACTURA - {empresa.nombre}", title_style))
-    elements.append(Paragraph(f"RUC: {empresa.ruc}", ParagraphStyle('Subtitle', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER)))
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Info del cliente
-    cliente_data = [
-        ['CLIENTE:', f"{cliente.nombre} {cliente.apellido or ''}".strip()],
-        ['RUC:', cliente.ruc],
-        ['Dirección:', cliente.direccion or 'N/A'],
-        ['Fecha:', venta.creado_en.strftime('%d/%m/%Y %H:%M')],
-        ['Factura N°:', str(venta.id)]
-    ]
-    cliente_table = Table(cliente_data, colWidths=[2*inch, 5*inch])
-    cliente_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-        ('BOX', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    elements.append(cliente_table)
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Items con IVA
-    items_data = [['Cant.', 'Descripción', 'P. Unit.', 'Exenta', 'IVA 5%', 'IVA 10%']]
+    items = []
     subtotal_iva_10 = 0
-    
     for item_row in items_result.all():
         item, producto, materia = item_row
-        descripcion = producto.nombre if producto else (materia.nombre if materia else 'Producto')
-        subtotal_iva_10 += float(item.total)
         
-        items_data.append([
-            str(item.cantidad),
-            descripcion,
-            f"Gs. {int(item.precio_unitario):,}",
-            '0',
-            '0',
-            f"Gs. {int(item.total):,}"
-        ])
+        if producto:
+            descripcion = producto.nombre
+        elif materia:
+            descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
+        else:
+            descripcion = 'Item'
+        
+        items.append({
+            'cantidad': float(item.cantidad),
+            'descripcion': descripcion,
+            'precio_unitario': float(item.precio_unitario),
+            'iva_10': float(item.total)
+        })
+        subtotal_iva_10 += float(item.total)
     
-    items_table = Table(items_data, colWidths=[0.7*inch, 3*inch, 1.2*inch, 0.9*inch, 0.9*inch, 1.2*inch])
-    items_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    elements.append(items_table)
-    elements.append(Spacer(1, 0.3*inch))
+    # Calcular totales
+    base_imponible = float(venta.total) / 1.10
+    iva_10 = float(venta.total) - base_imponible
+    descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
+    total_letras = numero_a_letras(int(venta.total))
     
-    # Totales fiscales
-    iva_10 = subtotal_iva_10 / 11
-    total_data = [
-        ['Subtotal IVA 10%:', f"Gs. {int(subtotal_iva_10 + venta.descuento):,}"],
-        ['Descuento:', f"Gs. {int(venta.descuento or 0):,}"],
-        ['Liquidación IVA 10%:', f"Gs. {int(iva_10):,}"],
-        ['TOTAL A PAGAR:', f"Gs. {int(venta.total):,}"]
-    ]
-    total_table = Table(total_data, colWidths=[5*cm, 4*cm])
-    total_table.setStyle(TableStyle([
-        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, -1), (-1, -1), 14),
-        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
-        ('BOX', (0, 0), (-1, -1), 1, colors.black)
-    ]))
-    elements.append(total_table)
+    # Items HTML rows
+    items_html = ''
+    for item in items:
+        items_html += f'''
+            <tr style="border-bottom: 1px solid #ccc;">
+                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">{item['cantidad']:.2f}</td>
+                <td style="font-size: 10px; padding: 3px 4px;">{item['descripcion']}</td>
+                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['precio_unitario']):,}</td>
+                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">0</td>
+                <td style="text-align: center; font-size: 10px; padding: 3px 4px;">0</td>
+                <td style="text-align: right; font-size: 10px; padding: 3px 4px; font-weight: bold;">{int(item['iva_10']):,}</td>
+            </tr>
+        '''
     
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer.read()
+    # Descuento row (only if > 0)
+    descuento_html = ''
+    if venta.descuento > 0:
+        descuento_html = f'''
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
+                <span style="font-weight: bold;">Descuento ({descuento_porcentaje}%):</span>
+                <span style="font-weight: bold;">-Gs. {int(venta.descuento):,}</span>
+            </div>
+        '''
+    
+    # HTML Template idéntico a PrintModal.js FacturaPrint
+    html_content = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            @page {{
+                size: 240mm 200mm;
+                margin: 10mm 12mm;
+            }}
+            body {{
+                font-family: 'Courier New', monospace;
+                font-size: 12px;
+                margin: 0;
+                padding: 0;
+                background-color: white;
+                color: black;
+                line-height: 1.4;
+            }}
+        </style>
+    </head>
+    <body>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+            <div>
+                <h1 style="font-size: 22px; font-weight: bold; margin: 0; letter-spacing: 2px; text-decoration: underline;">{empresa.nombre or 'Luz Brill S.A.'}</h1>
+                <p style="margin: 3px 0; font-size: 12px; font-weight: bold;">RUC: {empresa.ruc}</p>
+                <p style="margin: 2px 0; font-size: 12px; font-weight: bold;">{empresa.direccion}</p>
+                <p style="margin: 2px 0; font-size: 12px; font-weight: bold;">Tel: {empresa.telefono}</p>
+            </div>
+            <div style="text-align: right; border: 3px double black; padding: 10px 20px;">
+                <p style="font-size: 18px; font-weight: bold; margin: 0; letter-spacing: 1px;">FACTURA</p>
+                <p style="font-size: 14px; margin: 4px 0; font-weight: bold;">N° {venta.id:07d}</p>
+            </div>
+        </div>
+        
+        <div style="border: 2px solid black; padding: 8px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
+                <div style="width: 70%;">
+                    <span style="font-weight: bold;">Señor(es): </span>
+                    <span>{cliente.nombre} {cliente.apellido or ''}</span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-weight: bold;">Fecha: </span>
+                    <span>{venta.creado_en.strftime('%d/%m/%Y')}</span>
+                </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
+                <div style="width: 70%;">
+                    <span style="font-weight: bold;">Dirección: </span>
+                    <span>{cliente.direccion or ''}</span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-weight: bold;">RUC: </span>
+                    <span>{cliente.ruc}</span>
+                </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                <div>
+                    <span style="font-weight: bold;">Teléfono: </span>
+                    <span>{cliente.telefono or ''}</span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="font-weight: bold;">Condición: </span>
+                    <span>{venta.tipo_pago.value if venta.tipo_pago else 'CONTADO'}</span>
+                </div>
+            </div>
+        </div>
+        
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 12px;">
+            <thead>
+                <tr style="border-top: 2px solid black; border-bottom: 2px solid black; background-color: #f0f0f0;">
+                    <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">Cant.</th>
+                    <th style="text-align: left; font-size: 10px; padding: 4px; font-weight: bold;">Descripción</th>
+                    <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">P. Unit.</th>
+                    <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">Exenta</th>
+                    <th style="text-align: center; font-size: 10px; padding: 4px; font-weight: bold;">IVA 5%</th>
+                    <th style="text-align: right; font-size: 10px; padding: 4px; font-weight: bold;">IVA 10%</th>
+                </tr>
+            </thead>
+            <tbody>
+                {items_html}
+            </tbody>
+        </table>
+        
+        <div style="border: 2px solid black; padding: 10px; margin-bottom: 12px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px;">
+                <span style="font-weight: bold;">Subtotal IVA 10%:</span>
+                <span style="font-weight: bold;">Gs. {int(subtotal_iva_10 + venta.descuento):,}</span>
+            </div>
+            {descuento_html}
+            <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px; border-top: 1px solid black; padding-top: 4px;">
+                <span style="font-weight: bold;">Liquidación IVA 10%:</span>
+                <span style="font-weight: bold;">Gs. {round(iva_10, 0):,.0f}</span>
+            </div>
+            <div style="margin-bottom: 6px; font-size: 10px; border-top: 1px solid black; padding-top: 4px;">
+                <span style="font-weight: bold;">Son: </span>
+                <span style="text-transform: uppercase; font-weight: bold;">{total_letras} Guaraníes</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; border-top: 3px double black; padding-top: 6px;">
+                <span>TOTAL A PAGAR:</span>
+                <span>Gs. {int(venta.total):,}</span>
+            </div>
+        </div>
+        
+        <div style="margin-top: 20px; font-size: 10px;">
+            <div style="display: flex; justify-content: space-around;">
+                <div style="text-align: center;">
+                    <p style="border-top: 1px solid black; padding-top: 4px; margin: 0;">Firma y Sello Empresa</p>
+                </div>
+                <div style="text-align: center;">
+                    <p style="border-top: 1px solid black; padding-top: 4px; margin: 0;">Firma Cliente</p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+    
+    # Generar PDF con WeasyPrint
+    pdf = HTML(string=html_content).write_pdf()
+    return pdf
 
 
 # ==================== FUNCIONARIOS ====================
