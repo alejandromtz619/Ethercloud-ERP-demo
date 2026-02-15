@@ -1970,14 +1970,11 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
 
 # ==================== DOCUMENTOS TEMPORALES ====================
 # Configuración de directorio para documentos temporales
-# Usar /tmp en producción (Linux/Docker) o crear en directorio relativo en desarrollo
-if os.path.exists('/tmp'):
-    DOCS_DIR = Path("/tmp/documentos")
-else:
-    DOCS_DIR = Path("tmp/documentos")
-
+# IMPORTANTE: Usar directorio persistente dentro de uploads/ para que los enlaces
+# funcionen por 30 días. NO usar /tmp ya que se limpia automáticamente.
+DOCS_DIR = ROOT_DIR / 'uploads' / 'documentos'
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
-logger.info(f"Directorio de documentos temporales: {DOCS_DIR}")
+logger.info(f"Directorio de documentos temporales (persistente): {DOCS_DIR}")
 
 @api_router.post("/ventas/{venta_id}/generar-enlace")
 async def generar_enlace_documento(
