@@ -1956,6 +1956,7 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
             'iva_10': round(iva_10, 0),
             'total': float(venta.total),
             'total_letras': numero_a_letras(int(venta.total)),
+            'creado_en': venta.creado_en.isoformat(),
             'liquidacion_iva': {
                 'iva_5': 0,
                 'iva_10': round(iva_10, 0),
