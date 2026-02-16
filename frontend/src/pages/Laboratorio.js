@@ -102,14 +102,15 @@ const Laboratorio = () => {
     if (node && printMateria) {
       try {
         JsBarcode(node, printMateria.codigo_barra, {
-          format: 'CODE128',
-          width: 1.5,
-          height: 40,
+          format: 'CODE39',
+          width: 3,
+          height: 50,
           displayValue: true,
-          fontSize: 10,
+          fontSize: 14,
           font: 'monospace',
-          margin: 2,
-          textMargin: 1,
+          fontOptions: 'bold',
+          margin: 4,
+          textMargin: 2,
           background: '#ffffff',
           lineColor: '#000000'
         });
