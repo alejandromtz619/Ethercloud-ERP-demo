@@ -351,7 +351,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   @media print {
                     @page {
                       size: auto; /* Respetar selección del usuario (A4, Carta, etc.) */
-                      margin: 12mm 8mm 10mm 8mm; /* Margen superior reducido, laterales ajustados */
+                      margin: 15mm 8mm 10mm 8mm; /* Margen superior reducido, laterales ajustados */
                     }
                     
                     body {
