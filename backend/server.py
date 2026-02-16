@@ -925,19 +925,35 @@ async def subir_imagen_producto(producto_id: int, file: UploadFile = File(...), 
     return {"imagen_url": producto.imagen_url}
 
 # ==================== MATERIAS LABORATORIO ====================
+import uuid as _uuid
+
 @api_router.post("/materias-laboratorio", response_model=MateriaLaboratorioResponse)
 async def crear_materia_laboratorio(data: MateriaLaboratorioCreate, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(
-        select(MateriaLaboratorio).where(MateriaLaboratorio.codigo_barra == data.codigo_barra)
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Código de barra ya existe")
-    
-    existing_prod = await db.execute(
-        select(Producto).where(Producto.codigo_barra == data.codigo_barra)
-    )
-    if existing_prod.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Código de barra ya existe en productos")
+    # Auto-generate unique barcode if not provided
+    if not data.codigo_barra:
+        while True:
+            codigo = f"LAB{_uuid.uuid4().hex[:8].upper()}"
+            dup_mat = await db.execute(
+                select(MateriaLaboratorio).where(MateriaLaboratorio.codigo_barra == codigo)
+            )
+            dup_prod = await db.execute(
+                select(Producto).where(Producto.codigo_barra == codigo)
+            )
+            if not dup_mat.scalar_one_or_none() and not dup_prod.scalar_one_or_none():
+                data.codigo_barra = codigo
+                break
+    else:
+        existing = await db.execute(
+            select(MateriaLaboratorio).where(MateriaLaboratorio.codigo_barra == data.codigo_barra)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Código de barra ya existe")
+        
+        existing_prod = await db.execute(
+            select(Producto).where(Producto.codigo_barra == data.codigo_barra)
+        )
+        if existing_prod.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Código de barra ya existe en productos")
     
     materia = MateriaLaboratorio(**data.model_dump(), creado_en=now_paraguay())
     db.add(materia)

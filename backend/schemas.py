@@ -274,7 +274,7 @@ class ProductoConStock(ProductoResponse):
 class MateriaLaboratorioBase(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
-    codigo_barra: str
+    codigo_barra: Optional[str] = None
     precio: Decimal
 
 class MateriaLaboratorioCreate(MateriaLaboratorioBase):
