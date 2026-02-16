@@ -172,7 +172,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
       {/* ═══ LÍNEA DE FECHA + CONDICIÓN DE VENTA ═══ */}
       {/* Campos: Ciudad+día | mes | año | X Contado | X Crédito */}
-      <div style={{ position: 'absolute', top: '40mm', left: '0', width: '240mm' }}>
+      <div style={{ position: 'absolute', top: '38mm', left: '0', width: '240mm' }}>
         {/* Ciudad y día */}
         <span style={{ position: 'absolute', left: '17mm', fontSize: '12px' }}>Ciudad del Este, {dia}</span>
         {/* Mes */}
@@ -215,7 +215,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
             lineHeight: '5.3mm'
           }}>
             {/* Cantidad */}
-            <span style={{ position: 'absolute', left: '0mm', width: '14mm', textAlign: 'center' }}>
+            <span style={{ position: 'absolute', left: '-15mm', width: '14mm', textAlign: 'center' }}>
               {item.cantidad}
             </span>
             {/* Descripción */}
