@@ -41,30 +41,16 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
         <span style={{ fontWeight: 'bold' }}>{data.numero}</span>
       </div>
       
-      <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '6px 0', marginBottom: '8px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
-          <span style={{ fontWeight: 'bold' }}>Razon Social:</span>
-          <span style={{ textAlign: 'right', fontWeight: 'bold' }}>{data.cliente?.nombre || 'OCACIONAL'}</span>
+      <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '4px 0', marginBottom: '8px', fontSize: '11px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
+          <span><b>Razon Social:</b> {data.cliente?.nombre || 'OCACIONAL'}</span>
+          <span><b>Direccion:</b> {data.cliente?.direccion || '-'}</span>
+          <span><b>Cliente Tel:</b> {data.cliente?.telefono || '-'}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
-          <span style={{ fontWeight: 'bold' }}>Dirección:</span>
-          <span style={{ textAlign: 'right' }}>{data.cliente?.direccion || '0'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
-          <span style={{ fontWeight: 'bold' }}>Telefono:</span>
-          <span>{data.cliente?.telefono || '0'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
-          <span style={{ fontWeight: 'bold' }}>Ruc:</span>
-          <span>{data.cliente?.ruc || '0'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
-          <span style={{ fontWeight: 'bold' }}>Fecha de Venta:</span>
-          <span>{data.fecha}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0' }}>
-          <span style={{ fontWeight: 'bold' }}>Tipo Comprob:</span>
-          <span>{data.tipo_pago}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
+          <span><b>RUC:</b> {data.cliente?.ruc || '-'}</span>
+          <span><b>Fecha:</b> {data.fecha}</span>
+          <span><b>Tipo Comprob:</b> {data.tipo_pago}</span>
         </div>
       </div>
       
