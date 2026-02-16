@@ -163,16 +163,16 @@ const Laboratorio = () => {
             left: 0;
             top: 0;
             width: 50mm;
-            height: 20mm;
+            height: 40mm;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 0.5mm 1mm;
+            padding: 1mm 1mm;
             font-family: 'Courier New', monospace;
           }
           .label .name {
-            font-size: 6pt;
+            font-size: 8pt;
             font-weight: bold;
             text-align: center;
             line-height: 1.1;
@@ -180,12 +180,12 @@ const Laboratorio = () => {
             overflow: hidden;
             white-space: nowrap;
             text-overflow: ellipsis;
-            margin-bottom: 0.3mm;
+            margin-bottom: 1mm;
           }
           .label svg {
             max-width: 48mm;
             height: auto;
-            max-height: 14mm;
+            max-height: 30mm;
           }
           @media print {
             html, body {
@@ -381,7 +381,7 @@ const Laboratorio = () => {
                 <div
                   style={{
                     width: '50mm',
-                    height: '20mm',
+                    height: '40mm',
                     border: '1px dashed hsl(var(--border))',
                     borderRadius: '2px',
                     display: 'flex',
@@ -407,12 +407,12 @@ const Laboratorio = () => {
                   }}>
                     {printMateria.nombre}
                   </p>
-                  <svg ref={barcodeCallbackRef} style={{ maxWidth: '48mm', maxHeight: '14mm' }} />
+                  <svg ref={barcodeCallbackRef} style={{ maxWidth: '48mm', maxHeight: '30mm' }} />
                 </div>
               </div>
 
               <p className="text-xs text-muted-foreground text-center">
-                Vista previa de la etiqueta (5cm × 2cm) para Epson LX-350
+                Vista previa de la etiqueta (5cm × 4cm) para Epson LX-350
               </p>
               
               <div className="flex justify-end gap-2">
