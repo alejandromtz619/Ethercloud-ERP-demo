@@ -104,7 +104,6 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
         <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>________________________________</p>
         <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Cliente</p>
         <p style={{ margin: '10px 0 0 0', fontSize: '9px', fontStyle: 'italic', fontWeight: 'bold' }}>
-          Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.
         </p>
       </div>
     </div>
