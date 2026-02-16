@@ -172,7 +172,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
       {/* ═══ LÍNEA DE FECHA + CONDICIÓN DE VENTA ═══ */}
       {/* Campos: Ciudad+día | mes | año | X Contado | X Crédito */}
-      <div style={{ position: 'absolute', top: '49mm', left: '0', width: '240mm' }}>
+      <div style={{ position: 'absolute', top: '44mm', left: '0', width: '240mm' }}>
         {/* Ciudad y día */}
         <span style={{ position: 'absolute', left: '17mm', fontSize: '12px' }}>Ciudad del Este, {dia}</span>
         {/* Mes */}
@@ -185,7 +185,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       </div>
 
       {/* ═══ NOMBRE DEL CLIENTE + CI/RUC ═══ */}
-      <div style={{ position: 'absolute', top: '56mm', left: '0', width: '240mm' }}>
+      <div style={{ position: 'absolute', top: '51mm', left: '0', width: '240mm' }}>
         <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
           {data.cliente?.nombre || 'OCACIONAL'}
         </span>
@@ -195,7 +195,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       </div>
 
       {/* ═══ DIRECCIÓN + TELÉFONO ═══ */}
-      <div style={{ position: 'absolute', top: '62mm', left: '0', width: '240mm' }}>
+      <div style={{ position: 'absolute', top: '57mm', left: '0', width: '240mm' }}>
         <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
           {data.cliente?.direccion || ''}
         </span>
@@ -244,7 +244,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
       {/* ═══ SUB-TOTALES ═══ */}
       {/* Valores en las 3 últimas columnas: Exentas | 5% | 10% */}
-      <div style={{ position: 'absolute', top: '157mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
+      <div style={{ position: 'absolute', top: '154mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
         <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
           {data.subtotal_exenta || 0}
         </span>
@@ -257,7 +257,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       </div>
 
       {/* ═══ TOTAL A PAGAR (letras a la izquierda, número a la derecha) ═══ */}
-      <div style={{ position: 'absolute', top: '164mm', left: '15mm', width: '212mm' }}>
+      <div style={{ position: 'absolute', top: '161mm', left: '15mm', width: '212mm' }}>
         {/* Total en letras */}
         <span style={{
           position: 'absolute', left: '8mm', fontSize: '10px',
@@ -274,7 +274,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
       {/* ═══ LIQUIDACIÓN DEL IVA ═══ */}
       {/* Campos: IVA 5% | IVA 10% | Total IVA */}
-      <div style={{ position: 'absolute', top: '171mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
+      <div style={{ position: 'absolute', top: '168mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
         {/* Valor IVA 5% */}
         <span style={{ position: 'absolute', left: '30mm', width: '28mm', textAlign: 'right' }}>
           {data.liquidacion_iva?.iva_5 || 0}
