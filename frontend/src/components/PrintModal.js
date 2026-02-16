@@ -176,9 +176,9 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
         {/* Ciudad y día */}
         <span style={{ position: 'absolute', left: '17mm', fontSize: '12px' }}>Ciudad del Este, {dia}</span>
         {/* Mes */}
-        <span style={{ position: 'absolute', left: '88mm', fontSize: '12px' }}>{mes}</span>
+        <span style={{ position: 'absolute', left: '80mm', fontSize: '12px' }}>{mes}</span>
         {/* Año */}
-        <span style={{ position: 'absolute', left: '128mm', fontSize: '12px' }}>{anio}</span>
+        <span style={{ position: 'absolute', left: '120mm', fontSize: '12px' }}>{anio}</span>
         {/* Marca X en Contado o Crédito */}
         <span style={{ position: 'absolute', left: '183mm', fontSize: '14px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
         <span style={{ position: 'absolute', left: '211mm', fontSize: '14px', fontWeight: '900' }}>{esCredito ? 'X' : ''}</span>
@@ -195,11 +195,11 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       </div>
 
       {/* ═══ DIRECCIÓN + TELÉFONO ═══ */}
-      <div style={{ position: 'absolute', top: '57mm', left: '0', width: '240mm' }}>
+      <div style={{ position: 'absolute', top: '50mm', left: '0', width: '240mm' }}>
         <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
           {data.cliente?.direccion || ''}
         </span>
-        <span style={{ position: 'absolute', left: '195mm', fontSize: '12px' }}>
+        <span style={{ position: 'absolute', left: '180mm', fontSize: '12px' }}>
           {data.cliente?.telefono || ''}
         </span>
       </div>
