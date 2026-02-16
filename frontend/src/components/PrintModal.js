@@ -20,13 +20,15 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
     <div ref={ref} className="print-document boleta-print" style={{ 
       fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
       fontSize: '12px',
-      width: '240mm', // Papel continuo 24cm
-      height: '140mm', // Altura papel boleta
-      padding: '8mm 10mm', // Márgenes para matriz de puntos
-      margin: '0',
+      width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
+      maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
+      minHeight: '140mm', // Altura mínima papel boleta
+      padding: '5mm 8mm', // Márgenes internos del contenido
+      margin: '0 auto', // Centrado horizontal
       backgroundColor: 'white',
       color: 'black',
-      lineHeight: '1.4'
+      lineHeight: '1.4',
+      boxSizing: 'border-box'
     }}>
       <div style={{ textAlign: 'center', marginBottom: '8px' }}>
         <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LuzBrill</h1>
@@ -131,9 +133,11 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
     <div ref={ref} className="print-document factura-print" style={{ 
       fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
       fontSize: '12px',
-      width: '240mm', // Papel continuo pre-impreso 24cm
+      width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
+      maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
       minHeight: '200mm', // Altura mínima, se ajusta al contenido
-      padding: '10mm 12mm', // Márgenes para matriz de puntos
+      padding: '5mm 8mm', // Márgenes internos del contenido
+      margin: '0 auto', // Centrado horizontal
       backgroundColor: 'white',
       color: 'black',
       lineHeight: '1.4',
@@ -321,21 +325,33 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     background: white;
                   }
                   
-                  /* Estilos para impresora matriz de puntos Epson LX-350 */
+                  /* Estilos para impresora Epson LX-350 - compatible A4/Carta */
                   .boleta-print {
-                    margin: 0;
+                    margin: 0 auto;
                     page-break-after: always;
                   }
                   
                   .factura-print {
-                    margin: 0;
+                    margin: 0 auto;
                     page-break-after: always;
+                  }
+                  
+                  /* Tabla responsive - evitar overflow horizontal */
+                  table {
+                    width: 100% !important;
+                    table-layout: fixed;
+                  }
+                  
+                  td, th {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    word-wrap: break-word;
                   }
                   
                   @media print {
                     @page {
-                      size: 240mm auto; /* Papel continuo 240mm de ancho, altura automática */
-                      margin: 0; /* Sin márgenes, los controlamos desde el documento */
+                      size: auto; /* Respetar selección del usuario (A4, Carta, etc.) */
+                      margin: 10mm 10mm 10mm 10mm; /* Márgenes seguros para cualquier impresora */
                     }
                     
                     body {
@@ -350,19 +366,21 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                       break-after: page;
                     }
                     
-                    /* Para boletas - papel continuo 240mm x 140mm */
+                    /* Para boletas - se adapta al papel */
                     .boleta-print {
-                      width: 240mm;
-                      height: 140mm;
-                      margin: 0;
+                      width: 100% !important;
+                      max-width: 100% !important;
+                      min-height: auto;
+                      margin: 0 auto;
                       page-break-after: always;
                     }
                     
-                    /* Para facturas - papel continuo pre-impreso 240mm */
+                    /* Para facturas - se adapta al papel */
                     .factura-print {
-                      width: 240mm;
-                      min-height: 200mm;
-                      margin: 0;
+                      width: 100% !important;
+                      max-width: 100% !important;
+                      min-height: auto;
+                      margin: 0 auto;
                       page-break-after: always;
                     }
                     
