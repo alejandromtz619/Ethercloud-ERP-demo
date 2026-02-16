@@ -23,14 +23,14 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
       maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
       minHeight: '140mm', // Altura mínima papel boleta
-      padding: '5mm 8mm', // Márgenes internos del contenido
+      padding: '2mm 5mm 5mm 5mm', // Márgenes internos del contenido
       margin: '0 auto', // Centrado horizontal
       backgroundColor: 'white',
       color: 'black',
       lineHeight: '1.4',
       boxSizing: 'border-box'
     }}>
-      <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+      <div style={{ textAlign: 'center', marginBottom: '8px', paddingTop: '2mm' }}>
         <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LuzBrill</h1>
         <p style={{ margin: '3px 0', fontSize: '11px', fontWeight: 'bold' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
         <p style={{ margin: '2px 0', fontSize: '11px', fontWeight: 'bold' }}>0983 628249 0973 598415</p>
@@ -136,7 +136,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
       maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
       minHeight: '200mm', // Altura mínima, se ajusta al contenido
-      padding: '5mm 8mm', // Márgenes internos del contenido
+      padding: '2mm 5mm 5mm 5mm', // Márgenes internos del contenido
       margin: '0 auto', // Centrado horizontal
       backgroundColor: 'white',
       color: 'black',
@@ -351,7 +351,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   @media print {
                     @page {
                       size: auto; /* Respetar selección del usuario (A4, Carta, etc.) */
-                      margin: 10mm 10mm 10mm 10mm; /* Márgenes seguros para cualquier impresora */
+                      margin: 18mm 8mm 10mm 8mm; /* Margen superior amplio para Epson, laterales ajustados */
                     }
                     
                     body {
