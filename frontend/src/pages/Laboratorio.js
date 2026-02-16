@@ -144,7 +144,7 @@ const Laboratorio = () => {
         <title>Etiqueta - ${printMateria.codigo_barra}</title>
         <style>
           @page {
-            size: 35mm 20mm;
+            size: auto;
             margin: 0;
           }
           * {
@@ -153,11 +153,14 @@ const Laboratorio = () => {
             box-sizing: border-box;
           }
           html, body {
-            width: 35mm;
-            height: 20mm;
+            margin: 0;
+            padding: 0;
             overflow: hidden;
           }
           .label {
+            position: absolute;
+            left: 25mm;
+            top: 0;
             width: 35mm;
             height: 20mm;
             display: flex;
@@ -185,8 +188,8 @@ const Laboratorio = () => {
           }
           @media print {
             html, body {
-              width: 35mm;
-              height: 20mm;
+              margin: 0;
+              padding: 0;
             }
           }
         </style>
