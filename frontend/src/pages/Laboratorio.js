@@ -96,11 +96,12 @@ const Laboratorio = () => {
     }).format(value);
   };
 
-  // Render barcode into SVG when print dialog opens
-  useEffect(() => {
-    if (printDialogOpen && printMateria && barcodeRef.current) {
+  // Render barcode into SVG via callback ref (ensures DOM is ready)
+  const barcodeCallbackRef = useCallback((node) => {
+    barcodeRef.current = node;
+    if (node && printMateria) {
       try {
-        JsBarcode(barcodeRef.current, printMateria.codigo_barra, {
+        JsBarcode(node, printMateria.codigo_barra, {
           format: 'CODE128',
           width: 1.5,
           height: 40,
@@ -108,13 +109,15 @@ const Laboratorio = () => {
           fontSize: 10,
           font: 'monospace',
           margin: 2,
-          textMargin: 1
+          textMargin: 1,
+          background: '#ffffff',
+          lineColor: '#000000'
         });
       } catch (err) {
         console.error('Error generating barcode:', err);
       }
     }
-  }, [printDialogOpen, printMateria]);
+  }, [printMateria]);
 
   const handlePrintBarcode = useCallback((materia) => {
     setPrintMateria(materia);
@@ -400,7 +403,7 @@ const Laboratorio = () => {
                   }}>
                     {printMateria.nombre}
                   </p>
-                  <svg ref={barcodeRef} style={{ maxWidth: '33mm', maxHeight: '14mm' }} />
+                  <svg ref={barcodeCallbackRef} style={{ maxWidth: '33mm', maxHeight: '14mm' }} />
                 </div>
               </div>
 
