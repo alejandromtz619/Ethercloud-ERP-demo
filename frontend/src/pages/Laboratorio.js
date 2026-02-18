@@ -162,7 +162,7 @@ const Laboratorio = () => {
             position: absolute;
             left: 0;
             top: 0;
-            width: 50mm;
+            width: 40mm;
             height: 30mm;
             display: flex;
             flex-direction: column;
@@ -172,18 +172,18 @@ const Laboratorio = () => {
             font-family: 'Courier New', monospace;
           }
           .label .name {
-            font-size: 8pt;
+            font-size: 7pt;
             font-weight: bold;
             text-align: center;
             line-height: 1.1;
-            max-width: 48mm;
+            max-width: 38mm;
             overflow: hidden;
             white-space: nowrap;
             text-overflow: ellipsis;
             margin-bottom: 1mm;
           }
           .label svg {
-            max-width: 48mm;
+            max-width: 38mm;
             height: auto;
             max-height: 22mm;
           }
@@ -380,7 +380,7 @@ const Laboratorio = () => {
               <div className="flex justify-center">
                 <div
                   style={{
-                    width: '50mm',
+                    width: '40mm',
                     height: '30mm',
                     border: '1px dashed hsl(var(--border))',
                     borderRadius: '2px',
@@ -399,7 +399,7 @@ const Laboratorio = () => {
                     color: 'black', 
                     textAlign: 'center',
                     lineHeight: 1.1,
-                    maxWidth: '48mm',
+                    maxWidth: '38mm',
                     overflow: 'hidden',
                     whiteSpace: 'nowrap',
                     textOverflow: 'ellipsis',
@@ -407,12 +407,12 @@ const Laboratorio = () => {
                   }}>
                     {printMateria.nombre}
                   </p>
-                  <svg ref={barcodeCallbackRef} style={{ maxWidth: '48mm', maxHeight: '22mm' }} />
+                  <svg ref={barcodeCallbackRef} style={{ maxWidth: '38mm', maxHeight: '22mm' }} />
                 </div>
               </div>
 
               <p className="text-xs text-muted-foreground text-center">
-                Vista previa de la etiqueta (5cm × 3cm) para Epson LX-350
+                Vista previa de la etiqueta (4cm × 3cm) para Epson LX-350
               </p>
               
               <div className="flex justify-end gap-2">
