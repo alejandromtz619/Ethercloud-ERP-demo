@@ -1,0 +1,89 @@
+# docker-compose.yml - Luz Brill ERP - OVHcloud VPS con Coolify
+# Este archivo es para referencia local. En Coolify se configuran los servicios individuales.
+# Si prefieres desplegar con docker-compose en el VPS directamente, usa este archivo.
+
+version: "3.8"
+
+services:
+  # ==================== PostgreSQL ====================
+  postgres:
+    image: postgres:16-alpine
+    container_name: luzbrill-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: luzbrill_erp
+      POSTGRES_USER: luzbrill
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_in_production}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db-backups:/backups
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U luzbrill -d luzbrill_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - luzbrill-network
+
+  # ==================== Backend (FastAPI) ====================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    container_name: luzbrill-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://luzbrill:${DB_PASSWORD:-changeme_in_production}@postgres:5432/luzbrill_erp
+      JWT_SECRET: ${JWT_SECRET:-generate-a-strong-secret-here}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      PORT: 8000
+    volumes:
+      - backend-uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    networks:
+      - luzbrill-network
+
+  # ==================== Frontend (React) ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: dockerfile
+      args:
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-http://localhost:8000}
+    container_name: luzbrill-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    networks:
+      - luzbrill-network
+
+volumes:
+  pgdata:
+    driver: local
+  backend-uploads:
+    driver: local
+
+networks:
+  luzbrill-network:
+    driver: bridge

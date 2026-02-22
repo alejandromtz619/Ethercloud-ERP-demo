@@ -3,6 +3,10 @@ FROM node:20.18.0 AS builder
 
 WORKDIR /app
 
+# Build argument para la URL del backend (se inyecta en build time)
+ARG REACT_APP_BACKEND_URL=http://localhost:8000
+ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+
 # Copiar package.json y yarn.lock
 COPY package.json yarn.lock* ./
 
@@ -12,7 +16,7 @@ RUN yarn install --frozen-lockfile
 # Copiar código
 COPY . .
 
-# Build
+# Build (REACT_APP_BACKEND_URL se embebe en el bundle estático)
 RUN yarn build
 
 # Stage 2: Servidor de producción
