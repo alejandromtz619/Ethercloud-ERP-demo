@@ -4,7 +4,7 @@
 **Full-stack ERP system** for Paraguayan business operations (PYG currency, 10% IVA). Built for Luz Brill S.A. to manage sales, inventory, delivery, laboratory items, and employee operations.
 
 **Stack**: FastAPI + PostgreSQL/SQLite + React + shadcn/ui  
-**Deployment**: Render (see [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md))  
+**Deployment**: Docker / Coolify  
 **Auth**: JWT tokens with bcrypt, 24h expiration
 
 ## Architecture
@@ -128,15 +128,12 @@ See [design_guidelines.json](../design_guidelines.json) for:
 - **server.py size**: 3100 lines - prefer grep_search over full reads
 - **Async everywhere**: All DB operations use `async def` + `await`
 - **Paraguay specifics**: 10% IVA included in prices, PYG currency (no decimals)
-- **Render free tier**: 15min cold start if inactive
 - **Test credentials**: `admin@luzbrill.com / admin123` (empresa_id: 1)
 - **CORS issues**: If deployed, update `CORS_ORIGINS` env var in backend with frontend URL (e.g., `https://luzbrill-frontend.ddelvalle.xyz`). For local dev, use `http://localhost:3000` or `*` for testing only.
-  - After changing env vars, backend auto-redeploys (wait 3-5 min)
   - Check logs for: `CORS allowed origins: ['https://...']`
   - If still failing, ensure no trailing slashes in URL
 
 ## References
 - [PRD.md](../memory/PRD.md): Feature list, module details
-- [DEPLOYMENT_GUIDE.md](../DEPLOYMENT_GUIDE.md): Render setup steps
-- [backend/render.yaml](../backend/render.yaml): Backend Render config
-- [frontend/render.yaml](../frontend/render.yaml): Frontend Render config
+- [backend/dockerfile](../backend/dockerfile): Backend Docker config
+- [frontend/dockerfile](../frontend/dockerfile): Frontend Docker config

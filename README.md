@@ -11,7 +11,7 @@ Desarrollado para **Luz Brill S.A.** — gestión de ventas, inventario, entrega
 | Base de datos | PostgreSQL (prod) / SQLite (dev) |
 | Frontend | React 19 + Tailwind CSS + shadcn/ui |
 | Auth | JWT (bcrypt, 24h expiration) |
-| Deploy | Render |
+| Deploy | Docker / Coolify |
 
 ## Estructura del Proyecto
 
@@ -60,7 +60,9 @@ pytest backend/tests/
 
 ## Deployment
 
-Ver [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) para instrucciones paso a paso de deploy en Render.
+El proyecto se despliega mediante **Docker** (Coolify). Cada servicio tiene su propio `dockerfile`:
+- `backend/dockerfile` — FastAPI con uvicorn
+- `frontend/dockerfile` — Build React + serve estático
 
 ## Credenciales de Prueba
 
