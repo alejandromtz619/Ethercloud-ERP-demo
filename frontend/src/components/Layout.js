@@ -6,6 +6,7 @@ import {
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
   Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart
 } from 'lucide-react';
+import Clock from './Clock';
 import { Button } from '../components/ui/button';
 import { ScrollArea } from '../components/ui/scroll-area';
 import {
@@ -62,21 +63,27 @@ const Layout = ({ children }) => {
     <div className="min-h-screen bg-background">
       {/* Desktop Sidebar */}
       <aside className={cn(
-        "fixed left-0 top-0 z-40 h-screen w-64 bg-slate-900 text-white transition-transform lg:translate-x-0",
+        "fixed left-0 top-0 z-40 h-screen w-64 bg-neutral-900 text-white transition-transform lg:translate-x-0",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         {/* Logo */}
-        <div className="flex h-16 items-center justify-between px-4 border-b border-slate-800">
+        <div className="flex h-16 items-center justify-between px-4 border-b border-neutral-800">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-              <span className="font-bold text-white">LB</span>
-            </div>
-            <span className="font-bold text-lg font-['Manrope']">Luz Brill</span>
+            {empresa?.logo_url ? (
+              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain" />
+            ) : (
+              <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
+                <span className="font-bold text-white">
+                  {empresa?.nombre?.substring(0, 2).toUpperCase() || 'LB'}
+                </span>
+              </div>
+            )}
+            <span className="font-bold text-lg font-['Manrope']">{empresa?.nombre || 'Luz Brill'}</span>
           </div>
           <Button 
             variant="ghost" 
             size="icon" 
-            className="lg:hidden text-white hover:bg-slate-800"
+            className="lg:hidden text-white hover:bg-neutral-800"
             onClick={() => setSidebarOpen(false)}
           >
             <X className="h-5 w-5" />
@@ -95,7 +102,7 @@ const Layout = ({ children }) => {
                   "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
                   isActive 
                     ? "bg-primary text-white" 
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                    : "text-neutral-300 hover:bg-neutral-800 hover:text-white"
                 )}
               >
                 <item.icon className="h-5 w-5" />
@@ -132,7 +139,13 @@ const Layout = ({ children }) => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            {/* Clock */}
+            <div className="hidden md:block">
+              <Clock />
+            </div>
+
+            <div className="flex items-center gap-2">
             {/* Theme toggle */}
             <Button
               variant="ghost"
@@ -173,6 +186,7 @@ const Layout = ({ children }) => {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            </div>
           </div>
         </header>
 

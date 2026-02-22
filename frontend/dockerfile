@@ -1,0 +1,43 @@
+# Frontend Dockerfile - React + Node.js
+FROM node:20.18.0 AS builder
+
+WORKDIR /app
+
+# Copiar package.json y yarn.lock
+COPY package.json yarn.lock* ./
+
+# Instalar dependencias
+RUN yarn install --frozen-lockfile
+
+# Copiar código
+COPY . .
+
+# Build
+RUN yarn build
+
+# Stage 2: Servidor de producción
+FROM node:20.18.0-alpine
+
+WORKDIR /app
+
+# Instalar serve
+RUN npm install -g serve
+
+# Crear usuario no-root
+RUN addgroup -g 1001 -S nodejs
+RUN adduser -S nextjs -u 1001
+
+# Copiar build desde builder
+COPY --from=builder --chown=nextjs:nodejs /app/build ./build
+
+USER nextjs
+
+# Exponer puerto
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1
+
+# Comando de inicio
+CMD ["serve", "-s", "build", "-l", "3000"]

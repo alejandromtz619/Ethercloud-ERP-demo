@@ -42,18 +42,18 @@ const Login = () => {
         backgroundImage: 'linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.7)), url(https://images.unsplash.com/photo-1717343655388-3114d3badb20?crop=entropy&cs=srgb&fm=jpg&q=85)'
       }}
     >
-      <Card className="w-full max-w-md bg-white/95 backdrop-blur shadow-2xl" data-testid="login-card">
+      <Card className="w-full max-w-md shadow-2xl" style={{ backgroundColor: 'white' }} data-testid="login-card">
         <CardHeader className="text-center">
           <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4">
             <span className="text-2xl font-bold text-white font-['Manrope']">LB</span>
           </div>
-          <CardTitle className="text-2xl font-bold">Luz Brill ERP</CardTitle>
-          <CardDescription>Ingrese sus credenciales para continuar</CardDescription>
+          <CardTitle className="text-2xl font-bold text-gray-900">Luz Brill ERP</CardTitle>
+          <CardDescription className="text-gray-600">Ingrese sus credenciales para continuar</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Correo electrónico</Label>
+              <Label htmlFor="email" className="text-gray-700">Correo electrónico</Label>
               <Input
                 id="email"
                 type="email"
@@ -62,10 +62,11 @@ const Login = () => {
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={loading}
                 data-testid="login-email"
+                className="bg-white text-gray-900"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Contraseña</Label>
+              <Label htmlFor="password" className="text-gray-700">Contraseña</Label>
               <div className="relative">
                 <Input
                   id="password"
@@ -75,6 +76,7 @@ const Login = () => {
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading}
                   data-testid="login-password"
+                  className="bg-white text-gray-900"
                 />
                 <Button
                   type="button"

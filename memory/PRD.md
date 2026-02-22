@@ -136,6 +136,7 @@
 7. ✅ Permisos - Permisos por defecto para roles
 8. ✅ Productos - Columna ID y zoom de imagen
 9. ✅ Ventas - Búsqueda por ID de producto
+10. ✅ Dashboard - Filtro tipo de pago aplicado a TODOS los períodos (v1.3.1)
 
 ## Próximos Pasos (P1)
 - [ ] **REFACTORIZAR server.py** - Dividir en módulos (routes/ventas.py, routes/clientes.py, etc.)
@@ -155,6 +156,7 @@
 - **v1.1.0** - 29 Enero 2026: Corrección de bugs + Marcas, Permisos, Cotización manual
 - **v1.2.0** - 29 Enero 2026: Historial de Ventas, Impresión Facturas/Boletas, Reportes PDF
 - **v1.3.0** - Enero 2026: Verificación y corrección de 10 funcionalidades críticas
+- **v1.3.1** - Enero 2026: Fix filtro tipo_pago en todos los períodos del dashboard
 
 ## Test Reports
 - `/app/test_reports/iteration_6.json` - Verificación completa de las 10 correcciones (100% passed)

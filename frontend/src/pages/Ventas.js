@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -40,8 +40,14 @@ import { cn } from '../lib/utils';
 import PrintModal from '../components/PrintModal';
 
 const Ventas = () => {
-  const { api, empresa, user } = useApp();
+  const { api, empresa, user, hasPermission } = useApp();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  
+  // Editing existing sale
+  const editVentaId = searchParams.get('edit');
+  const [editingVenta, setEditingVenta] = useState(null);
+  const [isEditMode, setIsEditMode] = useState(false);
   
   // State
   const [clientes, setClientes] = useState([]);
@@ -55,6 +61,7 @@ const Ventas = () => {
   const [isRepresentante, setIsRepresentante] = useState(false);
   const [cart, setCart] = useState([]);
   const [tipoPago, setTipoPago] = useState('EFECTIVO');
+  const [crearPendiente, setCrearPendiente] = useState(false);
   const [esDelivery, setEsDelivery] = useState(false);
   const [vehiculoId, setVehiculoId] = useState('');
   const [responsableId, setResponsableId] = useState('');
@@ -70,6 +77,11 @@ const Ventas = () => {
   // Print modal state
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [lastVentaId, setLastVentaId] = useState(null);
+  
+  // Cash payment modal state
+  const [cashModalOpen, setCashModalOpen] = useState(false);
+  const [montoPagado, setMontoPagado] = useState('');
+  const [vuelto, setVuelto] = useState(0);
   
   // Load data
   useEffect(() => {
@@ -101,9 +113,72 @@ const Ventas = () => {
     fetchData();
   }, [empresa?.id, api]);
 
+  // Load existing sale if editing
+  useEffect(() => {
+    const loadEditVenta = async () => {
+      if (!editVentaId || !empresa?.id) return;
+      
+      try {
+        const venta = await api(`/ventas/${editVentaId}`);
+        
+        if (venta.estado !== 'PENDIENTE') {
+          toast.error('Solo se pueden editar ventas PENDIENTES');
+          navigate('/ventas');
+          return;
+        }
+        
+        setEditingVenta(venta);
+        setIsEditMode(true);
+        
+        // Load cliente
+        const cliente = clientes.find(c => c.id === venta.cliente_id);
+        if (cliente) setSelectedCliente(cliente);
+        
+        // Load representante if exists
+        if (venta.representante_cliente_id) {
+          const rep = clientes.find(c => c.id === venta.representante_cliente_id);
+          if (rep) {
+            setRepresentante(rep);
+            setIsRepresentante(true);
+          }
+        }
+        
+        // Load cart items
+        const cartItems = venta.items.map(item => ({
+          producto_id: item.producto_id || null,
+          materia_laboratorio_id: item.materia_laboratorio_id || null,
+          nombre: item.producto_nombre || item.materia_nombre || 'Producto',
+          cantidad: item.cantidad,
+          precio_unitario: parseFloat(item.precio_unitario),
+          observaciones: item.observaciones || ''
+        }));
+        setCart(cartItems);
+        
+        // Load other fields
+        setTipoPago(venta.tipo_pago || 'EFECTIVO');
+        setEsDelivery(venta.es_delivery || false);
+        
+        toast.info('Venta pendiente cargada - Puede editarla');
+      } catch (e) {
+        console.error('Error loading venta:', e);
+        toast.error('Error al cargar la venta');
+        navigate('/ventas');
+      }
+    };
+    
+    if (clientes.length > 0) {
+      loadEditVenta();
+    }
+  }, [editVentaId, empresa?.id, api, clientes, navigate]);
+
   // Barcode scanner handler
   const handleBarcodeSearch = useCallback(async (code) => {
     if (!code.trim()) return;
+    
+    if (!selectedCliente) {
+      toast.error('Primero seleccione un cliente');
+      return;
+    }
     
     try {
       // Try product first
@@ -126,7 +201,7 @@ const Ventas = () => {
     } catch (e) {
       toast.error('Error al buscar producto');
     }
-  }, [productos, materias]);
+  }, [productos, materias, selectedCliente]);
 
   // Handle barcode input (USB scanner sends Enter key)
   useEffect(() => {
@@ -157,6 +232,12 @@ const Ventas = () => {
         return;
       }
       
+      // Check max items limit (10 items para no desbordar boleta)
+      if (cart.length >= 10) {
+        toast.error('Máximo 10 productos por venta. Cree una nueva venta para más items.');
+        return;
+      }
+      
       setCart([...cart, {
         materia_laboratorio_id: item.id,
         nombre: item.nombre,
@@ -164,6 +245,11 @@ const Ventas = () => {
         precio_unitario: parseFloat(item.precio),
         observaciones: ''
       }]);
+      
+      // Warning when approaching limit
+      if (cart.length >= 7) {
+        toast.warning(`⚠️ ${cart.length + 1}/10 productos. La boleta tiene espacio limitado.`);
+      }
     } else {
       // Products can be added multiple times
       if (existingIndex >= 0) {
@@ -184,6 +270,12 @@ const Ventas = () => {
           return;
         }
         
+        // Check max items limit (10 items para no desbordar boleta)
+        if (cart.length >= 10) {
+          toast.error('Máximo 10 productos por venta. Cree una nueva venta para más items.');
+          return;
+        }
+        
         setCart([...cart, {
           producto_id: item.id,
           nombre: item.nombre,
@@ -192,6 +284,11 @@ const Ventas = () => {
           stock_disponible: item.stock_total,
           observaciones: ''
         }]);
+        
+        // Warning when approaching limit
+        if (cart.length >= 7) {
+          toast.warning(`⚠️ ${cart.length + 1}/10 productos. La boleta tiene espacio limitado.`);
+        }
       }
     }
     
@@ -210,8 +307,12 @@ const Ventas = () => {
       if (value < 1) return;
     }
     
-    // Permitir modificar precio (para gerente/admin)
+    // Validar permiso para modificar precio
     if (field === 'precio_unitario') {
+      if (!hasPermission('ventas.modificar_precio')) {
+        toast.error('No tiene permiso para modificar precios');
+        return;
+      }
       if (value < 0) return;
     }
     
@@ -226,7 +327,9 @@ const Ventas = () => {
   // Calculate totals - usar privilegios del representante si existe
   const clientePrivilegios = isRepresentante && representante ? representante : selectedCliente;
   const subtotal = cart.reduce((sum, item) => sum + (item.cantidad * item.precio_unitario), 0);
-  const descuentoPorcentaje = clientePrivilegios?.descuento_porcentaje || 0;
+  
+  // Aplicar descuento solo si el usuario tiene el permiso
+  const descuentoPorcentaje = (hasPermission('ventas.aplicar_descuento') && clientePrivilegios?.descuento_porcentaje) || 0;
   const descuento = subtotal * descuentoPorcentaje / 100;
   const subtotalConDescuento = subtotal - descuento;
   const iva = subtotalConDescuento * 10 / 110; // IVA 10% included
@@ -241,6 +344,44 @@ const Ventas = () => {
     }).format(value);
   };
 
+  // Calculate change when cash amount changes
+  useEffect(() => {
+    if (montoPagado && !isNaN(montoPagado)) {
+      const cambio = parseFloat(montoPagado) - total;
+      setVuelto(cambio > 0 ? cambio : 0);
+    } else {
+      setVuelto(0);
+    }
+  }, [montoPagado, total]);
+
+  const handleConfirmarVentaClick = () => {
+    if (!selectedCliente) {
+      toast.error('Seleccione un cliente');
+      return;
+    }
+    
+    if (cart.length === 0) {
+      toast.error('Agregue productos al carrito');
+      return;
+    }
+    
+    // Validate cheque payment
+    if (tipoPago === 'CHEQUE' && !selectedCliente.acepta_cheque) {
+      toast.error('Este cliente no tiene habilitado el pago con cheque');
+      return;
+    }
+    
+    // If cash payment, open cash modal
+    if (tipoPago === 'EFECTIVO') {
+      setMontoPagado('');
+      setVuelto(0);
+      setCashModalOpen(true);
+    } else {
+      // For other payment types, proceed directly
+      handleSubmit();
+    }
+  };
+
   const handleSubmit = async () => {
     if (!selectedCliente) {
       toast.error('Seleccione un cliente');
@@ -252,27 +393,53 @@ const Ventas = () => {
       return;
     }
     
-    if (esDelivery && (!vehiculoId || !responsableId)) {
-      toast.error('Seleccione vehículo y responsable para delivery');
-      return;
-    }
-    
-    // Validate cheque payment
-    if (tipoPago === 'CHEQUE' && !selectedCliente.acepta_cheque) {
-      toast.error('Este cliente no tiene habilitado el pago con cheque');
-      return;
-    }
-    
     setSubmitting(true);
+    setCashModalOpen(false);
+    
     try {
-      // Create sale
+      // Caso 1: EDITAR venta pendiente existente
+      if (isEditMode && editingVenta) {
+        const updateData = {
+          cliente_id: selectedCliente.id,
+          representante_cliente_id: isRepresentante ? representante?.id : null,
+          tipo_pago: tipoPago,
+          es_delivery: esDelivery,
+          items: cart.map(item => ({
+            producto_id: item.producto_id || null,
+            materia_laboratorio_id: item.materia_laboratorio_id || null,
+            cantidad: item.cantidad,
+            precio_unitario: item.precio_unitario,
+            observaciones: item.observaciones || null
+          }))
+        };
+        
+        // Update the sale
+        await api(`/ventas/${editingVenta.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(updateData)
+        });
+        
+        // Ask if user wants to confirm the sale now
+        if (window.confirm('¿Desea confirmar esta venta ahora? (Se validará stock y crédito)')) {
+          await api(`/ventas/${editingVenta.id}/confirmar-pendiente`, { method: 'POST' });
+          toast.success('Venta actualizada y confirmada');
+        } else {
+          toast.success('Venta actualizada - Sigue pendiente');
+        }
+        
+        // Redirect to historial
+        navigate('/historial-ventas');
+        return;
+      }
+      
+      // Caso 2: CREAR nueva venta
       const ventaData = {
         empresa_id: empresa.id,
         cliente_id: selectedCliente.id,
+        representante_cliente_id: isRepresentante ? representante?.id : null,
         usuario_id: user.id,
-        representante_cliente_id: isRepresentante && representante ? representante.id : null,
-        tipo_pago: tipoPago,
         es_delivery: esDelivery,
+        tipo_pago: tipoPago,
         items: cart.map(item => ({
           producto_id: item.producto_id || null,
           materia_laboratorio_id: item.materia_laboratorio_id || null,
@@ -282,32 +449,34 @@ const Ventas = () => {
         }))
       };
       
-      const venta = await api('/ventas', {
-        method: 'POST',
-        body: JSON.stringify(ventaData)
-      });
-      
-      // Confirm sale
-      await api(`/ventas/${venta.id}/confirmar`, { method: 'POST' });
-      
-      // Create delivery if needed
-      if (esDelivery) {
-        await api('/entregas', {
+      // Si crear como pendiente
+      if (crearPendiente) {
+        const venta = await api('/ventas?crear_pendiente=true', {
           method: 'POST',
-          body: JSON.stringify({
-            venta_id: venta.id,
-            vehiculo_id: parseInt(vehiculoId),
-            responsable_usuario_id: parseInt(responsableId),
-            fecha_entrega: new Date().toISOString()
-          })
+          body: JSON.stringify(ventaData)
         });
+        
+        toast.success('Venta creada como PENDIENTE - Puede confirmarla desde Historial de Ventas');
+        
+        // Store venta ID for printing and show print modal
+        setLastVentaId(venta.id);
+        setPrintModalOpen(true);
+      } else {
+        // Flujo normal: crear y confirmar
+        const venta = await api('/ventas', {
+          method: 'POST',
+          body: JSON.stringify(ventaData)
+        });
+        
+        // Confirm sale (this creates the delivery entry if es_delivery=true)
+        await api(`/ventas/${venta.id}/confirmar`, { method: 'POST' });
+        
+        toast.success(esDelivery ? 'Venta creada - Asigne delivery desde el módulo Delivery' : 'Venta creada exitosamente');
+        
+        // Store venta ID for printing and show print modal
+        setLastVentaId(venta.id);
+        setPrintModalOpen(true);
       }
-      
-      toast.success('Venta creada exitosamente');
-      
-      // Store venta ID for printing and show print modal
-      setLastVentaId(venta.id);
-      setPrintModalOpen(true);
       
       // Reset form
       setSelectedCliente(null);
@@ -315,6 +484,7 @@ const Ventas = () => {
       setIsRepresentante(false);
       setCart([]);
       setTipoPago('EFECTIVO');
+      setCrearPendiente(false);
       setEsDelivery(false);
       setVehiculoId('');
       setResponsableId('');
@@ -324,7 +494,7 @@ const Ventas = () => {
       setMaterias(newMaterias);
       
     } catch (e) {
-      toast.error(e.message || 'Error al crear venta');
+      toast.error(e.message || 'Error al procesar venta');
     } finally {
       setSubmitting(false);
     }
@@ -372,8 +542,12 @@ const Ventas = () => {
                     RUC: {selectedCliente.ruc || 'N/A'} | Tel: {selectedCliente.telefono || 'N/A'}
                   </p>
                   {selectedCliente.descuento_porcentaje > 0 && (
-                    <Badge className="mt-1 badge-success">
+                    <Badge className={cn(
+                      "mt-1",
+                      hasPermission('ventas.aplicar_descuento') ? "badge-success" : "badge-muted"
+                    )}>
                       {selectedCliente.descuento_porcentaje}% descuento
+                      {!hasPermission('ventas.aplicar_descuento') && " (sin permiso)"}
                     </Badge>
                   )}
                 </div>
@@ -579,7 +753,12 @@ const Ventas = () => {
               <ShoppingCart className="h-5 w-5" />
               Carrito
               {cart.length > 0 && (
-                <Badge className="ml-auto">{cart.length}</Badge>
+                <Badge 
+                  className="ml-auto" 
+                  variant={cart.length >= 8 ? "destructive" : cart.length >= 6 ? "warning" : "default"}
+                >
+                  {cart.length}/10
+                </Badge>
               )}
             </CardTitle>
           </CardHeader>
@@ -644,6 +823,7 @@ const Ventas = () => {
                           value={item.precio_unitario}
                           onChange={(e) => updateCartItem(idx, 'precio_unitario', parseFloat(e.target.value) || 0)}
                           className="w-28 h-7 text-right font-mono-data"
+                          disabled={!hasPermission('ventas.modificar_precio')}
                         />
                         <span className="text-sm font-mono-data font-semibold ml-auto">
                           = {formatCurrency(item.cantidad * item.precio_unitario)}
@@ -710,6 +890,20 @@ const Ventas = () => {
                 )}
               </div>
 
+              {/* Crear como Pendiente Option - Solo visible en modo creación */}
+              {!isEditMode && (
+                <div className="flex items-center space-x-2 bg-yellow-50 dark:bg-yellow-950/30 p-2 rounded border border-yellow-200 dark:border-yellow-800">
+                  <Checkbox
+                    id="crearPendiente"
+                    checked={crearPendiente}
+                    onCheckedChange={setCrearPendiente}
+                  />
+                  <Label htmlFor="crearPendiente" className="text-sm text-yellow-900 dark:text-yellow-100">
+                    Crear como venta pendiente (sin confirmar pago)
+                  </Label>
+                </div>
+              )}
+
               {/* Delivery Option */}
               <div className="flex items-center space-x-2">
                 <Checkbox
@@ -724,37 +918,10 @@ const Ventas = () => {
               </div>
 
               {esDelivery && (
-                <div className="space-y-3 p-3 bg-secondary rounded-lg">
-                  <div>
-                    <Label>Vehículo</Label>
-                    <Select value={vehiculoId} onValueChange={setVehiculoId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar vehículo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {vehiculos.map((v) => (
-                          <SelectItem key={v.id} value={v.id.toString()}>
-                            {v.tipo} - {v.chapa}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Responsable</Label>
-                    <Select value={responsableId} onValueChange={setResponsableId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar responsable" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {usuarios.map((u) => (
-                          <SelectItem key={u.id} value={u.id.toString()}>
-                            {u.nombre} {u.apellido}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div className="p-3 bg-secondary rounded-lg">
+                  <p className="text-sm text-muted-foreground">
+                    ℹ️ La asignación de vehículo y responsable se realiza desde el módulo <strong>Delivery</strong>
+                  </p>
                 </div>
               )}
             </div>
@@ -764,7 +931,7 @@ const Ventas = () => {
               className="w-full" 
               size="lg"
               disabled={!selectedCliente || cart.length === 0 || submitting}
-              onClick={handleSubmit}
+              onClick={handleConfirmarVentaClick}
               data-testid="confirmar-venta-btn"
             >
               {submitting ? (
@@ -775,14 +942,102 @@ const Ventas = () => {
               ) : (
                 <>
                   <Check className="mr-2 h-4 w-4" />
-                  Confirmar Venta
+                  {isEditMode ? 'Actualizar Venta Pendiente' : 'Confirmar Venta'}
                 </>
               )}
             </Button>
+            
+            {isEditMode && (
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                Al actualizar, se preguntará si desea confirmar el pago
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
       
+      {/* Cash Payment Modal */}
+      <Dialog open={cashModalOpen} onOpenChange={setCashModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5" />
+              Pago en Efectivo
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6">
+            {/* Total to Pay */}
+            <div className="p-4 bg-primary/10 rounded-lg border-2 border-primary/20">
+              <p className="text-sm text-muted-foreground mb-1">Total a Pagar</p>
+              <p className="text-3xl font-bold font-mono-data text-primary">
+                {formatCurrency(total)}
+              </p>
+            </div>
+
+            {/* Amount Paid Input */}
+            <div className="space-y-2">
+              <Label htmlFor="montoPagado">Monto que Paga el Cliente</Label>
+              <Input
+                id="montoPagado"
+                type="number"
+                placeholder="Ej: 200000"
+                value={montoPagado}
+                onChange={(e) => setMontoPagado(e.target.value)}
+                className="text-lg font-mono-data text-right"
+                autoFocus
+              />
+            </div>
+
+            {/* Change Display */}
+            {montoPagado && parseFloat(montoPagado) >= total && (
+              <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border-2 border-green-500/30">
+                <p className="text-sm text-muted-foreground mb-1">Vuelto</p>
+                <p className="text-3xl font-bold font-mono-data text-green-600 dark:text-green-400">
+                  {formatCurrency(vuelto)}
+                </p>
+              </div>
+            )}
+
+            {/* Warning if insufficient */}
+            {montoPagado && parseFloat(montoPagado) < total && (
+              <div className="p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-300 dark:border-red-800">
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  ⚠️ El monto es insuficiente. Falta: {formatCurrency(total - parseFloat(montoPagado))}
+                </p>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setCashModalOpen(false)}
+                className="flex-1"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={!montoPagado || parseFloat(montoPagado) < total || submitting}
+                className="flex-1"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Procesando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Aceptar Venta
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Print Modal */}
       <PrintModal 
         open={printModalOpen} 

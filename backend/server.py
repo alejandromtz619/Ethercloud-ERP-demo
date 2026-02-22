@@ -1,13 +1,15 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as func_sql, and_, or_, update
+from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text
 from sqlalchemy.orm import selectinload
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import List, Optional
 import os
@@ -21,7 +23,7 @@ import io
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, cm
+from reportlab.lib.units import inch, cm, mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
@@ -35,7 +37,8 @@ from models import (
     Venta, VentaItem, EstadoVenta, TipoPago,
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
-    Factura, DocumentoElectronico, PreferenciaUsuario
+    Factura, DocumentoElectronico, PreferenciaUsuario,
+    DocumentoTemporal, TipoDocumento
 )
 from schemas import (
     EmpresaCreate, EmpresaResponse,
@@ -47,17 +50,38 @@ from schemas import (
     ProductoCreate, ProductoResponse, ProductoConStock,
     MateriaLaboratorioCreate, MateriaLaboratorioResponse,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
-    MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate,
-    VentaCreate, VentaResponse, VentaConDetalles, VentaItemResponse,
+    MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
+    VentaCreate, VentaUpdate, VentaResponse, VentaConDetalles, VentaItemResponse,
     FuncionarioCreate, FuncionarioResponse,
     AdelantoSalarioCreate, AdelantoSalarioResponse,
     CicloSalarioCreate, CicloSalarioResponse,
     VehiculoCreate, VehiculoResponse,
-    EntregaCreate, EntregaResponse, EntregaConDetalles,
+    EntregaCreate, EntregaResponse, EntregaConDetalles, AsignarEntrega,
     FacturaCreate, FacturaResponse,
     PreferenciaUsuarioCreate, PreferenciaUsuarioResponse,
-    DashboardStats, VentasPorHora, StockBajo, CotizacionDivisa, Alerta
+    DashboardStats, VentasPorHora, StockBajo, CotizacionDivisa, Alerta,
+    DocumentoTemporalCreate, DocumentoTemporal as DocumentoTemporalSchema
 )
+
+# ==================== TIMEZONE CONFIGURATION ====================
+# Paraguay timezone: America/Asuncion (GMT-4 standard, GMT-3 during DST)
+PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+
+def now_paraguay():
+    """Obtiene la fecha y hora actual en zona horaria de Paraguay"""
+    return datetime.now(PARAGUAY_TZ)
+
+def today_paraguay():
+    """Obtiene la fecha actual (solo fecha) en Paraguay"""
+    return now_paraguay().date()
+
+def get_day_range_paraguay(date_obj):
+    """Obtiene el rango completo de un día en Paraguay (00:00:01 - 23:59:59)"""
+    # Start: 00:00:01 of the day in Paraguay
+    day_start = datetime.combine(date_obj, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    # End: 23:59:59 of the day in Paraguay
+    day_end = datetime.combine(date_obj, datetime.max.time()).replace(tzinfo=PARAGUAY_TZ)
+    return day_start, day_end
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -69,7 +93,7 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 # JWT Config
 JWT_SECRET = os.environ.get('JWT_SECRET', 'luzbrill-secret-key-change-in-production')
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24
+JWT_EXPIRATION_HOURS = 8
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -90,17 +114,21 @@ app = FastAPI(title="Luz Brill ERP API", version="1.0.0")
 cors_origins = os.environ.get('CORS_ORIGINS', '*')
 if cors_origins == '*':
     allowed_origins = ['*']
+    allow_credentials = False  # Can't use credentials with wildcard
 else:
     allowed_origins = [origin.strip() for origin in cors_origins.split(',')]
+    allow_credentials = True
 
 logger.info(f"CORS allowed origins: {allowed_origins}")
+logger.info(f"CORS allow credentials: {allow_credentials}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
     allow_origins=allowed_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Mount static files for uploads
@@ -116,12 +144,62 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
+# Security scheme for JWT Bearer tokens
+security_scheme = HTTPBearer(auto_error=False)
+
 def create_token(usuario_id: int) -> str:
     payload = {
         "sub": str(usuario_id),
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS)
+        "exp": now_paraguay() + timedelta(hours=JWT_EXPIRATION_HOURS)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def decode_token(token: str) -> dict:
+    """Decode and validate a JWT token. Raises HTTPException on failure."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expirado. Por favor inicie sesión nuevamente."
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido."
+        )
+
+async def get_current_usuario(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> Usuario:
+    """Dependency that validates JWT and returns the current user."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de autenticación requerido."
+        )
+    payload = decode_token(credentials.credentials)
+    usuario_id = int(payload.get("sub", 0))
+    if not usuario_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido: sin identificador de usuario."
+        )
+    result = await db.execute(select(Usuario).where(Usuario.id == usuario_id))
+    usuario = result.scalar_one_or_none()
+    if not usuario:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario no encontrado."
+        )
+    if not usuario.activo:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario inactivo."
+        )
+    return usuario
 
 def numero_a_letras(numero):
     """Convert number to Spanish words for receipts"""
@@ -172,7 +250,7 @@ async def root():
 
 @api_router.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "healthy", "timestamp": now_paraguay().isoformat()}
 
 # ==================== EMPRESA ====================
 @api_router.post("/empresas", response_model=EmpresaResponse)
@@ -233,20 +311,37 @@ async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
 
 @api_router.get("/auth/me", response_model=UsuarioResponse)
-async def obtener_usuario_actual(usuario_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Usuario).where(Usuario.id == usuario_id))
-    usuario = result.scalar_one_or_none()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+async def obtener_usuario_actual(usuario: Usuario = Depends(get_current_usuario)):
+    """Validate JWT token and return current user data."""
     return usuario
 
 # ==================== USUARIOS ====================
 @api_router.get("/usuarios", response_model=List[UsuarioResponse])
 async def listar_usuarios(empresa_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Usuario).where(Usuario.empresa_id == empresa_id, Usuario.activo == True)
+        select(Usuario)
+        .options(selectinload(Usuario.roles))
+        .where(Usuario.empresa_id == empresa_id, Usuario.activo == True)
     )
-    return result.scalars().all()
+    usuarios = result.scalars().all()
+    
+    # Agregar rol_id desde la relación usuario_roles
+    usuarios_response = []
+    for usuario in usuarios:
+        usuario_dict = {
+            "id": usuario.id,
+            "empresa_id": usuario.empresa_id,
+            "email": usuario.email,
+            "nombre": usuario.nombre,
+            "apellido": usuario.apellido,
+            "telefono": usuario.telefono,
+            "activo": usuario.activo,
+            "creado_en": usuario.creado_en,
+            "rol_id": usuario.roles[0].rol_id if usuario.roles else None
+        }
+        usuarios_response.append(usuario_dict)
+    
+    return usuarios_response
 
 @api_router.get("/usuarios/{usuario_id}", response_model=UsuarioResponse)
 async def obtener_usuario(usuario_id: int, db: AsyncSession = Depends(get_db)):
@@ -488,7 +583,8 @@ async def crear_credito_cliente(cliente_id: int, data: dict, db: AsyncSession = 
         monto_original=monto,
         monto_pendiente=monto,
         descripcion=data.get('descripcion'),
-        fecha_venta=date.today()
+        fecha_venta=today_paraguay(),
+        creado_en=now_paraguay()
     )
     db.add(credito)
     await db.commit()
@@ -558,7 +654,8 @@ async def pagar_credito(credito_id: int, data: dict, db: AsyncSession = Depends(
     pago = PagoCredito(
         credito_id=credito_id,
         monto=monto_pago,
-        observacion=data.get('observacion')
+        observacion=data.get('observacion'),
+        fecha_pago=now_paraguay()
     )
     db.add(pago)
     
@@ -644,7 +741,7 @@ async def crear_deuda_proveedor(proveedor_id: int, data: dict, db: AsyncSession 
         proveedor_id=proveedor_id,
         monto=Decimal(str(data['monto'])),
         descripcion=data.get('descripcion'),
-        fecha_emision=date.today(),
+        fecha_emision=today_paraguay(),
         fecha_limite=fecha_limite_parsed,
         pagado=False
     )
@@ -670,7 +767,7 @@ async def pagar_deuda(deuda_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Deuda no encontrada")
     
     deuda.pagado = True
-    deuda.fecha_pago = date.today()
+    deuda.fecha_pago = today_paraguay()
     await db.commit()
     return {"message": "Deuda marcada como pagada"}
 
@@ -840,9 +937,16 @@ async def eliminar_producto(producto_id: int, db: AsyncSession = Depends(get_db)
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     
+    # Eliminar registros de stock asociados
+    await db.execute(delete(StockActual).where(StockActual.producto_id == producto_id))
+    
+    # Eliminar movimientos de stock asociados
+    await db.execute(delete(MovimientoStock).where(MovimientoStock.producto_id == producto_id))
+    
+    # Desactivar el producto
     producto.activo = False
     await db.commit()
-    return {"message": "Producto desactivado"}
+    return {"message": "Producto y stock asociado eliminados"}
 
 # ==================== UPLOAD IMAGEN PRODUCTO ====================
 @api_router.post("/productos/{producto_id}/imagen")
@@ -869,21 +973,37 @@ async def subir_imagen_producto(producto_id: int, file: UploadFile = File(...), 
     return {"imagen_url": producto.imagen_url}
 
 # ==================== MATERIAS LABORATORIO ====================
+import uuid as _uuid
+
 @api_router.post("/materias-laboratorio", response_model=MateriaLaboratorioResponse)
 async def crear_materia_laboratorio(data: MateriaLaboratorioCreate, db: AsyncSession = Depends(get_db)):
-    existing = await db.execute(
-        select(MateriaLaboratorio).where(MateriaLaboratorio.codigo_barra == data.codigo_barra)
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Código de barra ya existe")
+    # Auto-generate unique barcode if not provided
+    if not data.codigo_barra:
+        while True:
+            codigo = f"LAB{_uuid.uuid4().hex[:8].upper()}"
+            dup_mat = await db.execute(
+                select(MateriaLaboratorio).where(MateriaLaboratorio.codigo_barra == codigo)
+            )
+            dup_prod = await db.execute(
+                select(Producto).where(Producto.codigo_barra == codigo)
+            )
+            if not dup_mat.scalar_one_or_none() and not dup_prod.scalar_one_or_none():
+                data.codigo_barra = codigo
+                break
+    else:
+        existing = await db.execute(
+            select(MateriaLaboratorio).where(MateriaLaboratorio.codigo_barra == data.codigo_barra)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Código de barra ya existe")
+        
+        existing_prod = await db.execute(
+            select(Producto).where(Producto.codigo_barra == data.codigo_barra)
+        )
+        if existing_prod.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Código de barra ya existe en productos")
     
-    existing_prod = await db.execute(
-        select(Producto).where(Producto.codigo_barra == data.codigo_barra)
-    )
-    if existing_prod.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Código de barra ya existe en productos")
-    
-    materia = MateriaLaboratorio(**data.model_dump())
+    materia = MateriaLaboratorio(**data.model_dump(), creado_en=now_paraguay())
     db.add(materia)
     await db.commit()
     await db.refresh(materia)
@@ -991,7 +1111,8 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         tipo=TipoMovimientoStock.ENTRADA,
         cantidad=data.cantidad,
         referencia_tipo=data.referencia_tipo,
-        referencia_id=data.referencia_id
+        referencia_id=data.referencia_id,
+        creado_en=now_paraguay()
     )
     db.add(movimiento)
     
@@ -1036,13 +1157,15 @@ async def traspasar_stock(data: TraspasoStockCreate, db: AsyncSession = Depends(
         producto_id=data.producto_id,
         almacen_id=data.almacen_origen_id,
         tipo=TipoMovimientoStock.TRASPASO,
-        cantidad=-data.cantidad
+        cantidad=-data.cantidad,
+        creado_en=now_paraguay()
     )
     mov_entrada = MovimientoStock(
         producto_id=data.producto_id,
         almacen_id=data.almacen_destino_id,
         tipo=TipoMovimientoStock.TRASPASO,
-        cantidad=data.cantidad
+        cantidad=data.cantidad,
+        creado_en=now_paraguay()
     )
     db.add(mov_salida)
     db.add(mov_entrada)
@@ -1051,33 +1174,35 @@ async def traspasar_stock(data: TraspasoStockCreate, db: AsyncSession = Depends(
     return {"message": "Traspaso realizado correctamente"}
 
 @api_router.post("/stock/salida")
-async def registrar_salida_stock(data: dict, db: AsyncSession = Depends(get_db)):
+async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Depends(get_db)):
     """Registra una salida/eliminación de stock"""
-    producto_id = data.get('producto_id')
-    almacen_id = data.get('almacen_id')
-    cantidad = data.get('cantidad', 0)
-    motivo = data.get('motivo', 'Salida manual')
     
     result = await db.execute(
         select(StockActual).where(
-            StockActual.producto_id == producto_id,
-            StockActual.almacen_id == almacen_id
+            StockActual.producto_id == data.producto_id,
+            StockActual.almacen_id == data.almacen_id
         )
     )
     stock = result.scalar_one_or_none()
     
-    if not stock or stock.cantidad < cantidad:
-        raise HTTPException(status_code=400, detail="Stock insuficiente")
+    if not stock:
+        raise HTTPException(status_code=404, detail="No hay stock disponible en este almacén")
     
-    stock.cantidad -= cantidad
+    if stock.cantidad < data.cantidad:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Stock insuficiente. Disponible: {stock.cantidad}, solicitado: {data.cantidad}"
+        )
+    
+    stock.cantidad -= data.cantidad
     
     # Register movement
     movimiento = MovimientoStock(
-        producto_id=producto_id,
-        almacen_id=almacen_id,
+        producto_id=data.producto_id,
+        almacen_id=data.almacen_id,
         tipo=TipoMovimientoStock.SALIDA,
-        cantidad=-cantidad,
-        observacion=motivo
+        cantidad=-data.cantidad,
+        creado_en=now_paraguay()
     )
     db.add(movimiento)
     
@@ -1098,7 +1223,7 @@ async def configurar_alerta_stock(stock_id: int, alerta_minima: int, db: AsyncSe
 
 # ==================== VENTAS ====================
 @api_router.post("/ventas", response_model=VentaResponse)
-async def crear_venta(data: VentaCreate, db: AsyncSession = Depends(get_db)):
+async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: AsyncSession = Depends(get_db)):
     # Get client
     cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
     cliente = cliente_result.scalar_one_or_none()
@@ -1113,15 +1238,18 @@ async def crear_venta(data: VentaCreate, db: AsyncSession = Depends(get_db)):
         if representante:
             cliente_privilegios = representante
     
-    # Validate cheque payment - usar privilegios del cliente efectivo
-    if data.tipo_pago == TipoPago.CHEQUE and not cliente_privilegios.acepta_cheque:
-        raise HTTPException(status_code=400, detail="Este cliente no tiene habilitado el pago con cheque")
+    # Si es venta pendiente, no validar stock ni crédito todavía
+    if not crear_pendiente:
+        # Validate cheque payment - usar privilegios del cliente efectivo
+        if data.tipo_pago == TipoPago.CHEQUE and not cliente_privilegios.acepta_cheque:
+            raise HTTPException(status_code=400, detail="Este cliente no tiene habilitado el pago con cheque")
     
     descuento_porcentaje = cliente_privilegios.descuento_porcentaje or Decimal('0')
     
     subtotal = Decimal('0')
     items_data = []
     
+    # Solo validar stock si no es venta pendiente
     for item in data.items:
         item_total = Decimal(str(item.cantidad)) * item.precio_unitario
         subtotal += item_total
@@ -1130,7 +1258,7 @@ async def crear_venta(data: VentaCreate, db: AsyncSession = Depends(get_db)):
             'total': item_total
         })
         
-        if item.producto_id:
+        if not crear_pendiente and item.producto_id:
             stock_result = await db.execute(
                 select(func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0))
                 .where(StockActual.producto_id == item.producto_id)
@@ -1149,8 +1277,8 @@ async def crear_venta(data: VentaCreate, db: AsyncSession = Depends(get_db)):
     iva = subtotal_con_descuento * Decimal('10') / Decimal('110')
     total = subtotal_con_descuento
     
-    # Validar crédito si es venta a crédito
-    if data.tipo_pago == TipoPago.CREDITO:
+    # Validar crédito si es venta a crédito y no es pendiente
+    if not crear_pendiente and data.tipo_pago == TipoPago.CREDITO:
         # Calcular crédito usado del cliente que tiene los privilegios
         creditos_result = await db.execute(
             select(func_sql.coalesce(func_sql.sum(CreditoCliente.monto_pendiente), 0))
@@ -1176,7 +1304,8 @@ async def crear_venta(data: VentaCreate, db: AsyncSession = Depends(get_db)):
         descuento=descuento,
         tipo_pago=data.tipo_pago,
         es_delivery=data.es_delivery,
-        estado=EstadoVenta.BORRADOR
+        estado=EstadoVenta.PENDIENTE if crear_pendiente else EstadoVenta.BORRADOR,
+        creado_en=now_paraguay()
     )
     db.add(venta)
     await db.flush()
@@ -1225,7 +1354,8 @@ async def confirmar_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                     tipo=TipoMovimientoStock.SALIDA,
                     cantidad=-a_descontar,
                     referencia_tipo='venta',
-                    referencia_id=venta.id
+                    referencia_id=venta.id,
+                    creado_en=now_paraguay()
                 )
                 db.add(mov)
         
@@ -1250,9 +1380,240 @@ async def confirmar_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
             monto_original=venta.total,
             monto_pendiente=venta.total,
             descripcion=f"Venta #{venta.id}",
-            fecha_venta=date.today()
+            fecha_venta=today_paraguay()
         )
         db.add(credito)
+    
+    # Si es delivery, crear entrega automáticamente en estado PENDIENTE
+    if venta.es_delivery:
+        # Verificar si ya existe entrega para esta venta
+        entrega_existente = await db.execute(
+            select(Entrega).where(Entrega.venta_id == venta.id)
+        )
+        if not entrega_existente.scalar_one_or_none():
+            entrega = Entrega(
+                venta_id=venta.id,
+                vehiculo_id=None,
+                responsable_usuario_id=None,
+                estado=EstadoEntrega.PENDIENTE
+            )
+            db.add(entrega)
+    
+    await db.commit()
+    await db.refresh(venta)
+    return venta
+
+@api_router.put("/ventas/{venta_id}", response_model=VentaResponse)
+async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: AsyncSession = Depends(get_db)):
+    """Permite editar una venta PENDIENTE: cambiar cliente, items, descuentos, tipo de pago"""
+    result = await db.execute(
+        select(Venta).options(selectinload(Venta.items)).where(Venta.id == venta_id)
+    )
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    
+    if venta.estado != EstadoVenta.PENDIENTE:
+        raise HTTPException(status_code=400, detail="Solo se pueden editar ventas PENDIENTES")
+    
+    # Update cliente if provided
+    if data.cliente_id is not None:
+        cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
+        cliente = cliente_result.scalar_one_or_none()
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        venta.cliente_id = data.cliente_id
+    
+    # Update representante if provided
+    if data.representante_cliente_id is not None:
+        venta.representante_cliente_id = data.representante_cliente_id
+    
+    # Update tipo_pago if provided
+    if data.tipo_pago is not None:
+        venta.tipo_pago = data.tipo_pago
+    
+    # Update es_delivery if provided
+    if data.es_delivery is not None:
+        venta.es_delivery = data.es_delivery
+    
+    # Update items if provided
+    if data.items is not None:
+        # Delete existing items
+        for item in venta.items:
+            await db.delete(item)
+        await db.flush()
+        
+        # Get cliente para descuento
+        cliente_result = await db.execute(select(Cliente).where(Cliente.id == venta.cliente_id))
+        cliente = cliente_result.scalar_one_or_none()
+        
+        # Si hay representante, usar sus privilegios
+        cliente_privilegios = cliente
+        if venta.representante_cliente_id:
+            rep_result = await db.execute(select(Cliente).where(Cliente.id == venta.representante_cliente_id))
+            representante = rep_result.scalar_one_or_none()
+            if representante:
+                cliente_privilegios = representante
+        
+        descuento_porcentaje = cliente_privilegios.descuento_porcentaje or Decimal('0')
+        
+        # Recalculate totals with new items
+        subtotal = Decimal('0')
+        for item in data.items:
+            item_total = Decimal(str(item.cantidad)) * item.precio_unitario
+            subtotal += item_total
+            
+            venta_item = VentaItem(
+                venta_id=venta.id,
+                producto_id=item.producto_id,
+                materia_laboratorio_id=item.materia_laboratorio_id,
+                cantidad=item.cantidad,
+                precio_unitario=item.precio_unitario,
+                total=item_total,
+                observaciones=item.observaciones
+            )
+            db.add(venta_item)
+        
+        descuento = subtotal * descuento_porcentaje / Decimal('100')
+        subtotal_con_descuento = subtotal - descuento
+        iva = subtotal_con_descuento * Decimal('10') / Decimal('110')
+        
+        venta.descuento = descuento
+        venta.iva = iva
+        venta.total = subtotal_con_descuento
+    
+    await db.commit()
+    await db.refresh(venta)
+    return venta
+
+@api_router.post("/ventas/{venta_id}/confirmar-pendiente", response_model=VentaResponse)
+async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(get_db)):
+    """Confirma una venta PENDIENTE: valida stock, genera movimientos, crea crédito si aplica"""
+    result = await db.execute(
+        select(Venta).options(selectinload(Venta.items)).where(Venta.id == venta_id)
+    )
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+    
+    if venta.estado != EstadoVenta.PENDIENTE:
+        raise HTTPException(status_code=400, detail="Solo se pueden confirmar ventas PENDIENTES")
+    
+    # Get cliente para validaciones
+    cliente_result = await db.execute(select(Cliente).where(Cliente.id == venta.cliente_id))
+    cliente = cliente_result.scalar_one_or_none()
+    
+    # Si hay representante, usar sus privilegios
+    cliente_privilegios = cliente
+    if venta.representante_cliente_id:
+        rep_result = await db.execute(select(Cliente).where(Cliente.id == venta.representante_cliente_id))
+        representante = rep_result.scalar_one_or_none()
+        if representante:
+            cliente_privilegios = representante
+    
+    # Validate cheque payment
+    if venta.tipo_pago == TipoPago.CHEQUE and not cliente_privilegios.acepta_cheque:
+        raise HTTPException(status_code=400, detail="Este cliente no tiene habilitado el pago con cheque")
+    
+    # Validate stock for each item
+    for item in venta.items:
+        if item.producto_id:
+            stock_result = await db.execute(
+                select(func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0))
+                .where(StockActual.producto_id == item.producto_id)
+            )
+            stock_total = stock_result.scalar() or 0
+            if stock_total < item.cantidad:
+                prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
+                prod = prod_result.scalar_one_or_none()
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Stock insuficiente para {prod.nombre if prod else 'producto'}. Disponible: {stock_total}"
+                )
+    
+    # Validate crédito if applicable
+    if venta.tipo_pago == TipoPago.CREDITO:
+        creditos_result = await db.execute(
+            select(func_sql.coalesce(func_sql.sum(CreditoCliente.monto_pendiente), 0))
+            .where(CreditoCliente.cliente_id == cliente_privilegios.id, CreditoCliente.pagado == False)
+        )
+        credito_usado = creditos_result.scalar() or Decimal('0')
+        limite = cliente_privilegios.limite_credito or Decimal('0')
+        
+        if limite > 0 and (credito_usado + venta.total) > limite:
+            disponible = max(Decimal('0'), limite - credito_usado)
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Crédito insuficiente. Límite: {float(limite):,.0f}, Usado: {float(credito_usado):,.0f}, Disponible: {float(disponible):,.0f} Gs"
+            )
+    
+    # Process stock movements
+    for item in venta.items:
+        if item.producto_id:
+            stock_result = await db.execute(
+                select(StockActual)
+                .where(StockActual.producto_id == item.producto_id, StockActual.cantidad > 0)
+                .order_by(StockActual.cantidad.desc())
+            )
+            stocks = stock_result.scalars().all()
+            
+            cantidad_restante = item.cantidad
+            for stock in stocks:
+                if cantidad_restante <= 0:
+                    break
+                    
+                a_descontar = min(stock.cantidad, cantidad_restante)
+                stock.cantidad -= a_descontar
+                cantidad_restante -= a_descontar
+                
+                mov = MovimientoStock(
+                    producto_id=item.producto_id,
+                    almacen_id=stock.almacen_id,
+                    tipo=TipoMovimientoStock.SALIDA,
+                    cantidad=-a_descontar,
+                    referencia_tipo='venta',
+                    referencia_id=venta.id,
+                    creado_en=now_paraguay()
+                )
+                db.add(mov)
+        
+        elif item.materia_laboratorio_id:
+            materia_result = await db.execute(
+                select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id)
+            )
+            materia = materia_result.scalar_one_or_none()
+            if materia:
+                materia.estado = EstadoMateria.VENDIDO
+    
+    venta.estado = EstadoVenta.CONFIRMADA
+    
+    # Si es venta a crédito, crear registro de crédito
+    if venta.tipo_pago == TipoPago.CREDITO:
+        cliente_credito_id = venta.representante_cliente_id or venta.cliente_id
+        
+        credito = CreditoCliente(
+            cliente_id=cliente_credito_id,
+            venta_id=venta.id,
+            monto_original=venta.total,
+            monto_pendiente=venta.total,
+            descripcion=f"Venta #{venta.id}",
+            fecha_venta=today_paraguay()
+        )
+        db.add(credito)
+    
+    # Si es delivery, crear entrega automáticamente en estado PENDIENTE
+    if venta.es_delivery:
+        entrega_existente = await db.execute(
+            select(Entrega).where(Entrega.venta_id == venta.id)
+        )
+        if not entrega_existente.scalar_one_or_none():
+            entrega = Entrega(
+                venta_id=venta.id,
+                vehiculo_id=None,
+                responsable_usuario_id=None,
+                estado=EstadoEntrega.PENDIENTE
+            )
+            db.add(entrega)
     
     await db.commit()
     await db.refresh(venta)
@@ -1265,6 +1626,7 @@ async def listar_ventas(
     fecha_hasta: Optional[str] = None,
     cliente_id: Optional[int] = None,
     usuario_id: Optional[int] = None,
+    estado: Optional[str] = None,
     monto_min: Optional[float] = None,
     monto_max: Optional[float] = None,
     db: AsyncSession = Depends(get_db)
@@ -1284,6 +1646,11 @@ async def listar_ventas(
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
         query = query.where(Venta.usuario_id == usuario_id)
+    if estado:
+        try:
+            query = query.where(Venta.estado == EstadoVenta[estado])
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
     if monto_min:
         query = query.where(Venta.total >= monto_min)
     if monto_max:
@@ -1308,6 +1675,7 @@ async def listar_ventas(
                 prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
                 producto = prod_result.scalar_one_or_none()
                 if producto:
+                    item_dict['producto_nombre'] = producto.nombre
                     item_dict['descripcion'] = producto.nombre
             
             # Get materia name
@@ -1315,6 +1683,7 @@ async def listar_ventas(
                 mat_result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id))
                 materia = mat_result.scalar_one_or_none()
                 if materia:
+                    item_dict['materia_nombre'] = materia.nombre
                     item_dict['descripcion'] = f"{materia.nombre} - {materia.descripcion or ''}"
             
             items.append(item_dict)
@@ -1342,7 +1711,30 @@ async def obtener_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
     items_result = await db.execute(
         select(VentaItem).where(VentaItem.venta_id == venta.id)
     )
-    items = [VentaItemResponse.model_validate(i) for i in items_result.scalars().all()]
+    raw_items = items_result.scalars().all()
+    
+    # Enrich items with product/materia names
+    items = []
+    for item in raw_items:
+        item_dict = VentaItemResponse.model_validate(item).model_dump()
+        
+        # Get product name
+        if item.producto_id:
+            prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
+            producto = prod_result.scalar_one_or_none()
+            if producto:
+                item_dict['producto_nombre'] = producto.nombre
+                item_dict['descripcion'] = producto.nombre
+        
+        # Get materia name
+        elif item.materia_laboratorio_id:
+            mat_result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id))
+            materia = mat_result.scalar_one_or_none()
+            if materia:
+                item_dict['materia_nombre'] = materia.nombre
+                item_dict['descripcion'] = f"{materia.nombre} - {materia.descripcion or ''}"
+        
+        items.append(item_dict)
     
     venta_dict = VentaResponse.model_validate(venta).model_dump()
     venta_dict['items'] = items
@@ -1352,41 +1744,663 @@ async def obtener_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
 
 @api_router.post("/ventas/{venta_id}/anular", response_model=VentaResponse)
 async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Venta).where(Venta.id == venta_id))
-    venta = result.scalar_one_or_none()
-    if not venta:
-        raise HTTPException(status_code=404, detail="Venta no encontrada")
-    
-    venta.estado = EstadoVenta.ANULADA
-    await db.commit()
-    await db.refresh(venta)
-    return venta
+    try:
+        result = await db.execute(select(Venta).where(Venta.id == venta_id))
+        venta = result.scalar_one_or_none()
+        if not venta:
+            raise HTTPException(status_code=404, detail="Venta no encontrada")
+        
+        if venta.estado == EstadoVenta.ANULADA:
+            raise HTTPException(status_code=400, detail="La venta ya está anulada")
+        
+        # 1. Devolver stock de productos
+        items_result = await db.execute(
+            select(VentaItem).where(VentaItem.venta_id == venta_id)
+        )
+        items = items_result.scalars().all()
+        
+        for item in items:
+            if item.producto_id:
+                # Buscar los movimientos de SALIDA de esta venta para devolver al mismo almacén
+                movimientos_salida_result = await db.execute(
+                    select(MovimientoStock).where(
+                        MovimientoStock.referencia_tipo == 'venta',
+                        MovimientoStock.referencia_id == venta_id,
+                        MovimientoStock.producto_id == item.producto_id,
+                        MovimientoStock.tipo == TipoMovimientoStock.SALIDA
+                    )
+                )
+                movimientos_salida = movimientos_salida_result.scalars().all()
+                
+                # Devolver stock a los almacenes originales
+                for mov_salida in movimientos_salida:
+                    # Actualizar stock
+                    stock_result = await db.execute(
+                        select(StockActual).where(
+                            StockActual.producto_id == item.producto_id,
+                            StockActual.almacen_id == mov_salida.almacen_id
+                        )
+                    )
+                    stock = stock_result.scalar_one_or_none()
+                    
+                    cantidad_devolver = abs(mov_salida.cantidad)
+                    
+                    if stock:
+                        stock.cantidad += cantidad_devolver
+                    else:
+                        # Crear stock si no existe
+                        stock = StockActual(
+                            producto_id=item.producto_id,
+                            almacen_id=mov_salida.almacen_id,
+                            cantidad=cantidad_devolver
+                        )
+                        db.add(stock)
+                    
+                    # Registrar movimiento de ENTRADA (devolución)
+                    movimiento = MovimientoStock(
+                        almacen_id=mov_salida.almacen_id,
+                        producto_id=item.producto_id,
+                        tipo=TipoMovimientoStock.ENTRADA,
+                        cantidad=cantidad_devolver,
+                        referencia_tipo="ANULACION_VENTA",
+                        referencia_id=venta_id,
+                        creado_en=now_paraguay()
+                    )
+                    db.add(movimiento)
+            
+            elif item.materia_laboratorio_id:
+                # Devolver materia de laboratorio a estado DISPONIBLE
+                materia_result = await db.execute(
+                    select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id)
+                )
+                materia = materia_result.scalar_one_or_none()
+                if materia:
+                    materia.estado = EstadoMateria.DISPONIBLE
+        
+        # 2. Devolver crédito si fue venta a crédito
+        if venta.tipo_pago == TipoPago.CREDITO:
+            credito_result = await db.execute(
+                select(CreditoCliente).where(CreditoCliente.venta_id == venta_id)
+            )
+            credito = credito_result.scalar_one_or_none()
+            if credito:
+                # Eliminar el crédito (o marcarlo como anulado si tiene pagos)
+                pagos_result = await db.execute(
+                    select(PagoCredito).where(PagoCredito.credito_id == credito.id)
+                )
+                pagos = pagos_result.scalars().all()
+                
+                if pagos:
+                    # Si tiene pagos, marcar como anulado pero mantener el registro
+                    credito.monto_pendiente = 0
+                    credito.descripcion += " (ANULADO)"
+                else:
+                    # Si no tiene pagos, eliminar el crédito
+                    await db.delete(credito)
+        
+        # 3. Marcar venta como anulada
+        venta.estado = EstadoVenta.ANULADA
+        
+        # 4. Si tiene entrega asociada, siempre eliminarla (al anular venta)
+        entrega_result = await db.execute(select(Entrega).where(Entrega.venta_id == venta_id))
+        entrega = entrega_result.scalar_one_or_none()
+        if entrega:
+            await db.delete(entrega)
+        
+        await db.commit()
+        await db.refresh(venta)
+        return venta
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        import traceback
+        error_detail = f"Error anulando venta: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)  # Esto aparecerá en los logs
+        raise HTTPException(status_code=500, detail=error_detail)
 
 # ==================== BOLETA Y FACTURA ====================
 @api_router.get("/ventas/{venta_id}/boleta")
 async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
     """Generate boleta data for printing"""
+    try:
+        result = await db.execute(
+            select(Venta, Cliente, Usuario, Empresa)
+            .join(Cliente, Venta.cliente_id == Cliente.id)
+            .join(Usuario, Venta.usuario_id == Usuario.id)
+            .join(Empresa, Venta.empresa_id == Empresa.id)
+            .where(Venta.id == venta_id)
+        )
+        row = result.first()
+        if not row:
+            logger.warning(f"Venta {venta_id} no encontrada o datos relacionados eliminados")
+            raise HTTPException(status_code=404, detail="Venta no encontrada o datos relacionados faltantes")
+        
+        venta, cliente, usuario, empresa = row
+        
+        items_result = await db.execute(
+            select(VentaItem, Producto, MateriaLaboratorio)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+            .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+            .where(VentaItem.venta_id == venta_id)
+        )
+        
+        items = []
+        for item_row in items_result.all():
+            item, producto, materia = item_row
+            
+            if producto:
+                codigo = producto.codigo_barra or str(producto.id)
+                descripcion = producto.nombre
+            elif materia:
+                codigo = f"LAB-{materia.id}"
+                descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
+            else:
+                codigo = 'N/A'
+                descripcion = 'Item'
+            
+            items.append({
+                'codigo': codigo,
+                'cantidad': float(item.cantidad),
+                'descripcion': descripcion,
+                'iva': 10,
+                'precio': float(item.precio_unitario),
+                'total': float(item.total)
+            })
+        
+        return {
+            'tipo': 'BOLETA',
+            'numero': venta.id,
+            'fecha': venta.creado_en.strftime('%d/%m/%Y %I:%M %p'),
+            'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
+            'empresa': {
+                'nombre': empresa.nombre,
+                'ruc': empresa.ruc,
+                'telefono': empresa.telefono,
+                'direccion': empresa.direccion
+            },
+            'cliente': {
+                'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
+                'ruc': cliente.ruc or '0',
+                'direccion': cliente.direccion or '0',
+                'telefono': cliente.telefono or '0'
+            },
+            'vendedor': f"{usuario.nombre} {usuario.apellido or ''}".strip(),
+            'items': items,
+            'subtotal_sin_descuento': float(venta.total + venta.descuento),
+            'descuento': float(venta.descuento),
+            'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
+            'subtotal': float(venta.total + venta.descuento),
+            'iva': float(venta.iva),
+            'total': float(venta.total),
+            'total_letras': numero_a_letras(int(venta.total)) + ' Guaraníes'
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando datos de boleta para venta {venta_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al generar boleta: {str(e)}")
+
+@api_router.get("/ventas/{venta_id}/factura")
+async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
+    """Generate factura data for printing"""
+    try:
+        result = await db.execute(
+            select(Venta, Cliente, Usuario, Empresa)
+            .join(Cliente, Venta.cliente_id == Cliente.id)
+            .join(Usuario, Venta.usuario_id == Usuario.id)
+            .join(Empresa, Venta.empresa_id == Empresa.id)
+            .where(Venta.id == venta_id)
+        )
+        row = result.first()
+        if not row:
+            logger.warning(f"Venta {venta_id} no encontrada o datos relacionados eliminados")
+            raise HTTPException(status_code=404, detail="Venta no encontrada o datos relacionados faltantes")
+        
+        venta, cliente, usuario, empresa = row
+        
+        # Check if client has RUC for factura
+        if not cliente.ruc:
+            raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+        
+        items_result = await db.execute(
+            select(VentaItem, Producto, MateriaLaboratorio)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+            .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+            .where(VentaItem.venta_id == venta_id)
+        )
+        
+        items = []
+        for item_row in items_result.all():
+            item, producto, materia = item_row
+            
+            if producto:
+                descripcion = producto.nombre
+            elif materia:
+                descripcion = f"{materia.nombre} - {materia.descripcion or ''}"
+            else:
+                descripcion = 'Item'
+            
+            items.append({
+                'cantidad': float(item.cantidad),
+                'descripcion': descripcion,
+                'precio_unitario': float(item.precio_unitario),
+                'exenta': 0,
+                'iva_5': 0,
+                'iva_10': float(item.total)
+            })
+        
+        # Calculate IVA breakdown
+        base_imponible = float(venta.total) / 1.10
+        iva_10 = float(venta.total) - base_imponible
+        
+        return {
+            'tipo': 'FACTURA',
+            'numero': f"{venta.id:07d}",
+            'fecha': venta.creado_en.strftime('%d de %B de %Y'),
+            'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
+            'empresa': {
+                'nombre': empresa.nombre,
+                'ruc': empresa.ruc,
+                'telefono': empresa.telefono,
+                'direccion': empresa.direccion
+            },
+            'cliente': {
+                'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
+                'ruc': cliente.ruc,
+                'direccion': cliente.direccion or '',
+                'telefono': cliente.telefono or ''
+            },
+            'items': items,
+            'subtotal_exenta': 0,
+            'subtotal_iva_5': 0,
+            'subtotal_iva_10': float(venta.total + venta.descuento),
+            'descuento': float(venta.descuento),
+            'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
+            'iva_10': round(iva_10, 0),
+            'total': float(venta.total),
+            'total_letras': numero_a_letras(int(venta.total)),
+            'creado_en': venta.creado_en.isoformat(),
+            'liquidacion_iva': {
+                'iva_5': 0,
+                'iva_10': round(iva_10, 0),
+                'total_iva': round(iva_10, 0)
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando datos de factura para venta {venta_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al generar factura: {str(e)}")
+
+# ==================== DOCUMENTOS TEMPORALES ====================
+# Configuración de directorio para documentos temporales
+# IMPORTANTE: Usar directorio persistente dentro de uploads/ para que los enlaces
+# funcionen por 30 días. NO usar /tmp ya que se limpia automáticamente.
+DOCS_DIR = ROOT_DIR / 'uploads' / 'documentos'
+DOCS_DIR.mkdir(parents=True, exist_ok=True)
+logger.info(f"Directorio de documentos temporales (persistente): {DOCS_DIR}")
+
+@api_router.post("/ventas/{venta_id}/generar-enlace")
+async def generar_enlace_documento(
+    venta_id: int,
+    tipo_documento: TipoDocumento = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Genera un PDF del documento (boleta o factura), lo guarda en disco
+    y retorna un enlace público de descarga válido por 30 días
+    """
+    try:
+        logger.info(f"Iniciando generación de enlace para venta {venta_id}, tipo {tipo_documento}")
+        
+        # Verificar que la venta exista y esté confirmada
+        result = await db.execute(
+            select(Venta).where(Venta.id == venta_id)
+        )
+        venta = result.scalar_one_or_none()
+        if not venta:
+            logger.warning(f"Venta {venta_id} no encontrada")
+            raise HTTPException(status_code=404, detail="Venta no encontrada")
+        
+        logger.info(f"Venta encontrada con estado: {venta.estado}")
+        
+        if venta.estado != EstadoVenta.CONFIRMADA:
+            logger.warning(f"Venta {venta_id} no está confirmada, estado: {venta.estado}")
+            raise HTTPException(status_code=400, detail="Solo se pueden generar enlaces para ventas confirmadas")
+        
+        logger.info("Verificando documentos existentes...")
+        
+        # Verificar si ya existe un documento temporal para esta venta y tipo
+        existing = await db.execute(
+            select(DocumentoTemporal).where(
+                and_(
+                    DocumentoTemporal.venta_id == venta_id,
+                    DocumentoTemporal.tipo_documento == tipo_documento,
+                    DocumentoTemporal.fecha_expiracion > now_paraguay()
+                )
+            )
+        )
+        existing_doc = existing.scalar_one_or_none()
+        
+        # Si existe y no ha expirado, verificar que el archivo también exista en disco
+        if existing_doc:
+            file_exists = Path(existing_doc.file_path).exists() if existing_doc.file_path else False
+            if file_exists:
+                logger.info(f"Documento existente encontrado con archivo en disco: {existing_doc.token}")
+                base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+                return {
+                    "url": f"{base_url}/api/documentos/{existing_doc.token}",
+                    "token": existing_doc.token,
+                    "tipo_documento": tipo_documento.value,
+                    "fecha_expiracion": existing_doc.fecha_expiracion,
+                    "ya_existia": True
+                }
+            else:
+                # El registro existe pero el archivo fue eliminado (Render limpió el filesystem)
+                # Eliminar el registro viejo para regenerar abajo
+                logger.warning(f"Documento {existing_doc.token} existe en BD pero archivo no encontrado en disco. Regenerando...")
+                await db.delete(existing_doc)
+                await db.commit()
+        
+        logger.info("Generando nuevo documento PDF...")
+        
+        # Generar datos del documento según tipo
+        if tipo_documento == TipoDocumento.BOLETA:
+            # Reutilizar lógica del endpoint /ventas/{venta_id}/boleta
+            result = await db.execute(
+                select(Venta, Cliente, Usuario, Empresa)
+                .join(Cliente, Venta.cliente_id == Cliente.id)
+                .join(Usuario, Venta.usuario_id == Usuario.id)
+                .join(Empresa, Venta.empresa_id == Empresa.id)
+                .where(Venta.id == venta_id)
+            )
+            row = result.first()
+            if not row:
+                raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
+            
+            venta_obj, cliente, vendedor, empresa = row
+            pdf_content = await generar_pdf_boleta(venta_obj, cliente, vendedor, empresa, db)
+            filename_prefix = f"boleta_{venta_id}"
+        else:  # FACTURA
+            result = await db.execute(
+                select(Venta, Cliente, Usuario, Empresa)
+                .join(Cliente, Venta.cliente_id == Cliente.id)
+                .join(Usuario, Venta.usuario_id == Usuario.id)
+                .join(Empresa, Venta.empresa_id == Empresa.id)
+                .where(Venta.id == venta_id)
+            )
+            row = result.first()
+            if not row:
+                raise HTTPException(status_code=404, detail="Error al cargar datos de venta")
+            
+            venta_obj, cliente, vendedor, empresa = row
+            
+            if not cliente.ruc:
+                raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+            
+            pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
+            filename_prefix = f"factura_{venta_id}"
+        
+        logger.info(f"PDF generado exitosamente, tamaño: {len(pdf_content)} bytes")
+        
+        # Generar token único
+        token = str(uuid.uuid4())
+        filename = f"{filename_prefix}_{token}.pdf"
+        file_path = DOCS_DIR / filename
+        
+        logger.info(f"Guardando PDF en: {file_path}")
+        
+        # Guardar PDF en disco
+        with open(file_path, "wb") as f:
+            f.write(pdf_content)
+        
+        logger.info(f"PDF guardado exitosamente")
+        
+        # Crear registro en base de datos
+        fecha_expiracion = now_paraguay() + timedelta(days=30)
+        logger.info(f"Creando registro en base de datos...")
+        
+        nuevo_doc = DocumentoTemporal(
+            token=token,
+            venta_id=venta_id,
+            tipo_documento=tipo_documento,
+            file_path=str(file_path),
+            fecha_creacion=now_paraguay(),
+            fecha_expiracion=fecha_expiracion,
+            empresa_id=venta.empresa_id
+        )
+        
+        db.add(nuevo_doc)
+        await db.commit()
+        await db.refresh(nuevo_doc)
+        
+        logger.info(f"Documento guardado en BD con ID: {nuevo_doc.id}, token: {token}")
+        
+        # Retornar URL pública
+        base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        logger.info(f"Enlace generado: {base_url}/api/documentos/{token}")
+        
+        return {
+            "url": f"{base_url}/api/documentos/{token}",
+            "token": token,
+            "tipo_documento": tipo_documento.value,
+            "fecha_expiracion": fecha_expiracion,
+            "ya_existia": False
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando enlace de documento: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al generar documento: {str(e)}")
+
+
+@api_router.get("/documentos/{token}")
+async def descargar_documento(token: str, db: AsyncSession = Depends(get_db)):
+    """
+    Endpoint público para descargar documentos mediante token único.
+    No requiere autenticación - cualquiera con el enlace puede descargar.
+    Si el archivo no existe en disco (ej: Render limpió el filesystem),
+    se regenera automáticamente desde los datos de la venta en la BD.
+    """
+    # Buscar documento por token
     result = await db.execute(
-        select(Venta, Cliente, Usuario, Empresa)
-        .join(Cliente, Venta.cliente_id == Cliente.id)
-        .join(Usuario, Venta.usuario_id == Usuario.id)
-        .join(Empresa, Venta.empresa_id == Empresa.id)
-        .where(Venta.id == venta_id)
+        select(DocumentoTemporal, Venta)
+        .join(Venta, DocumentoTemporal.venta_id == Venta.id)
+        .where(DocumentoTemporal.token == token)
     )
     row = result.first()
+    
     if not row:
-        raise HTTPException(status_code=404, detail="Venta no encontrada")
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
     
-    venta, cliente, usuario, empresa = row
+    documento, venta = row
     
+    # Verificar que no haya expirado
+    if documento.fecha_expiracion < now_paraguay():
+        raise HTTPException(status_code=410, detail="Este enlace ha expirado")
+    
+    # Verificar que el archivo existe; si no, regenerarlo desde los datos de la venta
+    file_path = Path(documento.file_path)
+    if not file_path.exists():
+        logger.warning(f"Archivo no encontrado en disco: {file_path}. Regenerando PDF desde datos de venta...")
+        try:
+            # Cargar datos necesarios para regenerar el PDF
+            regen_result = await db.execute(
+                select(Venta, Cliente, Usuario, Empresa)
+                .join(Cliente, Venta.cliente_id == Cliente.id)
+                .join(Usuario, Venta.usuario_id == Usuario.id)
+                .join(Empresa, Venta.empresa_id == Empresa.id)
+                .where(Venta.id == documento.venta_id)
+            )
+            regen_row = regen_result.first()
+            if not regen_row:
+                raise HTTPException(status_code=404, detail="No se pudieron cargar los datos de la venta para regenerar el documento")
+            
+            venta_obj, cliente, vendedor, empresa = regen_row
+            
+            if documento.tipo_documento == TipoDocumento.BOLETA:
+                pdf_content = await generar_pdf_boleta(venta_obj, cliente, vendedor, empresa, db)
+            else:  # FACTURA
+                pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
+            
+            # Asegurar que el directorio existe (puede haberse perdido también)
+            DOCS_DIR.mkdir(parents=True, exist_ok=True)
+            
+            # Guardar el PDF regenerado en disco
+            with open(file_path, "wb") as f:
+                f.write(pdf_content)
+            
+            logger.info(f"PDF regenerado exitosamente y guardado en: {file_path} ({len(pdf_content)} bytes)")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error al regenerar PDF para token {token}: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Error al regenerar el documento. Intente generar un nuevo enlace.")
+    
+    # Incrementar contador de descargas
+    documento.descargas += 1
+    await db.commit()
+    
+    # Servir el archivo
+    tipo_doc = "Boleta" if documento.tipo_documento == TipoDocumento.BOLETA else "Factura"
+    filename = f"{tipo_doc}_Venta_{venta.id}.pdf"
+    
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/pdf",
+        filename=filename
+    )
+
+
+@api_router.delete("/documentos/limpiar-expirados")
+async def limpiar_documentos_expirados(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Tarea de limpieza: Elimina documentos expirados tanto de la BD como del disco.
+    Endpoint para ser llamado por cronjobs o tareas programadas.
+    """
+    # Buscar documentos expirados
+    result = await db.execute(
+        select(DocumentoTemporal).where(
+            DocumentoTemporal.fecha_expiracion < now_paraguay()
+        )
+    )
+    documentos_expirados = result.scalars().all()
+    
+    eliminados_bd = 0
+    eliminados_disco = 0
+    errores = []
+    
+    for doc in documentos_expirados:
+        try:
+            # Eliminar archivo del disco
+            file_path = Path(doc.file_path)
+            if file_path.exists():
+                file_path.unlink()
+                eliminados_disco += 1
+        except Exception as e:
+            errores.append(f"Error al eliminar {doc.file_path}: {str(e)}")
+        
+        # Eliminar registro de BD
+        await db.delete(doc)
+        eliminados_bd += 1
+    
+    await db.commit()
+    
+    return {
+        "mensaje": "Limpieza completada",
+        "documentos_eliminados_bd": eliminados_bd,
+        "archivos_eliminados_disco": eliminados_disco,
+        "errores": errores
+    }
+
+
+# Funciones auxiliares para generar PDFs
+async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
+    """Genera PDF de boleta con formato similar a matriz de puntos"""
+    # Obtener items
     items_result = await db.execute(
         select(VentaItem, Producto, MateriaLaboratorio)
         .outerjoin(Producto, VentaItem.producto_id == Producto.id)
         .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-        .where(VentaItem.venta_id == venta_id)
+        .where(VentaItem.venta_id == venta.id)
     )
     
-    items = []
+    buffer = io.BytesIO()
+    # Tamaño de papel: 240mm x 140mm para matriz de puntos
+    from reportlab.lib.pagesizes import landscape
+    page_width = 240 * mm
+    page_height = 140 * mm
+    custom_size = (page_width, page_height)
+    
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=custom_size,
+        leftMargin=10*mm,
+        rightMargin=10*mm,
+        topMargin=8*mm,
+        bottomMargin=8*mm
+    )
+    
+    elements = []
+    
+    # Estilos con fuente monoespaciada (Courier) para simular matriz de puntos
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        fontName='Courier-Bold',
+        fontSize=16,
+        alignment=TA_CENTER,
+        spaceAfter=2,
+        textDecoration='underline'
+    )
+    
+    normal_style = ParagraphStyle(
+        'CustomNormal',
+        fontName='Courier',
+        fontSize=9,
+        alignment=TA_CENTER,
+        spaceAfter=1
+    )
+    
+    # Encabezado
+    elements.append(Paragraph('LuzBrill', title_style))
+    elements.append(Paragraph(empresa.telefono or '061 572516 573408', normal_style))
+    elements.append(Paragraph('0983 628249 0973 598415', normal_style))
+    elements.append(Spacer(1, 3*mm))
+    
+    # Número de nota (alineado a la derecha)
+    nota_style = ParagraphStyle('Nota', fontName='Courier-Bold', fontSize=10, alignment=TA_RIGHT)
+    elements.append(Paragraph(f'<b>NOTA NRO: {venta.id}</b>', nota_style))
+    elements.append(Spacer(1, 2*mm))
+    
+    # Información del cliente
+    info_data = [
+        ['Razon Social:', f"{cliente.nombre} {cliente.apellido or ''}".strip()],
+        ['Dirección:', cliente.direccion or '0'],
+        ['Telefono:', cliente.telefono or '0'],
+        ['Ruc:', cliente.ruc or '0'],
+        ['Fecha de Venta:', venta.creado_en.strftime('%d/%m/%Y %I:%M %p')],
+        ['Tipo Comprob:', venta.tipo_pago.value if venta.tipo_pago else 'CONTADO']
+    ]
+    
+    info_table = Table(info_data, colWidths=[45*mm, 115*mm])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, -1), (-1, -1), 2, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Items
+    items_data = [['Cod', 'Cant', 'Descripción', 'IVA', 'Precio', 'Total']]
+    
     for item_row in items_result.all():
         item, producto, materia = item_row
         
@@ -1400,69 +2414,186 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
             codigo = 'N/A'
             descripcion = 'Item'
         
-        items.append({
-            'codigo': codigo,
-            'cantidad': float(item.cantidad),
-            'descripcion': descripcion,
-            'iva': 10,
-            'precio': float(item.precio_unitario),
-            'total': float(item.total)
-        })
+        items_data.append([
+            codigo[:10],  # Limitar código
+            f"{item.cantidad:.2f}",
+            descripcion[:35],  # Limitar descripción
+            '10',
+            f"{int(item.precio_unitario):,}",
+            f"{int(item.total):,}"
+        ])
     
-    return {
-        'tipo': 'BOLETA',
-        'numero': venta.id,
-        'fecha': venta.creado_en.strftime('%d/%m/%Y %I:%M %p'),
-        'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
-        'empresa': {
-            'nombre': empresa.nombre,
-            'ruc': empresa.ruc,
-            'telefono': empresa.telefono,
-            'direccion': empresa.direccion
-        },
-        'cliente': {
-            'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
-            'ruc': cliente.ruc or '0',
-            'direccion': cliente.direccion or '0',
-            'telefono': cliente.telefono or '0'
-        },
-        'vendedor': f"{usuario.nombre} {usuario.apellido or ''}".strip(),
-        'items': items,
-        'subtotal': float(venta.total + venta.descuento),
-        'descuento': float(venta.descuento),
-        'iva': float(venta.iva),
-        'total': float(venta.total),
-        'total_letras': numero_a_letras(int(venta.total)) + ' Guaraníes'
-    }
+    items_table = Table(items_data, colWidths=[25*mm, 15*mm, 80*mm, 12*mm, 25*mm, 25*mm])
+    items_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, 0), 'Courier-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Courier'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, -1), (-1, -1), 1, colors.grey),
+        ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # Código
+        ('ALIGN', (1, 0), (1, -1), 'CENTER'),  # Cantidad
+        ('ALIGN', (2, 0), (2, -1), 'LEFT'),  # Descripción
+        ('ALIGN', (3, 0), (3, -1), 'CENTER'),  # IVA
+        ('ALIGN', (4, 0), (-1, -1), 'RIGHT'),  # Precio y Total
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Totales
+    subtotal_sin_descuento = float(venta.total + venta.descuento)
+    descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
+    total_letras = numero_a_letras(int(venta.total)) + ' Guaraníes'
+    
+    totales_data = [
+        ['Subtotal:', f"{int(subtotal_sin_descuento):,}"]
+    ]
+    
+    if venta.descuento > 0:
+        totales_data.append([f'Descuento ({descuento_porcentaje}%):', f"-{int(venta.descuento):,}"])
+    
+    totales_data.append(['En Letras:', total_letras.upper()])
+    totales_data.append(['TOTAL A PAGAR:', f'Gs. {int(venta.total):,}'])
+    
+    totales_table = Table(totales_data, colWidths=[100*mm, 82*mm])
+    totales_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -2), 'Courier-Bold'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -2), 8),
+        ('FONTSIZE', (0, -1), (-1, -1), 10),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(totales_table)
+    elements.append(Spacer(1, 5*mm))
+    
+    # Firma
+    firma_style = ParagraphStyle('Firma', fontName='Courier', fontSize=8, alignment=TA_CENTER)
+    elements.append(Paragraph('_' * 40, firma_style))
+    elements.append(Paragraph('<b>Firma Cliente</b>', firma_style))
+    elements.append(Spacer(1, 2*mm))
+    
+    footer_style = ParagraphStyle('Footer', fontName='Courier', fontSize=7, alignment=TA_CENTER, fontStyle='italic')
+    elements.append(Paragraph('<b>Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.</b>', footer_style))
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
 
-@api_router.get("/ventas/{venta_id}/factura")
-async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
-    """Generate factura data for printing"""
-    result = await db.execute(
-        select(Venta, Cliente, Usuario, Empresa)
-        .join(Cliente, Venta.cliente_id == Cliente.id)
-        .join(Usuario, Venta.usuario_id == Usuario.id)
-        .join(Empresa, Venta.empresa_id == Empresa.id)
-        .where(Venta.id == venta_id)
-    )
-    row = result.first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Venta no encontrada")
-    
-    venta, cliente, usuario, empresa = row
-    
-    # Check if client has RUC for factura
-    if not cliente.ruc:
-        raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
-    
+
+async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario, empresa: Empresa, db: AsyncSession) -> bytes:
+    """Genera PDF de factura con formato similar a matriz de puntos"""
+    # Obtener items
     items_result = await db.execute(
         select(VentaItem, Producto, MateriaLaboratorio)
         .outerjoin(Producto, VentaItem.producto_id == Producto.id)
         .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-        .where(VentaItem.venta_id == venta_id)
+        .where(VentaItem.venta_id == venta.id)
     )
     
-    items = []
+    buffer = io.BytesIO()
+    # Tamaño de papel: 240mm x 200mm para factura
+    page_width = 240 * mm
+    page_height = 200 * mm
+    custom_size = (page_width, page_height)
+    
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=custom_size,
+        leftMargin=12*mm,
+        rightMargin=12*mm,
+        topMargin=10*mm,
+        bottomMargin=10*mm
+    )
+    
+    elements = []
+    
+    # Estilos
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        fontName='Courier-Bold',
+        fontSize=16,
+        alignment=TA_LEFT,
+        spaceAfter=1,
+        textDecoration='underline'
+    )
+    
+    normal_bold = ParagraphStyle(
+        'NormalBold',
+        fontName='Courier-Bold',
+        fontSize=9,
+        alignment=TA_LEFT
+    )
+    
+    # Header con empresa y número de factura
+    header_data = [
+        [
+            Paragraph(f'<b>{empresa.nombre or "Luz Brill S.A."}</b>', title_style),
+            Paragraph('<b>FACTURA</b>', ParagraphStyle('FacturaTit', fontName='Courier-Bold', fontSize=14, alignment=TA_CENTER))
+        ],
+        [
+            Paragraph(f'<b>RUC:</b> {empresa.ruc}', normal_bold),
+            Paragraph(f'<b>N° {venta.id:07d}</b>', ParagraphStyle('FacturaNum', fontName='Courier-Bold', fontSize=11, alignment=TA_CENTER))
+        ],
+        [
+            Paragraph(f'<b>{empresa.direccion}</b>', normal_bold),
+            ''
+        ],
+        [
+            Paragraph(f'<b>Tel:</b> {empresa.telefono}', normal_bold),
+            ''
+        ]
+    ]
+    
+    header_table = Table(header_data, colWidths=[140*mm, 56*mm])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOX', (1, 0), (1, 1), 2, colors.black),
+        ('ALIGN', (1, 0), (1, 1), 'CENTER'),
+        ('VALIGN', (1, 0), (1, 1), 'MIDDLE'),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 4*mm))
+    
+    # Información del cliente
+    cliente_data = [
+        [
+            f'Señor(es): {cliente.nombre} {cliente.apellido or ""}',
+            f'Fecha: {venta.creado_en.strftime("%d/%m/%Y")}'
+        ],
+        [
+            f'Dirección: {cliente.direccion or ""}',
+            f'RUC: {cliente.ruc}'
+        ],
+        [
+            f'Teléfono: {cliente.telefono or ""}',
+            f'Condición: {venta.tipo_pago.value if venta.tipo_pago else "CONTADO"}'
+        ]
+    ]
+    
+    cliente_table = Table(cliente_data, colWidths=[140*mm, 56*mm])
+    cliente_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('BOX', (0, 0), (-1, -1), 2, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(cliente_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Items
+    items_data = [['Cant.', 'Descripción', 'P. Unit.', 'Exenta', 'IVA 5%', 'IVA 10%']]
+    subtotal_iva_10 = 0
+    
     for item_row in items_result.all():
         item, producto, materia = item_row
         
@@ -1473,48 +2604,91 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         else:
             descripcion = 'Item'
         
-        items.append({
-            'cantidad': float(item.cantidad),
-            'descripcion': descripcion,
-            'precio_unitario': float(item.precio_unitario),
-            'exenta': 0,
-            'iva_5': 0,
-            'iva_10': float(item.total)
-        })
+        subtotal_iva_10 += float(item.total)
+        
+        items_data.append([
+            f"{item.cantidad:.2f}",
+            descripcion[:40],  # Limitar descripción
+            f"{int(item.precio_unitario):,}",
+            '0',
+            '0',
+            f"{int(item.total):,}"
+        ])
     
-    # Calculate IVA breakdown
+    items_table = Table(items_data, colWidths=[18*mm, 95*mm, 25*mm, 18*mm, 18*mm, 25*mm])
+    items_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, 0), 'Courier-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Courier'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('LINEABOVE', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.black),
+        ('LINEBELOW', (0, -1), (-1, -1), 1, colors.grey),
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),  # Cantidad
+        ('ALIGN', (1, 0), (1, -1), 'LEFT'),  # Descripción
+        ('ALIGN', (2, 0), (-1, -1), 'RIGHT'),  # Resto a la derecha
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 3*mm))
+    
+    # Totales
     base_imponible = float(venta.total) / 1.10
     iva_10 = float(venta.total) - base_imponible
+    descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
+    total_letras = numero_a_letras(int(venta.total))
     
-    return {
-        'tipo': 'FACTURA',
-        'numero': f"{venta.id:07d}",
-        'fecha': venta.creado_en.strftime('%d de %B de %Y'),
-        'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
-        'empresa': {
-            'nombre': empresa.nombre,
-            'ruc': empresa.ruc,
-            'telefono': empresa.telefono,
-            'direccion': empresa.direccion
-        },
-        'cliente': {
-            'nombre': f"{cliente.nombre} {cliente.apellido or ''}".strip(),
-            'ruc': cliente.ruc,
-            'direccion': cliente.direccion or '',
-            'telefono': cliente.telefono or ''
-        },
-        'items': items,
-        'subtotal_exenta': 0,
-        'subtotal_iva_5': 0,
-        'subtotal_iva_10': float(venta.total),
-        'total': float(venta.total),
-        'total_letras': numero_a_letras(int(venta.total)),
-        'liquidacion_iva': {
-            'iva_5': 0,
-            'iva_10': round(iva_10, 0),
-            'total_iva': round(iva_10, 0)
-        }
-    }
+    totales_data = [
+        ['Subtotal IVA 10%:', f"Gs. {int(subtotal_iva_10 + venta.descuento):,}"]
+    ]
+    
+    if venta.descuento > 0:
+        totales_data.append([f'Descuento ({descuento_porcentaje}%):', f"-Gs. {int(venta.descuento):,}"])
+    
+    totales_data.extend([
+        ['Liquidación IVA 10%:', f"Gs. {round(iva_10, 0):,.0f}"],
+        ['Son:', f"{total_letras.upper()} GUARANÍES"],
+        ['TOTAL A PAGAR:', f'Gs. {int(venta.total):,}']
+    ])
+    
+    totales_table = Table(totales_data, colWidths=[100*mm, 80*mm])
+    totales_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -2), 'Courier-Bold'),
+        ('FONTNAME', (0, -1), (-1, -1), 'Courier-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -2), 8),
+        ('FONTSIZE', (0, -1), (-1, -1), 10),
+        ('BOX', (0, 0), (-1, -1), 2, colors.black),
+        ('LINEABOVE', (0, -2), (-1, -2), 1, colors.black),
+        ('LINEABOVE', (0, -1), (-1, -1), 2, colors.black),
+        ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(totales_table)
+    elements.append(Spacer(1, 8*mm))
+    
+    # Firmas
+    firmas_data = [
+        ['Firma y Sello Empresa', 'Firma Cliente']
+    ]
+    firmas_table = Table(firmas_data, colWidths=[90*mm, 90*mm])
+    firmas_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Courier'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('LINEABOVE', (0, 0), (-1, -1), 1, colors.black),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(firmas_table)
+    
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
+
 
 # ==================== FUNCIONARIOS ====================
 @api_router.post("/funcionarios", response_model=FuncionarioResponse)
@@ -1542,8 +2716,8 @@ async def listar_funcionarios(empresa_id: int, db: AsyncSession = Depends(get_db
             select(func_sql.coalesce(func_sql.sum(AdelantoSalario.monto), 0))
             .where(
                 AdelantoSalario.funcionario_id == funcionario.id,
-                func_sql.extract('year', AdelantoSalario.creado_en) == date.today().year,
-                func_sql.extract('month', AdelantoSalario.creado_en) == date.today().month
+                func_sql.extract('year', AdelantoSalario.creado_en) == today_paraguay().year,
+                func_sql.extract('month', AdelantoSalario.creado_en) == today_paraguay().month
             )
         )
         total_adelantos = adelantos_result.scalar() or Decimal('0')
@@ -1618,11 +2792,11 @@ async def listar_adelantos(funcionario_id: int, periodo: Optional[str] = None, d
     
     if periodo:
         year, month = map(int, periodo.split('-'))
-        start_date = datetime(year, month, 1, tzinfo=timezone.utc)
+        start_date = datetime(year, month, 1, tzinfo=PARAGUAY_TZ)
         if month == 12:
-            end_date = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+            end_date = datetime(year + 1, 1, 1, tzinfo=PARAGUAY_TZ)
         else:
-            end_date = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+            end_date = datetime(year, month + 1, 1, tzinfo=PARAGUAY_TZ)
         query = query.where(
             AdelantoSalario.creado_en >= start_date,
             AdelantoSalario.creado_en < end_date
@@ -1694,8 +2868,8 @@ async def listar_entregas(
         select(Entrega, Venta, Cliente, Vehiculo, Usuario)
         .join(Venta, Entrega.venta_id == Venta.id)
         .join(Cliente, Venta.cliente_id == Cliente.id)
-        .join(Vehiculo, Entrega.vehiculo_id == Vehiculo.id)
-        .join(Usuario, Entrega.responsable_usuario_id == Usuario.id)
+        .outerjoin(Vehiculo, Entrega.vehiculo_id == Vehiculo.id)
+        .outerjoin(Usuario, Entrega.responsable_usuario_id == Usuario.id)
         .where(Venta.empresa_id == empresa_id)
     )
     
@@ -1710,17 +2884,70 @@ async def listar_entregas(
     if estado:
         query = query.where(Entrega.estado == EstadoEntrega(estado))
     
-    result = await db.execute(query.order_by(Entrega.fecha_entrega.desc()))
+    result = await db.execute(query.order_by(Entrega.id.desc()))
     entregas = []
     for row in result.all():
         entrega, venta, cliente, vehiculo, usuario = row
+        
+        # Load venta items with product/materia names
+        items_result = await db.execute(
+            select(VentaItem).where(VentaItem.venta_id == venta.id)
+        )
+        items = []
+        for item in items_result.scalars().all():
+            item_dict = {
+                'cantidad': item.cantidad,
+                'precio_unitario': float(item.precio_unitario),
+                'total': float(item.total),
+                'producto_nombre': None,
+                'materia_nombre': None
+            }
+            
+            # Get product name
+            if item.producto_id:
+                prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
+                producto = prod_result.scalar_one_or_none()
+                if producto:
+                    item_dict['producto_nombre'] = producto.nombre
+            
+            # Get materia name
+            elif item.materia_laboratorio_id:
+                mat_result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id))
+                materia = mat_result.scalar_one_or_none()
+                if materia:
+                    item_dict['materia_nombre'] = materia.nombre
+            
+            items.append(item_dict)
+        
         entrega_dict = EntregaResponse.model_validate(entrega).model_dump()
         entrega_dict['cliente_nombre'] = f"{cliente.nombre} {cliente.apellido or ''}"
-        entrega_dict['vehiculo_chapa'] = vehiculo.chapa
-        entrega_dict['responsable_nombre'] = f"{usuario.nombre} {usuario.apellido or ''}"
+        entrega_dict['cliente_telefono'] = cliente.telefono
+        entrega_dict['cliente_direccion'] = cliente.direccion
+        entrega_dict['vehiculo_chapa'] = vehiculo.chapa if vehiculo else None
+        entrega_dict['responsable_nombre'] = f"{usuario.nombre} {usuario.apellido or ''}" if usuario else None
+        entrega_dict['items'] = items
         entregas.append(EntregaConDetalles(**entrega_dict))
     
     return entregas
+
+@api_router.put("/entregas/{entrega_id}/asignar", response_model=EntregaResponse)
+async def asignar_entrega(entrega_id: int, data: AsignarEntrega, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Entrega).where(Entrega.id == entrega_id))
+    entrega = result.scalar_one_or_none()
+    if not entrega:
+        raise HTTPException(status_code=404, detail="Entrega no encontrada")
+    
+    # Actualizar vehículo y responsable
+    entrega.vehiculo_id = data.vehiculo_id
+    entrega.responsable_usuario_id = data.responsable_usuario_id
+    
+    # Si estaba PENDIENTE, cambiar a EN_CAMINO
+    if entrega.estado == EstadoEntrega.PENDIENTE:
+        entrega.estado = EstadoEntrega.EN_CAMINO
+    
+    await db.commit()
+    await db.refresh(entrega)
+    return entrega
 
 @api_router.put("/entregas/{entrega_id}/estado")
 async def actualizar_estado_entrega(entrega_id: int, estado: str, db: AsyncSession = Depends(get_db)):
@@ -1733,10 +2960,22 @@ async def actualizar_estado_entrega(entrega_id: int, estado: str, db: AsyncSessi
     await db.commit()
     return {"message": "Estado actualizado"}
 
+@api_router.delete("/entregas/{entrega_id}")
+async def eliminar_entrega(entrega_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete delivery order"""
+    result = await db.execute(select(Entrega).where(Entrega.id == entrega_id))
+    entrega = result.scalar_one_or_none()
+    if not entrega:
+        raise HTTPException(status_code=404, detail="Entrega no encontrada")
+    
+    await db.delete(entrega)
+    await db.commit()
+    return {"message": "Entrega eliminada"}
+
 # ==================== FACTURAS ====================
 @api_router.post("/facturas", response_model=FacturaResponse)
 async def crear_factura(data: FacturaCreate, db: AsyncSession = Depends(get_db)):
-    factura = Factura(**data.model_dump())
+    factura = Factura(**data.model_dump(), creado_en=now_paraguay())
     db.add(factura)
     await db.commit()
     await db.refresh(factura)
@@ -1798,7 +3037,7 @@ async def obtener_cotizacion():
             usd_pyg=Decimal(str(MANUAL_CURRENCY_RATES['usd_pyg'])),
             brl_pyg=Decimal(str(MANUAL_CURRENCY_RATES['brl_pyg'])),
             manual=True,
-            fecha_actualizacion=MANUAL_CURRENCY_RATES['updated_at'] or datetime.now(timezone.utc)
+            fecha_actualizacion=MANUAL_CURRENCY_RATES['updated_at'] or now_paraguay()
         )
     
     try:
@@ -1817,7 +3056,7 @@ async def obtener_cotizacion():
                 usd_pyg=usd_pyg,
                 brl_pyg=brl_pyg.quantize(Decimal('0.01')),
                 manual=False,
-                fecha_actualizacion=datetime.now(timezone.utc)
+                fecha_actualizacion=now_paraguay()
             )
     except Exception as e:
         logger.error(f"Error fetching exchange rates: {e}")
@@ -1827,13 +3066,13 @@ async def obtener_cotizacion():
                 usd_pyg=Decimal(str(MANUAL_CURRENCY_RATES['usd_pyg'])),
                 brl_pyg=Decimal(str(MANUAL_CURRENCY_RATES['brl_pyg'])),
                 manual=True,
-                fecha_actualizacion=MANUAL_CURRENCY_RATES['updated_at'] or datetime.now(timezone.utc)
+                fecha_actualizacion=MANUAL_CURRENCY_RATES['updated_at'] or now_paraguay()
             )
         return CotizacionDivisa(
             usd_pyg=Decimal('7500'),
             brl_pyg=Decimal('1500'),
             manual=True,
-            fecha_actualizacion=datetime.now(timezone.utc)
+            fecha_actualizacion=now_paraguay()
         )
 
 @api_router.post("/cotizacion/manual")
@@ -1844,7 +3083,7 @@ async def establecer_cotizacion_manual(data: dict):
     MANUAL_CURRENCY_RATES['usd_pyg'] = data.get('usd_pyg')
     MANUAL_CURRENCY_RATES['brl_pyg'] = data.get('brl_pyg')
     MANUAL_CURRENCY_RATES['manual'] = data.get('manual', True)
-    MANUAL_CURRENCY_RATES['updated_at'] = datetime.now(timezone.utc)
+    MANUAL_CURRENCY_RATES['updated_at'] = now_paraguay()
     
     return {"message": "Cotización manual establecida", "data": MANUAL_CURRENCY_RATES}
 
@@ -1858,9 +3097,8 @@ async def activar_cotizacion_automatica():
 # ==================== DASHBOARD ====================
 @api_router.get("/dashboard/stats", response_model=DashboardStats)
 async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    today = datetime.now(timezone.utc).date()
-    today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
-    today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=timezone.utc)
+    today = today_paraguay()
+    today_start, today_end = get_day_range_paraguay(today)
     
     ventas_hoy_result = await db.execute(
         select(
@@ -1877,6 +3115,26 @@ async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Dep
     ventas_row = ventas_hoy_result.first()
     ventas_hoy = ventas_row[0] if ventas_row else Decimal('0')
     cantidad_ventas = ventas_row[1] if ventas_row else 0
+    
+    # Ventas del mes corriente
+    month_start = datetime.combine(today.replace(day=1), datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    month_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=PARAGUAY_TZ)
+    
+    ventas_mes_result = await db.execute(
+        select(
+            func_sql.coalesce(func_sql.sum(Venta.total), 0),
+            func_sql.count(Venta.id)
+        )
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= month_start,
+            Venta.creado_en <= month_end
+        )
+    )
+    ventas_mes_row = ventas_mes_result.first()
+    ventas_mes = ventas_mes_row[0] if ventas_mes_row else Decimal('0')
+    cantidad_ventas_mes = ventas_mes_row[1] if ventas_mes_row else 0
     
     deliverys_result = await db.execute(
         select(func_sql.count(Entrega.id))
@@ -1924,8 +3182,31 @@ async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Dep
         .group_by(func_sql.extract('hour', Venta.creado_en))
         .order_by('hora')
     )
+    
+    # Obtener unidades por hora
+    unidades_por_hora_result = await db.execute(
+        select(
+            func_sql.extract('hour', Venta.creado_en).label('hora'),
+            func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades')
+        )
+        .join(VentaItem, VentaItem.venta_id == Venta.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= today_start,
+            Venta.creado_en <= today_end
+        )
+        .group_by(func_sql.extract('hour', Venta.creado_en))
+    )
+    unidades_dict = {int(row[0]): int(row[1] or 0) for row in unidades_por_hora_result.all()}
+    
     ventas_por_hora = [
-        VentasPorHora(hora=int(row[0]), cantidad=row[1], monto=row[2])
+        VentasPorHora(
+            hora=int(row[0]),
+            cantidad=row[1],
+            monto=row[2],
+            unidades=unidades_dict.get(int(row[0]), 0)
+        )
         for row in ventas_por_hora_result.all()
     ]
     
@@ -1945,6 +3226,8 @@ async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Dep
     return DashboardStats(
         ventas_hoy=ventas_hoy,
         cantidad_ventas_hoy=cantidad_ventas,
+        ventas_mes=ventas_mes,
+        cantidad_ventas_mes=cantidad_ventas_mes,
         deliverys_pendientes=deliverys_pendientes,
         productos_stock_bajo=len(productos_bajo_stock),
         creditos_por_vencer=0,
@@ -1953,11 +3236,295 @@ async def obtener_estadisticas_dashboard(empresa_id: int, db: AsyncSession = Dep
         productos_alto_stock=productos_alto_stock
     )
 
+@api_router.get("/dashboard/ventas-periodo")
+async def obtener_ventas_por_periodo(
+    empresa_id: int,
+    periodo: str = "dia",
+    tipo_pago: Optional[str] = None,  # 'credito', 'contado', o None para todos
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obtener ventas agrupadas por período
+    periodo: dia, semana, mes, trimestre, semestre, anio
+    tipo_pago: credito (solo CREDITO), contado (EFECTIVO, CHEQUE, TRANSFERENCIA, TARJETA), None (todos)
+    """
+    now = now_paraguay()
+    today = now.date()
+    
+    # Build base filters
+    base_filters = [
+        Venta.empresa_id == empresa_id,
+        Venta.estado == EstadoVenta.CONFIRMADA
+    ]
+    
+    # Add tipo_pago filter
+    if tipo_pago == 'credito':
+        base_filters.append(Venta.tipo_pago == TipoPago.CREDITO)
+    elif tipo_pago == 'contado':
+        base_filters.append(Venta.tipo_pago.in_([
+            TipoPago.EFECTIVO,
+            TipoPago.CHEQUE,
+            TipoPago.TRANSFERENCIA,
+            TipoPago.TARJETA
+        ]))
+    
+    if periodo == "dia":
+        # Ventas por hora del día actual en zona horaria de Paraguay
+        today_start = datetime.combine(today, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+        today_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=PARAGUAY_TZ)
+        
+        base_filters.extend([
+            Venta.creado_en >= today_start,
+            Venta.creado_en <= today_end
+        ])
+        
+        # Para PostgreSQL: convertir a zona horaria de Paraguay antes de extraer la hora
+        # func_sql.timezone('America/Asuncion', ...) convierte a hora local
+        hora_paraguay = func_sql.extract(
+            'hour', 
+            func_sql.timezone(text("'America/Asuncion'"), Venta.creado_en)
+        )
+        
+        result = await db.execute(
+            select(
+                hora_paraguay.label('hora'),
+                func_sql.count(Venta.id).label('cantidad'),
+                func_sql.coalesce(func_sql.sum(Venta.total), 0).label('monto'),
+                func_sql.coalesce(func_sql.sum(
+                    select(func_sql.sum(VentaItem.cantidad))
+                    .where(VentaItem.venta_id == Venta.id)
+                    .correlate(Venta)
+                    .scalar_subquery()
+                ), 0).label('unidades')
+            )
+            .where(and_(*base_filters))
+            .group_by(hora_paraguay)
+            .order_by('hora')
+        )
+        return [
+            {"label": f"{int(row[0])}:00", "cantidad": row[1], "monto": float(row[2]), "unidades": int(row[3] or 0)}
+            for row in result.all()
+        ]
+    
+    elif periodo == "semana":
+        # Últimos 7 días
+        fecha_inicio = today - timedelta(days=6)
+        fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+        
+        base_filters.append(Venta.creado_en >= fecha_inicio_dt)
+        
+        # Primero obtenemos los datos agregados
+        result = await db.execute(
+            select(
+                func_sql.date(Venta.creado_en).label('fecha'),
+                func_sql.count(Venta.id).label('cantidad'),
+                func_sql.coalesce(func_sql.sum(Venta.total), 0).label('monto')
+            )
+            .where(and_(*base_filters))
+            .group_by(func_sql.date(Venta.creado_en))
+            .order_by('fecha')
+        )
+        ventas_dict = {row[0]: {"cantidad": row[1], "monto": float(row[2])} for row in result.all()}
+        
+        # Obtener unidades por fecha
+        unidades_result = await db.execute(
+            select(
+                func_sql.date(Venta.creado_en).label('fecha'),
+                func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades')
+            )
+            .join(VentaItem, VentaItem.venta_id == Venta.id)
+            .where(and_(*base_filters))
+            .group_by(func_sql.date(Venta.creado_en))
+        )
+        unidades_dict = {row[0]: int(row[1] or 0) for row in unidades_result.all()}
+        
+        # Asegurar que todos los días estén representados
+        return [
+            {
+                "label": (fecha_inicio + timedelta(days=i)).strftime("%d/%m"),
+                "cantidad": ventas_dict.get(fecha_inicio + timedelta(days=i), {}).get("cantidad", 0),
+                "monto": ventas_dict.get(fecha_inicio + timedelta(days=i), {}).get("monto", 0),
+                "unidades": unidades_dict.get(fecha_inicio + timedelta(days=i), 0)
+            }
+            for i in range(7)
+        ]
+    
+    elif periodo == "mes":
+        # Último mes (30 días) agrupado por día
+        fecha_inicio = today - timedelta(days=29)
+        fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+        
+        base_filters.append(Venta.creado_en >= fecha_inicio_dt)
+        
+        result = await db.execute(
+            select(
+                func_sql.date(Venta.creado_en).label('fecha'),
+                func_sql.count(Venta.id).label('cantidad'),
+                func_sql.coalesce(func_sql.sum(Venta.total), 0).label('monto')
+            )
+            .where(and_(*base_filters))
+            .group_by(func_sql.date(Venta.creado_en))
+            .order_by('fecha')
+        )
+        ventas_dict = {row[0]: {"cantidad": row[1], "monto": float(row[2])} for row in result.all()}
+        
+        # Obtener unidades por fecha
+        unidades_result = await db.execute(
+            select(
+                func_sql.date(Venta.creado_en).label('fecha'),
+                func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades')
+            )
+            .join(VentaItem, VentaItem.venta_id == Venta.id)
+            .where(and_(*base_filters))
+            .group_by(func_sql.date(Venta.creado_en))
+        )
+        unidades_dict = {row[0]: int(row[1] or 0) for row in unidades_result.all()}
+        
+        return [
+            {
+                "label": (fecha_inicio + timedelta(days=i)).strftime("%d/%m"),
+                "cantidad": ventas_dict.get(fecha_inicio + timedelta(days=i), {}).get("cantidad", 0),
+                "monto": ventas_dict.get(fecha_inicio + timedelta(days=i), {}).get("monto", 0),
+                "unidades": unidades_dict.get(fecha_inicio + timedelta(days=i), 0)
+            }
+            for i in range(30)
+        ]
+    
+    elif periodo == "trimestre":
+        # Últimos 3 meses agrupado por semana
+        fecha_inicio = today - timedelta(days=90)
+        fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+        
+        base_filters.append(Venta.creado_en >= fecha_inicio_dt)
+        
+        result = await db.execute(
+            select(
+                func_sql.extract('week', Venta.creado_en).label('semana'),
+                func_sql.extract('year', Venta.creado_en).label('anio'),
+                func_sql.count(Venta.id).label('cantidad'),
+                func_sql.coalesce(func_sql.sum(Venta.total), 0).label('monto')
+            )
+            .where(and_(*base_filters))
+            .group_by('semana', 'anio')
+            .order_by('anio', 'semana')
+        )
+        
+        # Obtener unidades por semana
+        unidades_result = await db.execute(
+            select(
+                func_sql.extract('week', Venta.creado_en).label('semana'),
+                func_sql.extract('year', Venta.creado_en).label('anio'),
+                func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades')
+            )
+            .join(VentaItem, VentaItem.venta_id == Venta.id)
+            .where(and_(*base_filters))
+            .group_by('semana', 'anio')
+        )
+        unidades_dict = {(int(row[0]), int(row[1])): int(row[2] or 0) for row in unidades_result.all()}
+        
+        return [
+            {
+                "label": f"Sem {int(row[0])}",
+                "cantidad": row[2],
+                "monto": float(row[3]),
+                "unidades": unidades_dict.get((int(row[0]), int(row[1])), 0)
+            }
+            for row in result.all()
+        ]
+    
+    elif periodo == "semestre":
+        # Últimos 6 meses agrupado por mes
+        fecha_inicio = today - timedelta(days=180)
+        fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+        
+        base_filters.append(Venta.creado_en >= fecha_inicio_dt)
+        
+        result = await db.execute(
+            select(
+                func_sql.extract('month', Venta.creado_en).label('mes'),
+                func_sql.extract('year', Venta.creado_en).label('anio'),
+                func_sql.count(Venta.id).label('cantidad'),
+                func_sql.coalesce(func_sql.sum(Venta.total), 0).label('monto')
+            )
+            .where(and_(*base_filters))
+            .group_by('mes', 'anio')
+            .order_by('anio', 'mes')
+        )
+        
+        # Obtener unidades por mes
+        unidades_result = await db.execute(
+            select(
+                func_sql.extract('month', Venta.creado_en).label('mes'),
+                func_sql.extract('year', Venta.creado_en).label('anio'),
+                func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades')
+            )
+            .join(VentaItem, VentaItem.venta_id == Venta.id)
+            .where(and_(*base_filters))
+            .group_by('mes', 'anio')
+        )
+        unidades_dict = {(int(row[0]), int(row[1])): int(row[2] or 0) for row in unidades_result.all()}
+        
+        meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+        return [
+            {
+                "label": meses[int(row[0]) - 1],
+                "cantidad": row[2],
+                "monto": float(row[3]),
+                "unidades": unidades_dict.get((int(row[0]), int(row[1])), 0)
+            }
+            for row in result.all()
+        ]
+    
+    elif periodo == "anio":
+        # Último año agrupado por mes
+        fecha_inicio = today - timedelta(days=365)
+        fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+        
+        base_filters.append(Venta.creado_en >= fecha_inicio_dt)
+        
+        result = await db.execute(
+            select(
+                func_sql.extract('month', Venta.creado_en).label('mes'),
+                func_sql.extract('year', Venta.creado_en).label('anio'),
+                func_sql.count(Venta.id).label('cantidad'),
+                func_sql.coalesce(func_sql.sum(Venta.total), 0).label('monto')
+            )
+            .where(and_(*base_filters))
+            .group_by('mes', 'anio')
+            .order_by('anio', 'mes')
+        )
+        
+        # Obtener unidades por mes
+        unidades_result = await db.execute(
+            select(
+                func_sql.extract('month', Venta.creado_en).label('mes'),
+                func_sql.extract('year', Venta.creado_en).label('anio'),
+                func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades')
+            )
+            .join(VentaItem, VentaItem.venta_id == Venta.id)
+            .where(and_(*base_filters))
+            .group_by('mes', 'anio')
+        )
+        unidades_dict = {(int(row[0]), int(row[1])): int(row[2] or 0) for row in unidades_result.all()}
+        
+        meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+        return [
+            {
+                "label": meses[int(row[0]) - 1],
+                "cantidad": row[2],
+                "monto": float(row[3]),
+                "unidades": unidades_dict.get((int(row[0]), int(row[1])), 0)
+            }
+            for row in result.all()
+        ]
+    
+    return []
+
 # ==================== ALERTAS ====================
 @api_router.get("/alertas", response_model=List[Alerta])
 async def obtener_alertas(empresa_id: int, db: AsyncSession = Depends(get_db)):
     alertas = []
-    today = date.today()
+    today = today_paraguay()
     
     fecha_limite = today + timedelta(days=30)
     productos_vencimiento = await db.execute(
@@ -2087,7 +3654,7 @@ def crear_pdf_reporte(titulo, subtitulo, columnas, datos, totales=None):
     # Footer
     elements.append(Spacer(1, 20))
     footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
-    elements.append(Paragraph(f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')} - Luz Brill ERP", footer_style))
+    elements.append(Paragraph(f"Generado el {now_paraguay().strftime('%d/%m/%Y %H:%M')} - Luz Brill ERP", footer_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -2098,24 +3665,61 @@ async def reporte_ventas(
     empresa_id: int,
     fecha_desde: str,
     fecha_hasta: str,
+    tipo_pago: str = None,
+    estado: str = None,
+    cliente_id: int = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Genera reporte PDF de ventas por rango de fechas"""
-    fecha_ini = datetime.fromisoformat(fecha_desde)
-    fecha_fin = datetime.fromisoformat(fecha_hasta) + timedelta(days=1)
+    """Genera reporte PDF de ventas por rango de fechas con filtros"""
+    try:
+        fecha_ini = datetime.fromisoformat(fecha_desde)
+        fecha_fin = datetime.fromisoformat(fecha_hasta) + timedelta(days=1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
     
-    result = await db.execute(
+    query = (
         select(Venta, Cliente)
         .join(Cliente, Venta.cliente_id == Cliente.id)
         .where(
             Venta.empresa_id == empresa_id,
             Venta.creado_en >= fecha_ini,
-            Venta.creado_en < fecha_fin,
-            Venta.estado == EstadoVenta.CONFIRMADA
+            Venta.creado_en < fecha_fin
         )
-        .order_by(Venta.creado_en)
     )
+    
+    # Apply cliente_id filter if provided
+    if cliente_id:
+        query = query.where(Venta.cliente_id == cliente_id)
+    
+    # Apply estado filter (default: CONFIRMADA)
+    if estado:
+        try:
+            query = query.where(Venta.estado == EstadoVenta[estado])
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
+    else:
+        query = query.where(Venta.estado == EstadoVenta.CONFIRMADA)
+    
+    # Apply tipo_pago filter - support CONTADO (all non-credit) and CREDITO
+    if tipo_pago:
+        if tipo_pago == 'CONTADO':
+            # CONTADO = all payment types except CREDITO
+            query = query.where(Venta.tipo_pago.in_([TipoPago.EFECTIVO, TipoPago.TARJETA, TipoPago.TRANSFERENCIA, TipoPago.CHEQUE]))
+        elif tipo_pago == 'CREDITO':
+            query = query.where(Venta.tipo_pago == TipoPago.CREDITO)
+        else:
+            # Support specific payment types if provided
+            try:
+                query = query.where(Venta.tipo_pago == TipoPago[tipo_pago])
+            except KeyError:
+                raise HTTPException(status_code=400, detail=f"Tipo de pago '{tipo_pago}' no válido")
+    
+    query = query.order_by(Venta.creado_en)
+    result = await db.execute(query)
     ventas = result.all()
+    
+    if not ventas:
+        raise HTTPException(status_code=404, detail="No se encontraron ventas para los filtros seleccionados")
     
     columnas = ['ID', 'Fecha', 'Cliente', 'Tipo Pago', 'Total']
     datos = []
@@ -2133,9 +3737,22 @@ async def reporte_ventas(
     
     totales = ['', '', '', 'TOTAL:', f"{float(total_general):,.0f}"]
     
+    # Build subtitle with filters
+    subtitle = f"Período: {fecha_desde} al {fecha_hasta}"
+    if tipo_pago:
+        if tipo_pago == 'CONTADO':
+            subtitle += " | Tipo: CONTADO"
+        elif tipo_pago == 'CREDITO':
+            subtitle += " | Tipo: CRÉDITO"
+        else:
+            subtitle += f" | Pago: {tipo_pago}"
+    if estado:
+        subtitle += f" | Estado: {estado}"
+    subtitle += f" | Total ventas: {len(datos)}"
+    
     pdf_bytes = crear_pdf_reporte(
         "Reporte de Ventas",
-        f"Período: {fecha_desde} al {fecha_hasta} | Total ventas: {len(datos)}",
+        subtitle,
         columnas,
         datos,
         totales
@@ -2147,125 +3764,416 @@ async def reporte_ventas(
         headers={"Content-Disposition": f"attachment; filename=reporte_ventas_{fecha_desde}_{fecha_hasta}.pdf"}
     )
 
-@api_router.get("/reportes/stock")
-async def reporte_stock(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    """Genera reporte PDF de stock actual"""
-    result = await db.execute(
-        select(Producto, func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0).label('stock_total'))
-        .outerjoin(StockActual, Producto.id == StockActual.producto_id)
-        .where(Producto.empresa_id == empresa_id, Producto.activo == True)
-        .group_by(Producto.id)
-        .order_by(Producto.nombre)
+@api_router.get("/reportes/historial-ventas")
+async def reporte_historial_ventas(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    cliente_id: int = None,
+    usuario_id: int = None,
+    estado: str = None,
+    monto_min: float = None,
+    monto_max: float = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte PDF del historial de ventas con filtros aplicados"""
+    query = (
+        select(Venta, Cliente)
+        .join(Cliente, Venta.cliente_id == Cliente.id)
+        .where(Venta.empresa_id == empresa_id)
+        .order_by(Venta.creado_en.desc())
     )
-    productos = result.all()
     
-    columnas = ['Código', 'Producto', 'Stock', 'Precio']
+    # Apply filters
+    if fecha_desde:
+        query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
+    if fecha_hasta:
+        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+    if cliente_id:
+        query = query.where(Venta.cliente_id == cliente_id)
+    if usuario_id:
+        query = query.where(Venta.usuario_id == usuario_id)
+    if estado:
+        try:
+            query = query.where(Venta.estado == EstadoVenta[estado])
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
+    if monto_min:
+        query = query.where(Venta.total >= monto_min)
+    if monto_max:
+        query = query.where(Venta.total <= monto_max)
+    
+    result = await db.execute(query)
+    ventas = result.all()
+    
+    if not ventas:
+        # Return empty PDF
+        subtitle = "Sin registros para los filtros aplicados"
+        pdf_bytes = crear_pdf_reporte("Historial de Ventas", subtitle, ['Info'], [['No se encontraron ventas']], None)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=historial_ventas_vacio.pdf"}
+        )
+    
+    # Build table data
+    columnas = ['ID', 'Fecha', 'Cliente', 'Tipo Pago', 'Estado', 'Total']
     datos = []
+    total_general = Decimal('0')
+    cantidad_confirmadas = 0
     
-    for producto, stock in productos:
-        # Check if stock is low (less than 10 units)
-        estado = "⚠️" if stock < 10 else ""
+    for venta, cliente in ventas:
+        if venta.estado == EstadoVenta.CONFIRMADA:
+            total_general += venta.total
+            cantidad_confirmadas += 1
+        
+        estado_text = venta.estado.value if venta.estado else 'N/A'
         datos.append([
-            producto.codigo_barra or '-',
-            f"{producto.nombre[:30]}{estado}",
-            str(int(stock)),
-            f"{float(producto.precio_venta):,.0f}"
+            str(venta.id),
+            venta.creado_en.strftime('%d/%m/%Y %H:%M'),
+            f"{cliente.nombre} {cliente.apellido or ''}".strip()[:20],
+            venta.tipo_pago.value if venta.tipo_pago else 'EFECTIVO',
+            estado_text,
+            f"{float(venta.total):,.0f}"
         ])
     
-    pdf_bytes = crear_pdf_reporte(
-        "Reporte de Stock Actual",
-        f"Fecha: {date.today().strftime('%d/%m/%Y')} | Total productos: {len(datos)}",
-        columnas,
-        datos
+    # Build subtitle with filters and summary
+    subtitle_parts = []
+    if fecha_desde:
+        subtitle_parts.append(f"Desde: {fecha_desde}")
+    if fecha_hasta:
+        subtitle_parts.append(f"Hasta: {fecha_hasta}")
+    if estado:
+        subtitle_parts.append(f"Estado: {estado}")
+    
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else "Todas las ventas"
+    subtitle += f" | Total registros: {len(ventas)} | Confirmadas: {cantidad_confirmadas}"
+    
+    totales = ['', '', '', '', 'TOTAL CONFIRMADO:', f"{float(total_general):,.0f}"]
+    
+    pdf_bytes = crear_pdf_reporte("Historial de Ventas", subtitle, columnas, datos, totales)
+    
+    filename = f"historial_ventas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+@api_router.get("/reportes/stock")
+async def reporte_stock(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    solo_alertas: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte PDF de stock actual con filtros"""
+    try:
+        # Get products with aggregated stock and the minimum alerta_minima
+        result = await db.execute(
+            select(
+                Producto, 
+                func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0).label('stock_total'),
+                func_sql.min(StockActual.alerta_minima).label('alerta_minima_val')
+            )
+            .outerjoin(StockActual, Producto.id == StockActual.producto_id)
+            .where(Producto.empresa_id == empresa_id, Producto.activo == True)
+            .group_by(Producto.id)
+            .order_by(Producto.nombre)
+        )
+        productos = result.all()
+        
+        if not productos:
+            raise HTTPException(status_code=404, detail="No se encontraron productos activos en el inventario")
+        
+        columnas = ['Código', 'Producto', 'Stock', 'Precio']
+        datos = []
+        
+        for producto, stock, alerta_minima_val in productos:
+            # Use alerta_minima from StockActual if available, else use stock_minimo from Producto, else default to 10
+            stock_minimo = alerta_minima_val if alerta_minima_val is not None else (producto.stock_minimo if producto.stock_minimo is not None else 10)
+            es_alerta = stock <= stock_minimo
+            
+            # Filter by solo_alertas if specified
+            if solo_alertas == 'true' and not es_alerta:
+                continue
+            
+            estado = "⚠️" if es_alerta else ""
+            datos.append([
+                producto.codigo_barra or '-',
+                f"{producto.nombre[:30]}{estado}",
+                str(int(stock)),
+                f"{float(producto.precio_venta):,.0f}"
+            ])
+        
+        # Build subtitle
+        subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+        if solo_alertas == 'true':
+            subtitle += " | Solo stock bajo"
+        if not datos:
+            subtitle += " | Sin registros"
+        else:
+            subtitle += f" | Total productos: {len(datos)}"
+        
+        pdf_bytes = crear_pdf_reporte(
+            "Reporte de Stock Actual",
+            subtitle,
+            columnas,
+            datos
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar reporte de stock: {str(e)}")
     
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=reporte_stock_{date.today().isoformat()}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename=reporte_stock_{today_paraguay().isoformat()}.pdf"}
     )
 
 @api_router.get("/reportes/deudas-proveedores")
-async def reporte_deudas_proveedores(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    """Genera reporte PDF de deudas a proveedores"""
-    result = await db.execute(
-        select(DeudaProveedor, Proveedor)
-        .join(Proveedor, DeudaProveedor.proveedor_id == Proveedor.id)
-        .where(Proveedor.empresa_id == empresa_id, DeudaProveedor.pagado == False)
-        .order_by(DeudaProveedor.fecha_limite)
-    )
-    deudas = result.all()
-    
-    columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
-    datos = []
-    total_deuda = Decimal('0')
-    
-    for deuda, proveedor in deudas:
-        total_deuda += deuda.monto
-        vencido = "⚠️" if deuda.fecha_limite and deuda.fecha_limite < date.today() else ""
-        datos.append([
-            proveedor.nombre[:25],
-            (deuda.descripcion or '-')[:30],
-            f"{float(deuda.monto):,.0f}",
-            deuda.fecha_emision.strftime('%d/%m/%Y') if deuda.fecha_emision else '-',
-            f"{deuda.fecha_limite.strftime('%d/%m/%Y') if deuda.fecha_limite else '-'}{vencido}"
-        ])
-    
-    totales = ['', '', f"{float(total_deuda):,.0f}", '', '']
-    
-    pdf_bytes = crear_pdf_reporte(
-        "Reporte de Deudas a Proveedores",
-        f"Fecha: {date.today().strftime('%d/%m/%Y')} | Deudas pendientes: {len(datos)}",
-        columnas,
-        datos,
-        totales
-    )
+async def reporte_deudas_proveedores(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    estado: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte PDF de deudas a proveedores con filtros"""
+    try:
+        query = (
+            select(DeudaProveedor, Proveedor)
+            .join(Proveedor, DeudaProveedor.proveedor_id == Proveedor.id)
+            .where(Proveedor.empresa_id == empresa_id)
+        )
+        
+        # Filter by estado (default: PENDIENTE if not specified)
+        if estado:
+            if estado == 'TODOS':
+                # No filter, show all
+                pass
+            elif estado == 'PENDIENTE':
+                query = query.where(DeudaProveedor.pagado == False)
+            elif estado == 'PAGADO':
+                query = query.where(DeudaProveedor.pagado == True)
+            else:
+                raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido. Use PENDIENTE, PAGADO o TODOS")
+        else:
+            # Default to PENDIENTE if estado is None
+            query = query.where(DeudaProveedor.pagado == False)
+        
+        # Filter by fecha_emision range
+        if fecha_desde:
+            try:
+                fecha_ini = datetime.fromisoformat(fecha_desde)
+                query = query.where(DeudaProveedor.fecha_emision >= fecha_ini.date())
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+        if fecha_hasta:
+            try:
+                fecha_fin = datetime.fromisoformat(fecha_hasta)
+                query = query.where(DeudaProveedor.fecha_emision <= fecha_fin.date())
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+        
+        query = query.order_by(DeudaProveedor.fecha_limite)
+        result = await db.execute(query)
+        deudas = result.all()
+        
+        # If no data, return empty report instead of error
+        if not deudas:
+            # Create empty report
+            columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
+            datos = []
+            totales = ['', '', '0', '', '']
+            
+            subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+            if fecha_desde and fecha_hasta:
+                subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
+            if estado:
+                subtitle += f" | Estado: {estado}"
+            subtitle += " | Sin registros"
+            
+            pdf_bytes = crear_pdf_reporte(
+                "Reporte de Deudas a Proveedores",
+                subtitle,
+                columnas,
+                datos,
+                totales
+            )
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=reporte_deudas_proveedores_{today_paraguay().isoformat()}.pdf"}
+            )
+        
+        columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
+        datos = []
+        total_deuda = Decimal('0')
+        
+        for deuda, proveedor in deudas:
+            total_deuda += deuda.monto
+            vencido = "⚠️" if deuda.fecha_limite and deuda.fecha_limite < today_paraguay() else ""
+            datos.append([
+                proveedor.nombre[:25],
+                (deuda.descripcion or '-')[:30],
+                f"{float(deuda.monto):,.0f}",
+                deuda.fecha_emision.strftime('%d/%m/%Y') if deuda.fecha_emision else '-',
+                f"{deuda.fecha_limite.strftime('%d/%m/%Y') if deuda.fecha_limite else '-'}{vencido}"
+            ])
+        
+        totales = ['', '', f"{float(total_deuda):,.0f}", '', '']
+        
+        # Build subtitle
+        subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+        if fecha_desde and fecha_hasta:
+            subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
+        if estado:
+            subtitle += f" | Estado: {estado}"
+        subtitle += f" | Total deudas: {len(datos)}"
+        
+        pdf_bytes = crear_pdf_reporte(
+            "Reporte de Deudas a Proveedores",
+            subtitle,
+            columnas,
+            datos,
+            totales
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar reporte de deudas: {str(e)}")
     
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=reporte_deudas_proveedores_{date.today().isoformat()}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename=reporte_deudas_proveedores_{today_paraguay().isoformat()}.pdf"}
     )
 
 @api_router.get("/reportes/creditos-clientes")
-async def reporte_creditos_clientes(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    """Genera reporte PDF de créditos de clientes pendientes"""
-    result = await db.execute(
-        select(CreditoCliente, Cliente)
-        .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
-        .where(Cliente.empresa_id == empresa_id, CreditoCliente.pagado == False)
-        .order_by(CreditoCliente.fecha_venta)
-    )
-    creditos = result.all()
-    
-    columnas = ['Cliente', 'Venta #', 'Original', 'Pendiente', 'Fecha']
-    datos = []
-    total_pendiente = Decimal('0')
-    
-    for credito, cliente in creditos:
-        total_pendiente += credito.monto_pendiente
-        datos.append([
-            f"{cliente.nombre} {cliente.apellido or ''}".strip()[:25],
-            str(credito.venta_id or '-'),
-            f"{float(credito.monto_original):,.0f}",
-            f"{float(credito.monto_pendiente):,.0f}",
-            credito.fecha_venta.strftime('%d/%m/%Y') if credito.fecha_venta else '-'
-        ])
-    
-    totales = ['', '', 'TOTAL:', f"{float(total_pendiente):,.0f}", '']
-    
-    pdf_bytes = crear_pdf_reporte(
-        "Reporte de Créditos de Clientes",
-        f"Fecha: {date.today().strftime('%d/%m/%Y')} | Créditos pendientes: {len(datos)}",
-        columnas,
-        datos,
-        totales
-    )
+async def reporte_creditos_clientes(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    estado: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte PDF de créditos de clientes con filtros"""
+    try:
+        query = (
+            select(CreditoCliente, Cliente)
+            .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
+            .where(Cliente.empresa_id == empresa_id)
+        )
+        
+        # Filter by estado (default: PENDIENTE if not specified)
+        if estado:
+            if estado == 'TODOS':
+                # No filter, show all
+                pass
+            elif estado == 'PENDIENTE':
+                query = query.where(CreditoCliente.pagado == False)
+            elif estado == 'PAGADO':
+                query = query.where(CreditoCliente.pagado == True)
+            else:
+                raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido. Use PENDIENTE, PAGADO o TODOS")
+        else:
+            # Default to PENDIENTE if estado is None
+            query = query.where(CreditoCliente.pagado == False)
+        
+        # Filter by fecha_venta range
+        if fecha_desde:
+            try:
+                fecha_ini = datetime.fromisoformat(fecha_desde)
+                query = query.where(CreditoCliente.fecha_venta >= fecha_ini.date())
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+        if fecha_hasta:
+            try:
+                fecha_fin = datetime.fromisoformat(fecha_hasta)
+                query = query.where(CreditoCliente.fecha_venta <= fecha_fin.date())
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+        
+        query = query.order_by(CreditoCliente.fecha_venta)
+        result = await db.execute(query)
+        creditos = result.all()
+        
+        # If no data, return empty report instead of error
+        if not creditos:
+            # Create empty report
+            columnas = ['Cliente', 'Venta #', 'Original', 'Pagado', 'Pendiente', 'Fecha']
+            datos = []
+            totales = ['', 'TOTAL:', '0', '0', '0', '']
+            
+            subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+            if fecha_desde and fecha_hasta:
+                subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
+            if estado:
+                subtitle += f" | Estado: {estado}"
+            subtitle += " | Sin registros"
+            
+            pdf_bytes = crear_pdf_reporte(
+                "Reporte de Créditos de Clientes",
+                subtitle,
+                columnas,
+                datos,
+                totales
+            )
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.pdf"}
+            )
+        
+        columnas = ['Cliente', 'Venta #', 'Original', 'Pagado', 'Pendiente', 'Fecha']
+        datos = []
+        total_pendiente = Decimal('0')
+        total_pagado = Decimal('0')
+        total_original = Decimal('0')
+        
+        for credito, cliente in creditos:
+            monto_pagado = credito.monto_original - credito.monto_pendiente
+            total_pendiente += credito.monto_pendiente
+            total_pagado += monto_pagado
+            total_original += credito.monto_original
+            datos.append([
+                f"{cliente.nombre} {cliente.apellido or ''}".strip()[:25],
+                str(credito.venta_id or '-'),
+                f"{float(credito.monto_original):,.0f}",
+                f"{float(monto_pagado):,.0f}",
+                f"{float(credito.monto_pendiente):,.0f}",
+                credito.fecha_venta.strftime('%d/%m/%Y') if credito.fecha_venta else '-'
+            ])
+        
+        totales = ['', 'TOTAL:', f"{float(total_original):,.0f}", f"{float(total_pagado):,.0f}", f"{float(total_pendiente):,.0f}", '']
+        
+        # Build subtitle
+        subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+        if fecha_desde and fecha_hasta:
+            subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
+        if estado:
+            subtitle += f" | Estado: {estado}"
+        subtitle += f" | Total créditos: {len(datos)}"
+        
+        pdf_bytes = crear_pdf_reporte(
+            "Reporte de Créditos de Clientes",
+            subtitle,
+            columnas,
+            datos,
+            totales
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al generar reporte de créditos: {str(e)}")
     
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{date.today().isoformat()}.pdf"}
+        headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.pdf"}
     )
 
 # ==================== CICLOS DE SALARIO ====================
@@ -2386,7 +4294,7 @@ async def pagar_ciclo_salario(ciclo_id: int, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=400, detail="Este ciclo ya fue pagado")
     
     ciclo.pagado = True
-    ciclo.fecha_pago = datetime.now(timezone.utc)
+    ciclo.fecha_pago = now_paraguay()
     
     await db.commit()
     return {"message": "Salario marcado como pagado", "ciclo_id": ciclo_id}
@@ -2395,7 +4303,7 @@ async def pagar_ciclo_salario(ciclo_id: int, db: AsyncSession = Depends(get_db))
 async def alertas_salarios_pendientes(empresa_id: int, db: AsyncSession = Depends(get_db)):
     """Obtiene alertas de salarios pendientes de pago"""
     # Get current period
-    hoy = date.today()
+    hoy = today_paraguay()
     periodo_actual = hoy.strftime('%Y-%m')
     
     # Get unpaid cycles
@@ -2453,6 +4361,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
     
     # Create comprehensive permissions
     permisos_data = [
+        # Dashboard
+        ("dashboard.ver", "Ver dashboard"),
         # Ventas
         ("ventas.crear", "Crear ventas"),
         ("ventas.ver", "Ver ventas"),
@@ -2539,6 +4449,7 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
     gerente_rol_result = await db.execute(select(Rol).where(Rol.nombre == "GERENTE", Rol.empresa_id == empresa.id))
     gerente_rol = gerente_rol_result.scalar_one_or_none()
     gerente_permisos = [
+        "dashboard.ver",
         "ventas.crear", "ventas.ver", "ventas.anular", "ventas.modificar_precio", "ventas.aplicar_descuento",
         "ventas.imprimir_boleta", "ventas.imprimir_factura", "ventas.ver_historial",
         "productos.ver", "productos.crear", "productos.editar", "productos.modificar_precio",
@@ -2561,6 +4472,7 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
     vendedor_rol_result = await db.execute(select(Rol).where(Rol.nombre == "VENDEDOR", Rol.empresa_id == empresa.id))
     vendedor_rol = vendedor_rol_result.scalar_one_or_none()
     vendedor_permisos = [
+        "dashboard.ver",
         "ventas.crear", "ventas.ver", "ventas.imprimir_boleta", "ventas.imprimir_factura", "ventas.ver_historial",
         "productos.ver", "stock.ver",
         "clientes.ver", "clientes.crear",
@@ -2747,6 +4659,39 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
 
 # Include router
 app.include_router(api_router)
+
+# Health check endpoint para debugging
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "docs_dir": str(DOCS_DIR),
+        "docs_dir_exists": DOCS_DIR.exists(),
+        "backend_url": os.getenv("BACKEND_URL", "NOT_SET")
+    }
+
+# Endpoint temporal para migrar tabla documentos_temporales
+@app.post("/api/admin/migrate-documentos-temporales")
+async def migrate_documentos_temporales():
+    """
+    Migra la tabla documentos_temporales para usar TIMESTAMP WITH TIME ZONE
+    """
+    try:
+        async with engine.begin() as conn:
+            # Primero eliminar datos existentes si los hay (temporales de todas formas)
+            await conn.execute(text("DROP TABLE IF EXISTS documentos_temporales CASCADE"))
+            
+            # Recrear la tabla con el nuevo esquema
+            await conn.run_sync(Base.metadata.create_all)
+            
+        logger.info("Tabla documentos_temporales migrada exitosamente")
+        return {
+            "status": "success",
+            "message": "Tabla documentos_temporales migrada a TIMESTAMP WITH TIME ZONE"
+        }
+    except Exception as e:
+        logger.error(f"Error al migrar tabla: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error en migración: {str(e)}")
 
 # Startup event
 @app.on_event("startup")

@@ -31,7 +31,7 @@ import { Users, Plus, Loader2, Search, Edit, Trash2, Shield, Key } from 'lucide-
 import { toast } from 'sonner';
 
 const Usuarios = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [usuarios, setUsuarios] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +55,8 @@ const Usuarios = () => {
         api(`/usuarios?empresa_id=${empresa.id}`),
         api(`/roles?empresa_id=${empresa.id}`)
       ]);
+      console.log('Usuarios recibidos:', usuariosData);
+      console.log('Roles recibidos:', rolesData);
       setUsuarios(usuariosData);
       setRoles(rolesData);
     } catch (e) {
@@ -172,13 +174,14 @@ const Usuarios = () => {
           <h1 className="text-2xl font-bold">Usuarios y Perfiles</h1>
           <p className="text-muted-foreground">Gestión de accesos y permisos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-usuario-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Usuario
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('usuarios.gestionar') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-usuario-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Usuario
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Usuario</DialogTitle>
@@ -237,6 +240,7 @@ const Usuarios = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Roles Available */}
@@ -298,16 +302,25 @@ const Usuarios = () => {
                   <TableCell className="text-sm">{usuario.email}</TableCell>
                   <TableCell>{usuario.telefono || '-'}</TableCell>
                   <TableCell>
-                    <Select onValueChange={(v) => handleAsignarRol(usuario.id, parseInt(v))}>
-                      <SelectTrigger className="w-32">
-                        <SelectValue placeholder="Asignar" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {roles.map(r => (
-                          <SelectItem key={r.id} value={r.id.toString()}>{r.nombre}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {userPermisos.includes('usuarios.gestionar') ? (
+                      <Select 
+                        value={usuario.rol_id?.toString() || ""} 
+                        onValueChange={(v) => handleAsignarRol(usuario.id, parseInt(v))}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue placeholder="Sin asignar" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {roles.map(r => (
+                            <SelectItem key={r.id} value={r.id.toString()}>{r.nombre}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        {roles.find(r => r.id === usuario.rol_id)?.nombre || 'Sin asignar'}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge className={usuario.activo ? "badge-success" : "badge-warning"}>
@@ -316,12 +329,16 @@ const Usuarios = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(usuario)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(usuario.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('usuarios.gestionar') && (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => handleEdit(usuario)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleDelete(usuario.id)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

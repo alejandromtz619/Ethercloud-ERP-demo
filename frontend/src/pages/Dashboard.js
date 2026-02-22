@@ -3,10 +3,18 @@ import { useApp } from '../context/AppContext';
 import CurrencyTicker from '../components/CurrencyTicker';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
 import { ScrollArea } from '../components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
 import { 
   ShoppingCart, TrendingUp, Package, Truck, AlertTriangle, 
-  DollarSign, ArrowUp, ArrowDown
+  DollarSign, ArrowUp, ArrowDown, Calendar
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { cn } from '../lib/utils';
@@ -16,6 +24,11 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [alertas, setAlertas] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [ventasPeriodo, setVentasPeriodo] = useState('dia');
+  const [ventasMetrica, setVentasMetrica] = useState('cantidad');
+  const [ventasTipoPago, setVentasTipoPago] = useState('todos');
+  const [ventasData, setVentasData] = useState([]);
+  const [loadingVentas, setLoadingVentas] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -38,6 +51,83 @@ const Dashboard = () => {
     fetchData();
   }, [empresa?.id, api]);
 
+  // Fetch ventas según período seleccionado
+  useEffect(() => {
+    const fetchVentasPeriodo = async () => {
+      if (!empresa?.id) return;
+      
+      setLoadingVentas(true);
+      try {
+        let url = `/dashboard/ventas-periodo?empresa_id=${empresa.id}&periodo=${ventasPeriodo}`;
+        if (ventasTipoPago !== 'todos') {
+          url += `&tipo_pago=${ventasTipoPago}`;
+        }
+        const data = await api(url);
+        setVentasData(data || []);
+      } catch (e) {
+        console.error('Error fetching ventas periodo:', e);
+        setVentasData([]);
+      } finally {
+        setLoadingVentas(false);
+      }
+    };
+    
+    fetchVentasPeriodo();
+  }, [empresa?.id, ventasPeriodo, ventasTipoPago, api]);
+
+  // Generate chart data based on selected period
+  const getChartData = () => {
+    // SIEMPRE usar ventasData del backend (ya incluye filtros de tipo_pago)
+    if (ventasPeriodo === 'dia' && ventasData.length === 0) {
+      // Fallback: rellenar 24 horas vacías
+      return Array.from({ length: 24 }, (_, i) => ({
+        label: `${i}:00`,
+        cantidad: 0,
+        monto: 0,
+        unidades: 0
+      }));
+    }
+    
+    return ventasData.map(item => ({
+      label: item.label || item.fecha || item.periodo,
+      cantidad: item.cantidad || 0,
+      monto: item.monto || 0,
+      unidades: item.unidades || 0
+    }));
+  };
+
+  const chartData = getChartData();
+
+  const getPeriodoLabel = () => {
+    const labels = {
+      'dia': 'Hoy',
+      'semana': 'Esta Semana',
+      'mes': 'Este Mes',
+      'trimestre': 'Este Trimestre',
+      'semestre': 'Este Semestre',
+      'anio': 'Este Año'
+    };
+    return labels[ventasPeriodo] || 'Hoy';
+  };
+
+  const getMetricaLabel = () => {
+    const labels = {
+      'cantidad': 'Cantidad de Ventas',
+      'monto': 'Monto',
+      'unidades': 'Unidades Vendidas'
+    };
+    return labels[ventasMetrica] || 'Cantidad de Ventas';
+  };
+
+  const getBarColor = () => {
+    const colors = {
+      'cantidad': 'hsl(var(--primary))',
+      'monto': '#10b981', // green-500
+      'unidades': '#06b6d4' // cyan-500 (turquesa)
+    };
+    return colors[ventasMetrica] || 'hsl(var(--primary))';
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('es-PY', {
       style: 'currency',
@@ -46,16 +136,6 @@ const Dashboard = () => {
       maximumFractionDigits: 0
     }).format(value || 0);
   };
-
-  // Generate 24h chart data
-  const chartData = Array.from({ length: 24 }, (_, i) => {
-    const hourData = stats?.ventas_por_hora?.find(v => v.hora === i);
-    return {
-      hora: `${i}:00`,
-      cantidad: hourData?.cantidad || 0,
-      monto: hourData?.monto || 0
-    };
-  });
 
   if (loading) {
     return (
@@ -117,7 +197,7 @@ const Dashboard = () => {
                 <p className="text-xs text-muted-foreground mt-1">productos</p>
               </div>
               <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-                <Package className="h-6 w-6 text-red-600 dark:text-red-400" />
+                <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
               </div>
             </div>
           </CardContent>
@@ -127,53 +207,104 @@ const Dashboard = () => {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-muted-foreground">Créditos por Vencer</p>
-                <p className="text-2xl font-bold">{stats?.creditos_por_vencer || 0}</p>
+                <p className="text-sm text-muted-foreground">Ventas del Mes</p>
+                <p className="text-2xl font-bold font-mono-data">
+                  {formatCurrency(stats?.ventas_mes)}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {stats?.cantidad_ventas_mes || 0} ventas
+                </p>
               </div>
               <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                <AlertTriangle className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                <ShoppingCart className="h-6 w-6 text-blue-600 dark:text-blue-400" />
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Sales Chart */}
-        <Card className="lg:col-span-8">
-          <CardHeader>
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Ventas Chart */}
+        <Card className="lg:col-span-4">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <CardTitle className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5" />
-              Ventas por Hora
+              {getMetricaLabel()} - {getPeriodoLabel()}
             </CardTitle>
+            <div className="flex gap-2">
+              <Select value={ventasMetrica} onValueChange={setVentasMetrica}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cantidad">Cantidad Ventas</SelectItem>
+                  <SelectItem value="monto">Monto</SelectItem>
+                  <SelectItem value="unidades">Unidades Vendidas</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={ventasTipoPago} onValueChange={setVentasTipoPago}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="contado">Contado</SelectItem>
+                  <SelectItem value="credito">Crédito</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={ventasPeriodo} onValueChange={setVentasPeriodo}>
+                <SelectTrigger className="w-[160px]">
+                  <Calendar className="h-4 w-4 mr-2" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dia">Hoy</SelectItem>
+                  <SelectItem value="semana">Esta Semana</SelectItem>
+                  <SelectItem value="mes">Este Mes</SelectItem>
+                  <SelectItem value="trimestre">Trimestre</SelectItem>
+                  <SelectItem value="semestre">Semestre</SelectItem>
+                  <SelectItem value="anio">Año</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis 
-                    dataKey="hora" 
-                    tick={{ fontSize: 10 }}
-                    interval={2}
-                  />
-                  <YAxis tick={{ fontSize: 10 }} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: 'hsl(var(--card))',
-                      border: '1px solid hsl(var(--border))',
-                      borderRadius: '6px'
-                    }}
-                    formatter={(value, name) => [
-                      name === 'monto' ? formatCurrency(value) : value,
-                      name === 'monto' ? 'Monto' : 'Cantidad'
-                    ]}
-                  />
-                  <Bar dataKey="cantidad" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {loadingVentas ? (
+              <div className="h-64 flex items-center justify-center">
+                <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+              </div>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis 
+                      dataKey="label" 
+                      tick={{ fontSize: 10 }}
+                      interval={ventasPeriodo === 'dia' ? 2 : 'preserveStartEnd'}
+                      angle={ventasPeriodo === 'dia' ? 0 : -45}
+                      textAnchor={ventasPeriodo === 'dia' ? 'middle' : 'end'}
+                      height={ventasPeriodo === 'dia' ? 30 : 60}
+                    />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'hsl(var(--card))',
+                        border: '1px solid hsl(var(--border))',
+                        borderRadius: '6px'
+                      }}
+                      formatter={(value, name) => {
+                        if (name === 'monto') return [formatCurrency(value), 'Monto'];
+                        if (name === 'unidades') return [value, 'Unidades'];
+                        return [value, 'Cantidad'];
+                      }}
+                    />
+                    <Bar dataKey={ventasMetrica} fill={getBarColor()} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
 

@@ -13,6 +13,7 @@ class RolSistema(str, Enum):
 
 class EstadoVenta(str, Enum):
     BORRADOR = "BORRADOR"
+    PENDIENTE = "PENDIENTE"
     CONFIRMADA = "CONFIRMADA"
     ANULADA = "ANULADA"
 
@@ -44,6 +45,10 @@ class TipoPago(str, Enum):
     CHEQUE = "CHEQUE"
     CREDITO = "CREDITO"
 
+class TipoDocumento(str, Enum):
+    BOLETA = "BOLETA"
+    FACTURA = "FACTURA"
+
 # Base Schemas
 class EmpresaBase(BaseModel):
     nombre: str
@@ -51,6 +56,7 @@ class EmpresaBase(BaseModel):
     direccion: Optional[str] = None
     telefono: Optional[str] = None
     email: Optional[str] = None
+    logo_url: Optional[str] = None
 
 class EmpresaCreate(EmpresaBase):
     pass
@@ -268,7 +274,7 @@ class ProductoConStock(ProductoResponse):
 class MateriaLaboratorioBase(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
-    codigo_barra: str
+    codigo_barra: Optional[str] = None
     precio: Decimal
 
 class MateriaLaboratorioCreate(MateriaLaboratorioBase):
@@ -336,6 +342,13 @@ class TraspasoStockCreate(BaseModel):
     almacen_destino_id: int
     cantidad: int
 
+# Salida Stock
+class SalidaStockCreate(BaseModel):
+    producto_id: int
+    almacen_id: int
+    cantidad: int
+    motivo: Optional[str] = None
+
 # Venta
 class VentaItemBase(BaseModel):
     producto_id: Optional[int] = None
@@ -352,6 +365,9 @@ class VentaItemResponse(VentaItemBase):
     id: int
     venta_id: int
     total: Decimal
+    producto_nombre: Optional[str] = None
+    materia_nombre: Optional[str] = None
+    descripcion: Optional[str] = None
 
 class VentaBase(BaseModel):
     cliente_id: int
@@ -363,6 +379,13 @@ class VentaCreate(VentaBase):
     empresa_id: int
     usuario_id: int
     items: List[VentaItemCreate]
+
+class VentaUpdate(BaseModel):
+    cliente_id: Optional[int] = None
+    representante_cliente_id: Optional[int] = None
+    tipo_pago: Optional[TipoPago] = None
+    es_delivery: Optional[bool] = None
+    items: Optional[List[VentaItemCreate]] = None
 
 class VentaResponse(VentaBase):
     model_config = ConfigDict(from_attributes=True)
@@ -445,12 +468,16 @@ class VehiculoResponse(VehiculoBase):
 # Entrega
 class EntregaBase(BaseModel):
     venta_id: int
-    vehiculo_id: int
-    responsable_usuario_id: int
+    vehiculo_id: Optional[int] = None
+    responsable_usuario_id: Optional[int] = None
     fecha_entrega: Optional[datetime] = None
 
 class EntregaCreate(EntregaBase):
     pass
+
+class AsignarEntrega(BaseModel):
+    vehiculo_id: int
+    responsable_usuario_id: int
 
 class EntregaResponse(EntregaBase):
     model_config = ConfigDict(from_attributes=True)
@@ -459,8 +486,11 @@ class EntregaResponse(EntregaBase):
 
 class EntregaConDetalles(EntregaResponse):
     cliente_nombre: Optional[str] = None
+    cliente_telefono: Optional[str] = None
+    cliente_direccion: Optional[str] = None
     vehiculo_chapa: Optional[str] = None
     responsable_nombre: Optional[str] = None
+    items: Optional[List[dict]] = []
 
 # Factura
 class FacturaBase(BaseModel):
@@ -496,6 +526,7 @@ class VentasPorHora(BaseModel):
     hora: int
     cantidad: int
     monto: Decimal
+    unidades: int = 0
 
 class StockBajo(BaseModel):
     producto_id: int
@@ -506,6 +537,8 @@ class StockBajo(BaseModel):
 class DashboardStats(BaseModel):
     ventas_hoy: Decimal = 0
     cantidad_ventas_hoy: int = 0
+    ventas_mes: Decimal = 0
+    cantidad_ventas_mes: int = 0
     deliverys_pendientes: int = 0
     productos_stock_bajo: int = 0
     creditos_por_vencer: int = 0
@@ -526,3 +559,23 @@ class Alerta(BaseModel):
     mensaje: str
     nivel: str  # info, warning, danger
     referencia_id: Optional[int] = None
+
+# Documentos Temporales
+class DocumentoTemporalBase(BaseModel):
+    venta_id: int
+    tipo_documento: TipoDocumento
+
+class DocumentoTemporalCreate(DocumentoTemporalBase):
+    pass
+
+class DocumentoTemporal(DocumentoTemporalBase):
+    id: int
+    token: str
+    file_path: str
+    fecha_creacion: datetime
+    fecha_expiracion: datetime
+    descargas: int
+    empresa_id: int
+    url_publica: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)

@@ -4,7 +4,16 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import enum
+
+# Timezone configuration
+PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+
+def now_paraguay():
+    """Obtiene la fecha y hora actual en zona horaria de Paraguay"""
+    return datetime.now(PARAGUAY_TZ)
 
 # Enums
 class RolSistema(str, enum.Enum):
@@ -15,6 +24,7 @@ class RolSistema(str, enum.Enum):
 
 class EstadoVenta(str, enum.Enum):
     BORRADOR = "BORRADOR"
+    PENDIENTE = "PENDIENTE"
     CONFIRMADA = "CONFIRMADA"
     ANULADA = "ANULADA"
 
@@ -51,7 +61,29 @@ class TipoPago(str, enum.Enum):
     CHEQUE = "CHEQUE"
     CREDITO = "CREDITO"
 
+class TipoDocumento(str, enum.Enum):
+    BOLETA = "BOLETA"
+    FACTURA = "FACTURA"
+
 # Models
+class DocumentoTemporal(Base):
+    """Tabla para almacenar documentos PDF temporales con enlaces públicos"""
+    __tablename__ = "documentos_temporales"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(255), unique=True, nullable=False, index=True)  # UUID para URL pública
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
+    tipo_documento = Column(Enum(TipoDocumento), nullable=False)  # BOLETA o FACTURA
+    file_path = Column(String(500), nullable=False)  # Ruta del archivo en disco
+    fecha_creacion = Column(DateTime(timezone=True), default=now_paraguay)
+    fecha_expiracion = Column(DateTime(timezone=True), nullable=False)  # 30 días desde creación
+    descargas = Column(Integer, default=0)  # Contador de descargas
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    
+    # Relationships
+    venta = relationship("Venta", backref="documentos_temporales")
+    empresa = relationship("Empresa")
+
 class Empresa(Base):
     __tablename__ = "empresas"
     
@@ -61,6 +93,7 @@ class Empresa(Base):
     direccion = Column(String(500))
     telefono = Column(String(50))
     email = Column(String(255))
+    logo_url = Column(String(500))
     estado = Column(Boolean, default=True)
     creado_en = Column(DateTime(timezone=True), server_default=func.now())
     actualizado_en = Column(DateTime(timezone=True), onupdate=func.now())
@@ -171,7 +204,7 @@ class CreditoCliente(Base):
     descripcion = Column(Text)
     fecha_venta = Column(Date, default=func.current_date())
     pagado = Column(Boolean, default=False)
-    creado_en = Column(DateTime(timezone=True), server_default=func.now())
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     cliente = relationship("Cliente", back_populates="creditos")
     pagos = relationship("PagoCredito", back_populates="credito")
@@ -183,7 +216,7 @@ class PagoCredito(Base):
     id = Column(Integer, primary_key=True, index=True)
     credito_id = Column(Integer, ForeignKey("creditos_clientes.id"), nullable=False)
     monto = Column(Numeric(15, 2), nullable=False)
-    fecha_pago = Column(DateTime(timezone=True), server_default=func.now())
+    fecha_pago = Column(DateTime(timezone=True), default=now_paraguay)
     observacion = Column(Text)
     
     credito = relationship("CreditoCliente", back_populates="pagos")
@@ -262,6 +295,7 @@ class Producto(Base):
     descripcion = Column(Text)
     codigo_barra = Column(String(100), unique=True)
     precio_venta = Column(Numeric(15, 2), nullable=False)
+    stock_minimo = Column(Integer, default=10)  # Stock mínimo para alertas
     fecha_vencimiento = Column(Date)
     activo = Column(Boolean, default=True)
     imagen_url = Column(String(500))
@@ -284,7 +318,7 @@ class MateriaLaboratorio(Base):
     codigo_barra = Column(String(100), unique=True)
     precio = Column(Numeric(15, 2), nullable=False)
     estado = Column(Enum(EstadoMateria), default=EstadoMateria.DISPONIBLE)
-    creado_en = Column(DateTime(timezone=True), server_default=func.now())
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     empresa = relationship("Empresa", back_populates="materias_laboratorio")
     venta_items = relationship("VentaItem", back_populates="materia_laboratorio")
@@ -323,7 +357,7 @@ class MovimientoStock(Base):
     cantidad = Column(Integer, nullable=False)
     referencia_tipo = Column(String(50))
     referencia_id = Column(Integer)
-    creado_en = Column(DateTime(timezone=True), server_default=func.now())
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     producto = relationship("Producto", back_populates="movimientos")
     almacen = relationship("Almacen", back_populates="movimientos")
@@ -342,7 +376,7 @@ class Venta(Base):
     tipo_pago = Column(Enum(TipoPago), default=TipoPago.EFECTIVO)
     es_delivery = Column(Boolean, default=False)
     estado = Column(Enum(EstadoVenta), default=EstadoVenta.BORRADOR)
-    creado_en = Column(DateTime(timezone=True), server_default=func.now())
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     empresa = relationship("Empresa", back_populates="ventas")
     cliente = relationship("Cliente", back_populates="ventas", foreign_keys=[cliente_id])
@@ -430,8 +464,8 @@ class Entrega(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
-    vehiculo_id = Column(Integer, ForeignKey("vehiculos.id"), nullable=False)
-    responsable_usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    vehiculo_id = Column(Integer, ForeignKey("vehiculos.id"), nullable=True)
+    responsable_usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     fecha_entrega = Column(DateTime(timezone=True))
     estado = Column(Enum(EstadoEntrega), default=EstadoEntrega.PENDIENTE)
     
@@ -448,7 +482,7 @@ class Factura(Base):
     total = Column(Numeric(15, 2), nullable=False)
     iva = Column(Numeric(15, 2), nullable=False)
     estado = Column(String(50), default="EMITIDA")
-    creado_en = Column(DateTime(timezone=True), server_default=func.now())
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     venta = relationship("Venta", back_populates="factura")
     documento = relationship("DocumentoElectronico", back_populates="factura", uselist=False)

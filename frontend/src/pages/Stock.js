@@ -27,12 +27,24 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2 } from 'lucide-react';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from '../components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '../components/ui/popover';
+import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 
 const Stock = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [stock, setStock] = useState([]);
   const [almacenes, setAlmacenes] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -68,6 +80,14 @@ const Stock = () => {
     nombre: '',
     ubicacion: ''
   });
+
+  // Popovers state for searchable product selectors
+  const [entradaPopoverOpen, setEntradaPopoverOpen] = useState(false);
+  const [salidaPopoverOpen, setSalidaPopoverOpen] = useState(false);
+  const [traspasoPopoverOpen, setTraspasoPopoverOpen] = useState(false);
+  const [productoSearchEntrada, setProductoSearchEntrada] = useState('');
+  const [productoSearchSalida, setProductoSearchSalida] = useState('');
+  const [productoSearchTraspaso, setProductoSearchTraspaso] = useState('');
 
   const fetchData = async () => {
     if (!empresa?.id) return;
@@ -263,13 +283,14 @@ const Stock = () => {
           </Dialog>
 
           {/* Traspaso */}
-          <Dialog open={traspasoDialogOpen} onOpenChange={setTraspasoDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <ArrowRight className="mr-2 h-4 w-4" />
-                Traspaso
-              </Button>
-            </DialogTrigger>
+          {userPermisos.includes('stock.traspasar') && (
+            <Dialog open={traspasoDialogOpen} onOpenChange={setTraspasoDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline">
+                  <ArrowRight className="mr-2 h-4 w-4" />
+                  Traspaso
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Traspaso entre Almacenes</DialogTitle>
@@ -277,16 +298,63 @@ const Stock = () => {
               <form onSubmit={handleTraspaso} className="space-y-4">
                 <div>
                   <Label>Producto</Label>
-                  <Select value={traspasoForm.producto_id} onValueChange={(v) => setTraspasoForm({...traspasoForm, producto_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {productos.map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={traspasoPopoverOpen} onOpenChange={setTraspasoPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={traspasoPopoverOpen}
+                        className="w-full justify-between"
+                      >
+                        {traspasoForm.producto_id
+                          ? productos.find((p) => p.id.toString() === traspasoForm.producto_id)?.nombre
+                          : "Buscar producto..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[400px] p-0">
+                      <Command shouldFilter={false}>
+                        <CommandInput 
+                          placeholder="Buscar por nombre o código..." 
+                          value={productoSearchTraspaso}
+                          onValueChange={setProductoSearchTraspaso}
+                        />
+                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
+                        <CommandGroup className="max-h-64 overflow-auto">
+                          {productos
+                            .filter(p => 
+                              !productoSearchTraspaso || 
+                              p.nombre.toLowerCase().includes(productoSearchTraspaso.toLowerCase()) ||
+                              p.codigo_barra?.toLowerCase().includes(productoSearchTraspaso.toLowerCase())
+                            )
+                            .map((p) => (
+                              <CommandItem
+                                key={p.id}
+                                value={p.nombre}
+                                onSelect={() => {
+                                  setTraspasoForm({...traspasoForm, producto_id: p.id.toString()});
+                                  setTraspasoPopoverOpen(false);
+                                  setProductoSearchTraspaso('');
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    traspasoForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <div className="flex flex-col">
+                                  <span>{p.nombre}</span>
+                                  {p.codigo_barra && (
+                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
+                                  )}
+                                </div>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
                   <Label>Almacén Origen</Label>
@@ -327,15 +395,17 @@ const Stock = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
 
           {/* Entrada Stock */}
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="entrada-stock-btn">
-                <Plus className="mr-2 h-4 w-4" />
-                Entrada
-              </Button>
-            </DialogTrigger>
+          {userPermisos.includes('stock.entrada') && (
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="entrada-stock-btn">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Entrada
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Entrada de Stock</DialogTitle>
@@ -343,16 +413,63 @@ const Stock = () => {
               <form onSubmit={handleEntrada} className="space-y-4">
                 <div>
                   <Label>Producto</Label>
-                  <Select value={entradaForm.producto_id} onValueChange={(v) => setEntradaForm({...entradaForm, producto_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar producto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {productos.map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={entradaPopoverOpen} onOpenChange={setEntradaPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={entradaPopoverOpen}
+                        className="w-full justify-between"
+                      >
+                        {entradaForm.producto_id
+                          ? productos.find((p) => p.id.toString() === entradaForm.producto_id)?.nombre
+                          : "Buscar producto..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[400px] p-0">
+                      <Command shouldFilter={false}>
+                        <CommandInput 
+                          placeholder="Buscar por nombre o código..." 
+                          value={productoSearchEntrada}
+                          onValueChange={setProductoSearchEntrada}
+                        />
+                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
+                        <CommandGroup className="max-h-64 overflow-auto">
+                          {productos
+                            .filter(p => 
+                              !productoSearchEntrada || 
+                              p.nombre.toLowerCase().includes(productoSearchEntrada.toLowerCase()) ||
+                              p.codigo_barra?.toLowerCase().includes(productoSearchEntrada.toLowerCase())
+                            )
+                            .map((p) => (
+                              <CommandItem
+                                key={p.id}
+                                value={p.nombre}
+                                onSelect={() => {
+                                  setEntradaForm({...entradaForm, producto_id: p.id.toString()});
+                                  setEntradaPopoverOpen(false);
+                                  setProductoSearchEntrada('');
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    entradaForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <div className="flex flex-col">
+                                  <span>{p.nombre}</span>
+                                  {p.codigo_barra && (
+                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
+                                  )}
+                                </div>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
                   <Label>Almacén</Label>
@@ -380,15 +497,17 @@ const Stock = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
 
           {/* Salida Stock */}
-          <Dialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="destructive" data-testid="salida-stock-btn">
-                <Minus className="mr-2 h-4 w-4" />
-                Salida
-              </Button>
-            </DialogTrigger>
+          {userPermisos.includes('stock.salida') && (
+            <Dialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="destructive" data-testid="salida-stock-btn">
+                  <Minus className="mr-2 h-4 w-4" />
+                  Salida
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Salida/Eliminación de Stock</DialogTitle>
@@ -396,16 +515,63 @@ const Stock = () => {
               <form onSubmit={handleSalida} className="space-y-4">
                 <div>
                   <Label>Producto</Label>
-                  <Select value={salidaForm.producto_id} onValueChange={(v) => setSalidaForm({...salidaForm, producto_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar producto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {productos.map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={salidaPopoverOpen} onOpenChange={setSalidaPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={salidaPopoverOpen}
+                        className="w-full justify-between"
+                      >
+                        {salidaForm.producto_id
+                          ? productos.find((p) => p.id.toString() === salidaForm.producto_id)?.nombre
+                          : "Buscar producto..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[400px] p-0">
+                      <Command shouldFilter={false}>
+                        <CommandInput 
+                          placeholder="Buscar por nombre o código..." 
+                          value={productoSearchSalida}
+                          onValueChange={setProductoSearchSalida}
+                        />
+                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
+                        <CommandGroup className="max-h-64 overflow-auto">
+                          {productos
+                            .filter(p => 
+                              !productoSearchSalida || 
+                              p.nombre.toLowerCase().includes(productoSearchSalida.toLowerCase()) ||
+                              p.codigo_barra?.toLowerCase().includes(productoSearchSalida.toLowerCase())
+                            )
+                            .map((p) => (
+                              <CommandItem
+                                key={p.id}
+                                value={p.nombre}
+                                onSelect={() => {
+                                  setSalidaForm({...salidaForm, producto_id: p.id.toString()});
+                                  setSalidaPopoverOpen(false);
+                                  setProductoSearchSalida('');
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    salidaForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <div className="flex flex-col">
+                                  <span>{p.nombre}</span>
+                                  {p.codigo_barra && (
+                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
+                                  )}
+                                </div>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div>
                   <Label>Almacén</Label>
@@ -441,6 +607,7 @@ const Stock = () => {
               </form>
             </DialogContent>
           </Dialog>
+          )}
         </div>
       </div>
 

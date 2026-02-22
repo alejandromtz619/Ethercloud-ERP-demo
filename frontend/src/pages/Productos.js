@@ -32,7 +32,7 @@ import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand } from 'lu
 import { toast } from 'sonner';
 
 const Productos = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -149,13 +149,13 @@ const Productos = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('¿Desactivar este producto?')) return;
+    if (!window.confirm('⚠️ ADVERTENCIA: Al eliminar este producto se eliminará PERMANENTEMENTE todo el stock asociado en todos los almacenes y el historial de movimientos.\n\n¿Está seguro de continuar?')) return;
     try {
       await api(`/productos/${id}`, { method: 'DELETE' });
-      toast.success('Producto desactivado');
+      toast.success('Producto y stock eliminados correctamente');
       fetchData();
     } catch (e) {
-      toast.error('Error al eliminar');
+      toast.error('Error al eliminar producto');
     }
   };
 
@@ -187,13 +187,14 @@ const Productos = () => {
           <h1 className="text-2xl font-bold">Productos</h1>
           <p className="text-muted-foreground">Gestión del catálogo de productos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-producto-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Producto
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('productos.crear') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-producto-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Producto
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Producto</DialogTitle>
@@ -288,6 +289,7 @@ const Productos = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <Card>
@@ -364,12 +366,16 @@ const Productos = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(producto)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(producto.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('productos.editar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(producto)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {userPermisos.includes('productos.eliminar') && (
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(producto.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

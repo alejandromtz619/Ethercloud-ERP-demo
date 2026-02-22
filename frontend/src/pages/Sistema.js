@@ -18,6 +18,7 @@ const colorOptions = [
   { id: 'red', name: 'Rojo', hex: '#EF4444' },
   { id: 'orange', name: 'Naranja', hex: '#F97316' },
   { id: 'teal', name: 'Turquesa', hex: '#14B8A6' },
+  { id: 'ether', name: 'Ether Dark', hex: '#000000', dark: true },
 ];
 
 const Sistema = () => {
@@ -155,20 +156,35 @@ const Sistema = () => {
           {/* Color Selection */}
           <div>
             <Label className="mb-3 block">Color Principal</Label>
-            <div className="grid grid-cols-6 gap-3">
+            <div className="grid grid-cols-7 gap-3">
               {colorOptions.map((color) => (
                 <button
                   key={color.id}
-                  onClick={() => setPrimaryColor(color.id)}
+                  onClick={() => {
+                    setPrimaryColor(color.id);
+                    if (color.dark) {
+                      setTheme('dark');
+                      document.documentElement.setAttribute('data-theme', 'ether');
+                    } else {
+                      document.documentElement.removeAttribute('data-theme');
+                    }
+                  }}
                   className={cn(
-                    "w-full aspect-square rounded-lg transition-all",
+                    "w-full aspect-square rounded-lg transition-all relative",
                     "hover:scale-105 hover:shadow-lg",
-                    primaryColor === color.id && "ring-2 ring-offset-2 ring-foreground"
+                    primaryColor === color.id && "ring-2 ring-offset-2 ring-foreground",
+                    color.dark && "border-2 border-white"
                   )}
                   style={{ backgroundColor: color.hex }}
                   title={color.name}
                   data-testid={`color-${color.id}`}
-                />
+                >
+                  {color.dark && (
+                    <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">
+                      &lt;
+                    </span>
+                  )}
+                </button>
               ))}
             </div>
             <p className="text-xs text-muted-foreground mt-2">

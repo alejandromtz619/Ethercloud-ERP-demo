@@ -38,7 +38,7 @@ const vehiculoIcons = {
 };
 
 const Flota = () => {
-  const { api, empresa } = useApp();
+  const { api, empresa, userPermisos } = useApp();
   const [vehiculos, setVehiculos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -166,13 +166,14 @@ const Flota = () => {
           <h1 className="text-2xl font-bold">Flota de Vehículos</h1>
           <p className="text-muted-foreground">Gestión de vehículos y documentos</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
-          <DialogTrigger asChild>
-            <Button data-testid="crear-vehiculo-btn">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Vehículo
-            </Button>
-          </DialogTrigger>
+        {userPermisos.includes('flota.gestionar') && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
+            <DialogTrigger asChild>
+              <Button data-testid="crear-vehiculo-btn">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Vehículo
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Vehículo</DialogTitle>
@@ -228,6 +229,7 @@ const Flota = () => {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Vehiculos Grid */}
@@ -269,12 +271,16 @@ const Flota = () => {
                       </div>
                     </div>
                     <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => handleEdit(vehiculo)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(vehiculo.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {userPermisos.includes('flota.gestionar') && (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => handleEdit(vehiculo)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleDelete(vehiculo.id)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
 

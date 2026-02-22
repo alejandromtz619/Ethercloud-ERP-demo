@@ -9,7 +9,7 @@ import {
 } from '../components/ui/dialog';
 import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
-import { Loader2, Printer, Receipt, FileText } from 'lucide-react';
+import { Loader2, Printer, Receipt, FileText, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
 // Boleta Print Template
@@ -18,219 +18,283 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
   
   return (
     <div ref={ref} className="print-document boleta-print" style={{ 
-      fontFamily: 'Arial, sans-serif',
+      fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
       fontSize: '12px',
-      width: '80mm',
-      padding: '10px',
+      width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
+      maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
+      minHeight: '140mm', // Altura mínima papel boleta
+      padding: '2mm 5mm 5mm 5mm', // Márgenes internos del contenido
+      margin: '0 auto', // Centrado horizontal
       backgroundColor: 'white',
-      color: 'black'
+      color: 'black',
+      lineHeight: '1.4',
+      boxSizing: 'border-box'
     }}>
-      <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-        <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0' }}>LuzBrill</h1>
-        <p style={{ margin: '2px 0', fontSize: '10px' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
-        <p style={{ margin: '2px 0', fontSize: '10px' }}>0983 628249 0973 598415</p>
+      <div style={{ textAlign: 'center', marginBottom: '8px', paddingTop: '2mm' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LuzBrill</h1>
+        <p style={{ margin: '3px 0', fontSize: '11px', fontWeight: 'bold' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
+        <p style={{ margin: '2px 0', fontSize: '11px', fontWeight: 'bold' }}>0983 628249 0973 598415</p>
       </div>
       
-      <div style={{ textAlign: 'right', marginBottom: '10px' }}>
+      <div style={{ textAlign: 'right', marginBottom: '8px', fontSize: '13px' }}>
         <span style={{ fontWeight: 'bold' }}>NOTA NRO: </span>
-        <span>{data.numero}</span>
+        <span style={{ fontWeight: 'bold' }}>{data.numero}</span>
       </div>
       
-      <div style={{ borderTop: '1px dashed black', borderBottom: '1px dashed black', padding: '5px 0', marginBottom: '10px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Razon Social:</span>
-          <span>{data.cliente?.nombre || 'OCACIONAL'}</span>
+      <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '4px 0', marginBottom: '8px', fontSize: '11px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
+          <span><b>Razon Social:</b> {data.cliente?.nombre || 'OCACIONAL'}</span>
+          <span><b>Direccion:</b> {data.cliente?.direccion || '-'}</span>
+          <span><b>Cliente Tel:</b> {data.cliente?.telefono || '-'}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Dirección:</span>
-          <span>{data.cliente?.direccion || '0'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Telefono:</span>
-          <span>{data.cliente?.telefono || '0'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Ruc:</span>
-          <span>{data.cliente?.ruc || '0'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Fecha de Venta:</span>
-          <span>{data.fecha}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-          <span>Tipo Comprob:</span>
-          <span>{data.tipo_pago}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
+          <span><b>RUC:</b> {data.cliente?.ruc || '-'}</span>
+          <span><b>Fecha:</b> {data.fecha}</span>
+          <span><b>Tipo Comprob:</b> {data.tipo_pago}</span>
         </div>
       </div>
       
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '10px' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
         <thead>
-          <tr style={{ borderBottom: '1px solid black' }}>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '2px' }}>Codigo</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '2px' }}>Cant.</th>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '2px' }}>Descripcion</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '2px' }}>IVA</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '2px' }}>Precio</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '2px' }}>Total</th>
+          <tr style={{ borderBottom: '2px solid black', borderTop: '2px solid black' }}>
+            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cod</th>
+            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cant</th>
+            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Descripción</th>
+            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>IVA</th>
+            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Precio</th>
+            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Total</th>
           </tr>
         </thead>
         <tbody>
           {data.items?.map((item, idx) => (
-            <tr key={idx}>
-              <td style={{ fontSize: '9px', padding: '2px' }}>{item.codigo}</td>
-              <td style={{ textAlign: 'center', fontSize: '9px', padding: '2px' }}>{item.cantidad?.toFixed(2)}</td>
-              <td style={{ fontSize: '9px', padding: '2px' }}>{item.descripcion}</td>
-              <td style={{ textAlign: 'center', fontSize: '9px', padding: '2px' }}>{item.iva}</td>
-              <td style={{ textAlign: 'right', fontSize: '9px', padding: '2px' }}>{item.precio?.toLocaleString('es-PY')}</td>
-              <td style={{ textAlign: 'right', fontSize: '9px', padding: '2px' }}>{item.total?.toLocaleString('es-PY')}</td>
+            <tr key={idx} style={{ borderBottom: '1px solid #ccc' }}>
+              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.codigo}</td>
+              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.cantidad?.toFixed(2)}</td>
+              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.descripcion}</td>
+              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.iva}</td>
+              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.precio?.toLocaleString('es-PY')}</td>
+              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.total?.toLocaleString('es-PY')}</td>
             </tr>
           ))}
         </tbody>
       </table>
       
-      <div style={{ borderTop: '1px dashed black', paddingTop: '5px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-          <span>En Letras:</span>
-          <span style={{ fontSize: '10px', textTransform: 'lowercase' }}>{data.total_letras}</span>
+      <div style={{ borderTop: '2px solid black', paddingTop: '6px', marginTop: '5px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
+          <span style={{ fontWeight: 'bold' }}>Subtotal:</span>
+          <span style={{ fontWeight: 'bold' }}>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px' }}>
-          <span>Total a Pagar:</span>
-          <span>{data.total?.toLocaleString('es-PY')}</span>
+        {data.descuento > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
+            <span style={{ fontWeight: 'bold' }}>Descuento ({data.descuento_porcentaje}%):</span>
+            <span style={{ fontWeight: 'bold' }}>-{data.descuento?.toLocaleString('es-PY')}</span>
+          </div>
+        )}
+        <div style={{ marginBottom: '6px', fontSize: '10px', borderTop: '1px solid black', paddingTop: '4px' }}>
+          <span style={{ fontWeight: 'bold' }}>En Letras: </span>
+          <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{data.total_letras}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px', marginTop: '5px', borderTop: '3px double black', paddingTop: '6px' }}>
+          <span>TOTAL A PAGAR:</span>
+          <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
         </div>
       </div>
       
-      <div style={{ marginTop: '20px', textAlign: 'center' }}>
-        <p style={{ margin: '0 0 5px 0' }}>________________________</p>
-        <p style={{ margin: '0', fontSize: '10px' }}>Firma Cliente</p>
-        <p style={{ margin: '15px 0 0 0', fontSize: '9px', fontStyle: 'italic' }}>
-          Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.
+      <div style={{ marginTop: '12px', textAlign: 'center' }}>
+        <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>________________________________</p>
+        <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Cliente</p>
+        <p style={{ margin: '10px 0 0 0', fontSize: '9px', fontStyle: 'italic', fontWeight: 'bold' }}>
         </p>
       </div>
     </div>
   );
 });
 
-// Factura Print Template  
+// ═══════════════════════════════════════════════════════════════════════════════
+// Factura Print Template - Papel PRE-IMPRESO 240mm × 200mm (Epson LX-350)
+// Solo imprime DATOS sin gráficos, bordes ni cabeceras (ya están pre-impresos)
+// ═══════════════════════════════════════════════════════════════════════════════
+// GUÍA DE CALIBRACIÓN:
+//   - Ajustar valores 'top' (mm) para mover líneas arriba/abajo
+//   - Ajustar valores 'left' (mm) para mover campos izquierda/derecha
+//   - Si los datos quedan muy arriba, aumentar el 'top'
+//   - Si los datos quedan muy a la izquierda, aumentar el 'left'
+// ═══════════════════════════════════════════════════════════════════════════════
 const FacturaPrint = React.forwardRef(({ data }, ref) => {
   if (!data) return null;
-  
+
+  // ---------- Parsear fecha en componentes (día, mes, año) ----------
+  const mesesES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const mesesEN = { January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+                    July: 6, August: 7, September: 8, October: 9, November: 10, December: 11 };
+
+  let dia = '', mes = '', anio = '';
+
+  if (data.creado_en) {
+    const d = new Date(data.creado_en);
+    dia = d.getDate();
+    mes = mesesES[d.getMonth()];
+    anio = d.getFullYear();
+  } else if (data.fecha) {
+    const match = data.fecha.match(/(\d+)\s+de\s+(\w+)\s+de\s+(\d+)/);
+    if (match) {
+      dia = parseInt(match[1]);
+      const monthStr = match[2];
+      anio = match[3];
+      mes = mesesEN[monthStr] !== undefined ? mesesES[mesesEN[monthStr]] : monthStr;
+    }
+  }
+
+  // ---------- Condición de venta ----------
+  // CREDITO = marca X en Crédito; todo lo demás (EFECTIVO, TARJETA, etc.) = Contado
+  const esCredito = data.condicion?.toUpperCase() === 'CREDITO';
+
+  // ---------- Formatear números ----------
+  const fmt = (n) => (n != null && n !== 0) ? Number(n).toLocaleString('es-PY') : '0';
+
   return (
-    <div ref={ref} className="print-document factura-print" style={{ 
-      fontFamily: 'Arial, sans-serif',
+    <div ref={ref} className="print-document factura-print" style={{
+      fontFamily: 'Courier New, monospace',
       fontSize: '12px',
-      width: '210mm',
-      padding: '20px',
+      fontWeight: 'bold',
+      width: '240mm',
+      height: '200mm',
+      position: 'relative',
       backgroundColor: 'white',
-      color: 'black'
+      color: 'black',
+      overflow: 'hidden',
+      boxSizing: 'border-box',
+      padding: '0',
+      margin: '0',
+      lineHeight: '1.2'
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-        <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0' }}>{data.empresa?.nombre || 'Luz Brill S.A.'}</h1>
-          <p style={{ margin: '2px 0' }}>RUC: {data.empresa?.ruc}</p>
-          <p style={{ margin: '2px 0' }}>{data.empresa?.direccion}</p>
-          <p style={{ margin: '2px 0' }}>Tel: {data.empresa?.telefono}</p>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <p style={{ fontSize: '18px', fontWeight: 'bold' }}>FACTURA</p>
-          <p style={{ fontSize: '16px' }}>N° {data.numero}</p>
-        </div>
+
+      {/* ═══ LÍNEA DE FECHA + CONDICIÓN DE VENTA ═══ */}
+      {/* Campos: Ciudad+día | mes | año | X Contado | X Crédito */}
+      <div style={{ position: 'absolute', top: '38mm', left: '0', width: '240mm' }}>
+        {/* Ciudad y día */}
+        <span style={{ position: 'absolute', left: '17mm', fontSize: '12px' }}>Ciudad del Este, {dia}</span>
+        {/* Mes */}
+        <span style={{ position: 'absolute', left: '80mm', fontSize: '12px' }}>{mes}</span>
+        {/* Año */}
+        <span style={{ position: 'absolute', left: '120mm', fontSize: '12px' }}>{anio}</span>
+        {/* Marca X en Contado o Crédito */}
+        <span style={{ position: 'absolute', left: '183mm', fontSize: '14px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
+        <span style={{ position: 'absolute', left: '211mm', fontSize: '14px', fontWeight: '900' }}>{esCredito ? 'X' : ''}</span>
       </div>
-      
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '15px' }}>
-        <div>
-          <span>Ciudad del Este, </span>
-          <span>{data.fecha}</span>
-        </div>
-        <div>
-          <span>Condición: </span>
-          <strong>{data.condicion}</strong>
-        </div>
+
+      {/* ═══ NOMBRE DEL CLIENTE + CI/RUC ═══ */}
+      <div style={{ position: 'absolute', top: '46mm', left: '0', width: '240mm' }}>
+        <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
+          {data.cliente?.nombre || 'OCACIONAL'}
+        </span>
+        <span style={{ position: 'absolute', left: '170mm', fontSize: '12px' }}>
+          {data.cliente?.ruc || ''}
+        </span>
       </div>
-      
-      <div style={{ border: '1px solid black', padding: '10px', marginBottom: '15px' }}>
-        <div style={{ display: 'flex', gap: '20px', marginBottom: '5px' }}>
-          <span><strong>Cliente:</strong> {data.cliente?.nombre}</span>
-          <span><strong>RUC:</strong> {data.cliente?.ruc}</span>
-        </div>
-        <div>
-          <span><strong>Dirección:</strong> {data.cliente?.direccion || '-'}</span>
-        </div>
+
+      {/* ═══ DIRECCIÓN + TELÉFONO ═══ */}
+      <div style={{ position: 'absolute', top: '50mm', left: '0', width: '240mm' }}>
+        <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
+          {data.cliente?.direccion || ''}
+        </span>
+        <span style={{ position: 'absolute', left: '180mm', fontSize: '12px' }}>
+          {data.cliente?.telefono || ''}
+        </span>
       </div>
-      
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '15px' }}>
-        <thead>
-          <tr style={{ backgroundColor: '#f0f0f0' }}>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'center' }}>Cant.</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'left' }}>Descripción</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>P. Unitario</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>Exenta</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>IVA 5%</th>
-            <th style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>IVA 10%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.items?.map((item, idx) => (
-            <tr key={idx}>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'center' }}>{item.cantidad}</td>
-              <td style={{ border: '1px solid black', padding: '5px' }}>{item.descripcion}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.precio_unitario?.toLocaleString('es-PY')}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.exenta || 0}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.iva_5 || 0}</td>
-              <td style={{ border: '1px solid black', padding: '5px', textAlign: 'right' }}>{item.iva_10?.toLocaleString('es-PY')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <div style={{ maxWidth: '60%' }}>
-          <p><strong>Total en letras:</strong></p>
-          <p style={{ textTransform: 'lowercase', fontStyle: 'italic' }}>{data.total_letras}</p>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <table style={{ marginLeft: 'auto' }}>
-            <tbody>
-              <tr>
-                <td style={{ paddingRight: '20px' }}>Subtotal Exenta:</td>
-                <td style={{ textAlign: 'right' }}>{data.subtotal_exenta?.toLocaleString('es-PY') || 0}</td>
-              </tr>
-              <tr>
-                <td style={{ paddingRight: '20px' }}>Subtotal IVA 5%:</td>
-                <td style={{ textAlign: 'right' }}>{data.subtotal_iva_5?.toLocaleString('es-PY') || 0}</td>
-              </tr>
-              <tr>
-                <td style={{ paddingRight: '20px' }}>Subtotal IVA 10%:</td>
-                <td style={{ textAlign: 'right' }}>{data.subtotal_iva_10?.toLocaleString('es-PY')}</td>
-              </tr>
-              <tr>
-                <td style={{ paddingRight: '20px' }}>IVA 10%:</td>
-                <td style={{ textAlign: 'right' }}>{data.iva_10?.toLocaleString('es-PY')}</td>
-              </tr>
-              <tr style={{ fontWeight: 'bold', fontSize: '14px' }}>
-                <td style={{ paddingRight: '20px', borderTop: '2px solid black', paddingTop: '5px' }}>TOTAL:</td>
-                <td style={{ textAlign: 'right', borderTop: '2px solid black', paddingTop: '5px' }}>Gs. {data.total?.toLocaleString('es-PY')}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+
+      {/* ═══ TABLA DE PRODUCTOS (solo datos, sin encabezados) ═══ */}
+      {/* Columnas: Cantidad | Descripción | P.Unitario | Exentas | 5% | 10% */}
+      <div style={{ position: 'absolute', top: '82mm', left: '15mm', width: '212mm' }}>
+        {data.items?.map((item, idx) => (
+          <div key={idx} style={{
+            position: 'relative',
+            height: '5.3mm',
+            fontSize: '11px',
+            lineHeight: '5.3mm'
+          }}>
+            {/* Cantidad */}
+            <span style={{ position: 'absolute', left: '-15mm', width: '14mm', textAlign: 'center' }}>
+              {item.cantidad}
+            </span>
+            {/* Descripción */}
+            <span style={{ position: 'absolute', left: '16mm', width: '80mm', textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+              {item.descripcion}
+            </span>
+            {/* Precio Unitario */}
+            <span style={{ position: 'absolute', left: '87mm', width: '28mm', textAlign: 'right' }}>
+              {fmt(item.precio_unitario)}
+            </span>
+            {/* Exentas */}
+            <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
+              {item.exenta || 0}
+            </span>
+            {/* 5% */}
+            <span style={{ position: 'absolute', left: '153mm', width: '24mm', textAlign: 'right' }}>
+              {item.iva_5 || 0}
+            </span>
+            {/* 10% */}
+            <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+              {fmt(item.iva_10)}
+            </span>
+          </div>
+        ))}
       </div>
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '50px' }}>
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ margin: '0 0 5px 0' }}>________________________</p>
-          <p style={{ margin: '0' }}>Firma Vendedor</p>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ margin: '0 0 5px 0' }}>________________________</p>
-          <p style={{ margin: '0' }}>Firma Cliente</p>
-        </div>
+
+      {/* ═══ SUB-TOTALES ═══ */}
+      {/* Valores en las 3 últimas columnas: Exentas | 5% | 10% */}
+      <div style={{ position: 'absolute', top: '150mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
+        <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
+          {data.subtotal_exenta || 0}
+        </span>
+        <span style={{ position: 'absolute', left: '153mm', width: '24mm', textAlign: 'right' }}>
+          {data.subtotal_iva_5 || 0}
+        </span>
+        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+          {fmt(data.subtotal_iva_10 || data.total)}
+        </span>
       </div>
+
+      {/* ═══ TOTAL A PAGAR (letras a la izquierda, número a la derecha) ═══ */}
+      <div style={{ position: 'absolute', top: '161mm', left: '15mm', width: '212mm' }}>
+        {/* Total en letras */}
+        <span style={{
+          position: 'absolute', left: '8mm', fontSize: '10px',
+          textTransform: 'lowercase', maxWidth: '130mm',
+          overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis'
+        }}>
+          {data.total_letras}--
+        </span>
+        {/* Total numérico */}
+        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right', fontSize: '11px' }}>
+          {fmt(data.total)}
+        </span>
+      </div>
+
+      {/* ═══ LIQUIDACIÓN DEL IVA ═══ */}
+      {/* Campos: IVA 5% | IVA 10% | Total IVA */}
+      <div style={{ position: 'absolute', top: '168mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
+        {/* Valor IVA 5% */}
+        <span style={{ position: 'absolute', left: '30mm', width: '28mm', textAlign: 'right' }}>
+          {data.liquidacion_iva?.iva_5 || 0}
+        </span>
+        {/* Valor IVA 10% */}
+        <span style={{ position: 'absolute', left: '95mm', width: '28mm', textAlign: 'right' }}>
+          {fmt(data.liquidacion_iva?.iva_10)}
+        </span>
+        {/* Total IVA */}
+        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+          {fmt(data.liquidacion_iva?.total_iva)}
+        </span>
+      </div>
+
     </div>
   );
 });
 
-const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
-  const { api } = useApp();
+const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
+  const { api, userPermisos } = useApp();
   const [printBoleta, setPrintBoleta] = useState(true);
   const [printFactura, setPrintFactura] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -285,10 +349,98 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
             <html>
               <head>
                 <title>Imprimir - Venta #${ventaId}</title>
+                <meta charset="UTF-8">
                 <style>
-                  body { margin: 0; padding: 20px; }
+                  * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                  }
+                  
+                  body { 
+                    margin: 0; 
+                    padding: 0; 
+                    background: white;
+                  }
+                  
+                  /* Estilos para impresora Epson LX-350 */
+                  .boleta-print {
+                    margin: 0 auto;
+                    page-break-after: always;
+                  }
+                  
+                  /* Factura: papel pre-impreso 240mm × 200mm */
+                  .factura-print {
+                    margin: 0;
+                    padding: 0;
+                    page: factura;
+                    page-break-after: always;
+                  }
+                  
+                  /* Tabla responsive - evitar overflow horizontal */
+                  table {
+                    width: 100% !important;
+                    table-layout: fixed;
+                  }
+                  
+                  td, th {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    word-wrap: break-word;
+                  }
+                  
                   @media print {
-                    .page-break { page-break-after: always; }
+                    /* Página por defecto (boletas, A4) */
+                    @page {
+                      size: auto;
+                      margin: 15mm 8mm 10mm 8mm;
+                    }
+                    
+                    /* Página para factura pre-impresa 240mm × 200mm */
+                    @page factura {
+                      size: 240mm 200mm;
+                      margin: 0;
+                    }
+                    
+                    body {
+                      margin: 0;
+                      padding: 0;
+                      -webkit-print-color-adjust: exact;
+                      print-color-adjust: exact;
+                    }
+                    
+                    .page-break { 
+                      page-break-after: always;
+                      break-after: page;
+                    }
+                    
+                    /* Boletas - se adapta al papel A4/Carta */
+                    .boleta-print {
+                      width: 100% !important;
+                      max-width: 100% !important;
+                      min-height: auto;
+                      margin: 0 auto;
+                      page-break-after: always;
+                    }
+                    
+                    /* Facturas - tamaño exacto papel pre-impreso */
+                    .factura-print {
+                      width: 240mm !important;
+                      height: 200mm !important;
+                      margin: 0 !important;
+                      padding: 0 !important;
+                      page-break-after: always;
+                    }
+                    
+                    /* Evitar cortes de página indeseados */
+                    table, tr, td, th {
+                      page-break-inside: avoid;
+                    }
+                    
+                    /* Mejor contraste para matriz de puntos */
+                    strong, b, .bold {
+                      font-weight: 900 !important;
+                    }
                   }
                 </style>
               </head>
@@ -308,6 +460,106 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
       }
     }, 500);
   }, [printBoleta, printFactura, ventaId, onOpenChange, onPrintComplete]);
+
+  const handleSendWhatsApp = useCallback(async () => {
+    if (!printBoleta && !printFactura) {
+      toast.error('Seleccione al menos un documento');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      // Determinar tipo de documento
+      const tipoDocumento = printBoleta ? 'BOLETA' : 'FACTURA';
+      
+      // Llamar al backend para generar enlace
+      const response = await api(`/ventas/${ventaId}/generar-enlace?tipo_documento=${tipoDocumento}`, {
+        method: 'POST'
+      });
+      
+      if (!response.url) {
+        throw new Error('No se pudo generar el enlace');
+      }
+      
+      // Mostrar si es un enlace reutilizado o nuevo
+      if (response.ya_existia) {
+        toast.info('Reutilizando enlace existente', { duration: 2000 });
+      } else {
+        toast.success('Documento PDF generado', { duration: 2000 });
+      }
+      
+      // Load data if not already loaded para obtener info del cliente
+      if (!boletaData && !facturaData) {
+        await fetchPrintData();
+      }
+      
+      // Get data from whichever document is selected
+      const data = printBoleta ? boletaData : facturaData;
+      
+      if (!data) {
+        toast.error('Error al cargar datos de venta');
+        setLoading(false);
+        return;
+      }
+      
+      // Check if client has phone number
+      const telefono = data.cliente?.telefono;
+      if (!telefono) {
+        toast.error('El cliente no tiene número de teléfono registrado');
+        setLoading(false);
+        return;
+      }
+      
+      // Clean phone number (remove spaces, dashes, parentheses)
+      const cleanPhone = telefono.replace(/[\s\-\(\)]/g, '');
+      
+      // Format phone for WhatsApp (Paraguay code +595)
+      let whatsappNumber = cleanPhone;
+      if (!whatsappNumber.startsWith('+')) {
+        if (whatsappNumber.startsWith('0')) {
+          whatsappNumber = '595' + whatsappNumber.substring(1);
+        } else if (!whatsappNumber.startsWith('595')) {
+          whatsappNumber = '595' + whatsappNumber;
+        }
+      }
+      
+      // Generate message with download link
+      const docType = printBoleta ? 'Boleta' : 'Factura';
+      const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY');
+      
+      const message = `
+🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*
+
+📋 *Número:* ${data.numero}
+📅 *Fecha:* ${data.fecha}
+💰 *TOTAL:* Gs. ${data.total?.toLocaleString('es-PY')}
+
+📄 *Ver documento completo:*
+${response.url}
+
+_Enlace válido hasta el ${expirationDate}_
+
+Gracias por su compra! 🙏
+      `.trim();
+      
+      // Open WhatsApp
+      const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+      
+      if (response.ya_existia) {
+        toast.success('Enlace reenviado por WhatsApp');
+      } else {
+        toast.success('PDF generado y enviado por WhatsApp');
+      }
+      
+    } catch (error) {
+      console.error('Error generating document link:', error);
+      toast.error(error.message || 'Error al generar enlace de documento');
+    } finally {
+      setLoading(false);
+    }
+  }, [printBoleta, printFactura, ventaId, boletaData, facturaData, api, fetchPrintData]);
 
   // Fetch data when modal opens
   React.useEffect(() => {
@@ -366,28 +618,51 @@ const PrintModal = ({ open, onOpenChange, ventaId, onPrintComplete }) => {
               </div>
             </div>
             
-            <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
-              <Checkbox 
-                id="factura" 
-                checked={printFactura} 
-                onCheckedChange={setPrintFactura}
-              />
-              <div className="flex-1">
-                <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
-                  <FileText className="h-4 w-4" />
-                  Factura
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Documento fiscal con desglose de IVA (requiere RUC)
-                </p>
+            {userPermisos.includes('ventas.imprimir_factura') && (
+              <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
+                <Checkbox 
+                  id="factura" 
+                  checked={printFactura} 
+                  onCheckedChange={setPrintFactura}
+                />
+                <div className="flex-1">
+                  <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
+                    <FileText className="h-4 w-4" />
+                    Factura
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Documento fiscal con desglose de IVA (requiere RUC)
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
+          
+          {ventaEstado === 'CONFIRMADA' && (
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-800">
+              <p className="font-medium mb-1">📱 WhatsApp - Enlace inteligente:</p>
+              <p className="mb-1">• Se genera un PDF único al presionar el botón</p>
+              <p className="mb-1">• El cliente puede descargar el documento por 30 días</p>
+              <p>• Si vuelves a enviar, se reutiliza el mismo enlace (sin duplicados)</p>
+            </div>
+          )}
           
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
+            {ventaEstado === 'CONFIRMADA' && (
+              <Button 
+                onClick={handleSendWhatsApp}
+                variant="outline"
+                disabled={loading || (!printBoleta && !printFactura)}
+                className="bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 border-green-200"
+                title="Enviar resumen por WhatsApp (solo texto)"
+              >
+                <Send className="mr-2 h-4 w-4" />
+                WhatsApp
+              </Button>
+            )}
             <Button 
               onClick={handlePrint} 
               disabled={loading || (!printBoleta && !printFactura)}

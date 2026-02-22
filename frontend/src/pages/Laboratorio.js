@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -21,9 +21,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { FlaskConical, Plus, Loader2 } from 'lucide-react';
+import { FlaskConical, Plus, Loader2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import JsBarcode from 'jsbarcode';
 
 const Laboratorio = () => {
   const { api, empresa } = useApp();
@@ -31,11 +32,13 @@ const Laboratorio = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [printMateria, setPrintMateria] = useState(null);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const barcodeRef = useRef(null);
   
   const [formData, setFormData] = useState({
     nombre: '',
     descripcion: '',
-    codigo_barra: '',
     precio: ''
   });
 
@@ -58,7 +61,7 @@ const Laboratorio = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!formData.nombre || !formData.codigo_barra || !formData.precio) {
+    if (!formData.nombre || !formData.precio) {
       toast.error('Complete todos los campos requeridos');
       return;
     }
@@ -76,7 +79,7 @@ const Laboratorio = () => {
       
       toast.success('Materia creada exitosamente');
       setDialogOpen(false);
-      setFormData({ nombre: '', descripcion: '', codigo_barra: '', precio: '' });
+      setFormData({ nombre: '', descripcion: '', precio: '' });
       fetchMaterias();
     } catch (e) {
       toast.error(e.message || 'Error al crear materia');
@@ -92,6 +95,124 @@ const Laboratorio = () => {
       minimumFractionDigits: 0
     }).format(value);
   };
+
+  // Render barcode into SVG via callback ref (ensures DOM is ready)
+  const barcodeCallbackRef = useCallback((node) => {
+    barcodeRef.current = node;
+    if (node && printMateria) {
+      try {
+        JsBarcode(node, printMateria.codigo_barra, {
+          format: 'CODE128',
+          width: 2,
+          height: 50,
+          displayValue: true,
+          fontSize: 12,
+          font: 'monospace',
+          fontOptions: 'bold',
+          margin: 3,
+          textMargin: 2,
+          background: '#ffffff',
+          lineColor: '#000000'
+        });
+      } catch (err) {
+        console.error('Error generating barcode:', err);
+      }
+    }
+  }, [printMateria]);
+
+  const handlePrintBarcode = useCallback((materia) => {
+    setPrintMateria(materia);
+    setPrintDialogOpen(true);
+  }, []);
+
+  const executePrint = useCallback(() => {
+    if (!printMateria || !barcodeRef.current) return;
+
+    const printWindow = window.open('', '_blank', 'width=400,height=300');
+    if (!printWindow) {
+      toast.error('No se pudo abrir la ventana de impresión. Permita ventanas emergentes.');
+      return;
+    }
+
+    // Sticker dimensions: 3.5cm wide, 2cm tall
+    const svgElement = barcodeRef.current;
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Etiqueta - ${printMateria.codigo_barra}</title>
+        <style>
+          @page {
+            size: auto;
+            margin: 0;
+          }
+          * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+          }
+          .label {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 40mm;
+            height: 30mm;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1mm 1mm;
+            font-family: 'Courier New', monospace;
+          }
+          .label .name {
+            font-size: 7pt;
+            font-weight: bold;
+            text-align: center;
+            line-height: 1.1;
+            max-width: 38mm;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            margin-bottom: 1mm;
+          }
+          .label svg {
+            max-width: 38mm;
+            height: auto;
+            max-height: 22mm;
+          }
+          @media print {
+            html, body {
+              margin: 0;
+              padding: 0;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="label">
+          <div class="name">${printMateria.nombre}</div>
+          ${svgData}
+        </div>
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+              window.onafterprint = function() { window.close(); };
+            }, 200);
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+  }, [printMateria]);
 
   if (loading) {
     return (
@@ -142,16 +263,8 @@ const Laboratorio = () => {
                   data-testid="materia-descripcion"
                 />
               </div>
-              <div>
-                <Label htmlFor="codigo_barra">Código de Barra *</Label>
-                <Input
-                  id="codigo_barra"
-                  value={formData.codigo_barra}
-                  onChange={(e) => setFormData({...formData, codigo_barra: e.target.value})}
-                  placeholder="Código único"
-                  className="font-mono"
-                  data-testid="materia-codigo"
-                />
+              <div className="rounded-md bg-muted/50 p-3 text-sm text-muted-foreground">
+                El código de barras se generará automáticamente al guardar.
               </div>
               <div>
                 <Label htmlFor="precio">Precio de Venta (Gs.) *</Label>
@@ -200,6 +313,7 @@ const Laboratorio = () => {
                   <TableHead>Precio</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead>Creado</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -227,6 +341,16 @@ const Laboratorio = () => {
                     <TableCell className="text-sm text-muted-foreground">
                       {new Date(materia.creado_en).toLocaleDateString('es-PY')}
                     </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handlePrintBarcode(materia)}
+                        title="Imprimir etiqueta de código de barras"
+                      >
+                        <Printer className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -234,6 +358,76 @@ const Laboratorio = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Barcode Print Dialog */}
+      <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="h-5 w-5" />
+              Imprimir Etiqueta
+            </DialogTitle>
+          </DialogHeader>
+          {printMateria && (
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                <p><strong>Materia:</strong> {printMateria.nombre}</p>
+                <p><strong>Código:</strong> <span className="font-mono">{printMateria.codigo_barra}</span></p>
+                <p><strong>Precio:</strong> {formatCurrency(printMateria.precio)}</p>
+              </div>
+              
+              {/* Preview: simulates label 3.5cm × 2cm */}
+              <div className="flex justify-center">
+                <div
+                  style={{
+                    width: '40mm',
+                    height: '30mm',
+                    border: '1px dashed hsl(var(--border))',
+                    borderRadius: '2px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0.5mm 1mm',
+                    backgroundColor: 'white',
+                    overflow: 'hidden'
+                  }}
+                >
+                  <p style={{ 
+                    fontSize: '6pt', 
+                    fontWeight: 'bold', 
+                    color: 'black', 
+                    textAlign: 'center',
+                    lineHeight: 1.1,
+                    maxWidth: '38mm',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    textOverflow: 'ellipsis',
+                    marginBottom: '0.3mm'
+                  }}>
+                    {printMateria.nombre}
+                  </p>
+                  <svg ref={barcodeCallbackRef} style={{ maxWidth: '38mm', maxHeight: '22mm' }} />
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground text-center">
+                Vista previa de la etiqueta (4cm × 3cm) para Epson LX-350
+              </p>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setPrintDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={executePrint}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Imprimir
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -4,6 +4,39 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Ether Dark Theme - Oxfin Style Pure Black */
+[data-theme="ether"] {
+  --background: 0 0% 7%;
+  --foreground: 210 20% 90%;
+  
+  --card: 0 0% 10%;
+  --card-foreground: 210 20% 90%;
+  
+  --popover: 0 0% 10%;
+  --popover-foreground: 210 20% 90%;
+  
+  --primary: 220 90% 56%;
+  --primary-foreground: 0 0% 100%;
+  
+  --secondary: 0 0% 14%;
+  --secondary-foreground: 210 20% 90%;
+  
+  --muted: 0 0% 14%;
+  --muted-foreground: 215 16% 50%;
+  
+  --accent: 0 0% 18%;
+  --accent-foreground: 210 20% 90%;
+  
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  
+  --border: 0 0% 18%;
+  --input: 0 0% 18%;
+  --ring: 220 90% 56%;
+  
+  --radius: 0.5rem;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

@@ -28,8 +28,8 @@ import Reportes from './pages/Reportes';
 import './App.css';
 
 // Protected Route Component
-const ProtectedRoute = ({ children }) => {
-  const { user, loading } = useApp();
+const ProtectedRoute = ({ children, permission }) => {
+  const { user, loading, hasPermission } = useApp();
   
   if (loading) {
     return (
@@ -41,6 +41,22 @@ const ProtectedRoute = ({ children }) => {
   
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+  
+  // Validar permiso si se especifica
+  if (permission) {
+    // Si permission es array, verificar si tiene al menos uno
+    if (Array.isArray(permission)) {
+      const hasAnyPermission = permission.some(perm => hasPermission(perm));
+      if (!hasAnyPermission) {
+        return <Navigate to="/home" replace />;
+      }
+    } else {
+      // Si es string, verificar ese permiso
+      if (!hasPermission(permission)) {
+        return <Navigate to="/home" replace />;
+      }
+    }
   }
   
   return children;
@@ -71,7 +87,7 @@ const AppRoutes = () => {
       <Route 
         path="/dashboard" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="dashboard.ver">
             <Layout>
               <Dashboard />
             </Layout>
@@ -82,7 +98,7 @@ const AppRoutes = () => {
       <Route 
         path="/ventas" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission={['ventas.crear', 'ventas.ver']}>
             <Layout>
               <Ventas />
             </Layout>
@@ -93,7 +109,7 @@ const AppRoutes = () => {
       <Route 
         path="/delivery" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="delivery.ver">
             <Layout>
               <Delivery />
             </Layout>
@@ -104,7 +120,7 @@ const AppRoutes = () => {
       <Route 
         path="/historial-ventas" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="ventas.ver_historial">
             <Layout>
               <HistorialVentas />
             </Layout>
@@ -115,7 +131,7 @@ const AppRoutes = () => {
       <Route 
         path="/laboratorio" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="laboratorio.ver">
             <Layout>
               <Laboratorio />
             </Layout>
@@ -126,7 +142,7 @@ const AppRoutes = () => {
       <Route 
         path="/productos" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="productos.ver">
             <Layout>
               <Productos />
             </Layout>
@@ -137,7 +153,7 @@ const AppRoutes = () => {
       <Route 
         path="/proveedores" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="proveedores.ver">
             <Layout>
               <Proveedores />
             </Layout>
@@ -148,7 +164,7 @@ const AppRoutes = () => {
       <Route 
         path="/clientes" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="clientes.ver">
             <Layout>
               <Clientes />
             </Layout>
@@ -159,7 +175,7 @@ const AppRoutes = () => {
       <Route 
         path="/funcionarios" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="funcionarios.ver">
             <Layout>
               <Funcionarios />
             </Layout>
@@ -170,7 +186,7 @@ const AppRoutes = () => {
       <Route 
         path="/stock" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="stock.ver">
             <Layout>
               <Stock />
             </Layout>
@@ -181,7 +197,7 @@ const AppRoutes = () => {
       <Route 
         path="/flota" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="flota.ver">
             <Layout>
               <Flota />
             </Layout>
@@ -192,7 +208,7 @@ const AppRoutes = () => {
       <Route 
         path="/facturas" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="facturas.ver">
             <Layout>
               <Facturas />
             </Layout>
@@ -203,7 +219,7 @@ const AppRoutes = () => {
       <Route 
         path="/usuarios" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="usuarios.ver">
             <Layout>
               <Usuarios />
             </Layout>
@@ -214,7 +230,7 @@ const AppRoutes = () => {
       <Route 
         path="/marcas" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="productos.ver">
             <Layout>
               <Marcas />
             </Layout>
@@ -225,7 +241,7 @@ const AppRoutes = () => {
       <Route 
         path="/permisos" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="roles.gestionar">
             <Layout>
               <Permisos />
             </Layout>
@@ -236,7 +252,7 @@ const AppRoutes = () => {
       <Route 
         path="/reportes" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="reportes.ver">
             <Layout>
               <Reportes />
             </Layout>
@@ -247,7 +263,7 @@ const AppRoutes = () => {
       <Route 
         path="/sistema" 
         element={
-          <ProtectedRoute>
+          <ProtectedRoute permission="sistema.configurar">
             <Layout>
               <Sistema />
             </Layout>
