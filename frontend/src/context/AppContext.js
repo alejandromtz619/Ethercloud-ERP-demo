@@ -31,11 +31,44 @@ const ROUTE_PERMISSIONS = {
   '/reportes': 'reportes.ver',
 };
 
+// Decode JWT payload without verification (for client-side expiration check)
+const decodeTokenPayload = (token) => {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+};
+
+// Check if a JWT token is expired client-side
+const isTokenExpired = (token) => {
+  if (!token) return true;
+  const payload = decodeTokenPayload(token);
+  if (!payload || !payload.exp) return true;
+  // Token expired if exp is in the past (with 30s buffer)
+  return (payload.exp * 1000) < (Date.now() - 30000);
+};
+
 export const AppProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [empresa, setEmpresa] = useState(null);
   const [userPermisos, setUserPermisos] = useState([]);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(() => {
+    const stored = localStorage.getItem('token');
+    // Immediately discard expired tokens on init
+    if (stored && isTokenExpired(stored)) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('userPermisos');
+      return null;
+    }
+    return stored;
+  });
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [primaryColor, setPrimaryColor] = useState(localStorage.getItem('primaryColor') || 'blue');
   const [loading, setLoading] = useState(true);
@@ -62,33 +95,59 @@ export const AppProvider = ({ children }) => {
         const permisos = await res.json();
         setUserPermisos(permisos.map(p => p.clave));
         localStorage.setItem('userPermisos', JSON.stringify(permisos.map(p => p.clave)));
+      } else if (res.status === 401) {
+        // Token rejected by backend
+        logout();
       }
     } catch (e) {
       console.error('Failed to fetch user permissions:', e);
     }
   };
 
-  // Check auth on mount
+  // Check auth on mount - validate token against backend
   useEffect(() => {
     const checkAuth = async () => {
       if (token) {
+        // Client-side expiration check first
+        if (isTokenExpired(token)) {
+          console.info('Token expirado, cerrando sesión.');
+          logout();
+          setLoading(false);
+          return;
+        }
+
         try {
-          const userData = JSON.parse(localStorage.getItem('user') || '{}');
-          const cachedPermisos = JSON.parse(localStorage.getItem('userPermisos') || '[]');
-          if (userData.id) {
-            setUser(userData);
-            setUserPermisos(cachedPermisos);
-            // Fetch empresa
-            const res = await fetch(`${API_URL}/empresas/${userData.empresa_id}`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
-              const empresaData = await res.json();
-              setEmpresa(empresaData);
-            }
-            // Refresh permissions
-            await fetchUserPermisos(userData.id, token);
+          // Validate token against backend /auth/me
+          const meRes = await fetch(`${API_URL}/auth/me`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+
+          if (!meRes.ok) {
+            console.info('Sesión inválida o expirada (backend rechazó el token).');
+            logout();
+            setLoading(false);
+            return;
           }
+
+          const userData = await meRes.json();
+          setUser(userData);
+          localStorage.setItem('user', JSON.stringify(userData));
+
+          // Load cached permissions temporarily, then refresh
+          const cachedPermisos = JSON.parse(localStorage.getItem('userPermisos') || '[]');
+          setUserPermisos(cachedPermisos);
+
+          // Fetch empresa
+          const empresaRes = await fetch(`${API_URL}/empresas/${userData.empresa_id}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (empresaRes.ok) {
+            const empresaData = await empresaRes.json();
+            setEmpresa(empresaData);
+          }
+
+          // Refresh permissions from backend
+          await fetchUserPermisos(userData.id, token);
         } catch (e) {
           console.error('Auth check failed:', e);
           logout();
@@ -97,6 +156,20 @@ export const AppProvider = ({ children }) => {
       setLoading(false);
     };
     checkAuth();
+  }, [token]);
+
+  // Periodic token expiration check (every 60 seconds)
+  useEffect(() => {
+    if (!token) return;
+
+    const interval = setInterval(() => {
+      if (isTokenExpired(token)) {
+        console.info('Sesión expirada. Requiere nuevo inicio de sesión.');
+        logout();
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
   }, [token]);
 
   const login = async (email, password) => {

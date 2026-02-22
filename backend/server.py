@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
@@ -143,12 +144,62 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
+# Security scheme for JWT Bearer tokens
+security_scheme = HTTPBearer(auto_error=False)
+
 def create_token(usuario_id: int) -> str:
     payload = {
         "sub": str(usuario_id),
         "exp": now_paraguay() + timedelta(hours=JWT_EXPIRATION_HOURS)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def decode_token(token: str) -> dict:
+    """Decode and validate a JWT token. Raises HTTPException on failure."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expirado. Por favor inicie sesión nuevamente."
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido."
+        )
+
+async def get_current_usuario(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    db: AsyncSession = Depends(get_db)
+) -> Usuario:
+    """Dependency that validates JWT and returns the current user."""
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token de autenticación requerido."
+        )
+    payload = decode_token(credentials.credentials)
+    usuario_id = int(payload.get("sub", 0))
+    if not usuario_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token inválido: sin identificador de usuario."
+        )
+    result = await db.execute(select(Usuario).where(Usuario.id == usuario_id))
+    usuario = result.scalar_one_or_none()
+    if not usuario:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario no encontrado."
+        )
+    if not usuario.activo:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario inactivo."
+        )
+    return usuario
 
 def numero_a_letras(numero):
     """Convert number to Spanish words for receipts"""
@@ -260,11 +311,8 @@ async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
 
 @api_router.get("/auth/me", response_model=UsuarioResponse)
-async def obtener_usuario_actual(usuario_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Usuario).where(Usuario.id == usuario_id))
-    usuario = result.scalar_one_or_none()
-    if not usuario:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+async def obtener_usuario_actual(usuario: Usuario = Depends(get_current_usuario)):
+    """Validate JWT token and return current user data."""
     return usuario
 
 # ==================== USUARIOS ====================
