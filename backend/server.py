@@ -2035,17 +2035,25 @@ async def generar_enlace_documento(
         )
         existing_doc = existing.scalar_one_or_none()
         
-        # Si existe y no ha expirado, retornar el existente
+        # Si existe y no ha expirado, verificar que el archivo también exista en disco
         if existing_doc:
-            logger.info(f"Documento existente encontrado: {existing_doc.token}")
-            base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
-            return {
-                "url": f"{base_url}/api/documentos/{existing_doc.token}",
-                "token": existing_doc.token,
-                "tipo_documento": tipo_documento.value,
-                "fecha_expiracion": existing_doc.fecha_expiracion,
-                "ya_existia": True
-            }
+            file_exists = Path(existing_doc.file_path).exists() if existing_doc.file_path else False
+            if file_exists:
+                logger.info(f"Documento existente encontrado con archivo en disco: {existing_doc.token}")
+                base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+                return {
+                    "url": f"{base_url}/api/documentos/{existing_doc.token}",
+                    "token": existing_doc.token,
+                    "tipo_documento": tipo_documento.value,
+                    "fecha_expiracion": existing_doc.fecha_expiracion,
+                    "ya_existia": True
+                }
+            else:
+                # El registro existe pero el archivo fue eliminado (Render limpió el filesystem)
+                # Eliminar el registro viejo para regenerar abajo
+                logger.warning(f"Documento {existing_doc.token} existe en BD pero archivo no encontrado en disco. Regenerando...")
+                await db.delete(existing_doc)
+                await db.commit()
         
         logger.info("Generando nuevo documento PDF...")
         
@@ -2144,6 +2152,8 @@ async def descargar_documento(token: str, db: AsyncSession = Depends(get_db)):
     """
     Endpoint público para descargar documentos mediante token único.
     No requiere autenticación - cualquiera con el enlace puede descargar.
+    Si el archivo no existe en disco (ej: Render limpió el filesystem),
+    se regenera automáticamente desde los datos de la venta en la BD.
     """
     # Buscar documento por token
     result = await db.execute(
@@ -2162,10 +2172,43 @@ async def descargar_documento(token: str, db: AsyncSession = Depends(get_db)):
     if documento.fecha_expiracion < now_paraguay():
         raise HTTPException(status_code=410, detail="Este enlace ha expirado")
     
-    # Verificar que el archivo existe
+    # Verificar que el archivo existe; si no, regenerarlo desde los datos de la venta
     file_path = Path(documento.file_path)
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="El archivo ya no está disponible")
+        logger.warning(f"Archivo no encontrado en disco: {file_path}. Regenerando PDF desde datos de venta...")
+        try:
+            # Cargar datos necesarios para regenerar el PDF
+            regen_result = await db.execute(
+                select(Venta, Cliente, Usuario, Empresa)
+                .join(Cliente, Venta.cliente_id == Cliente.id)
+                .join(Usuario, Venta.usuario_id == Usuario.id)
+                .join(Empresa, Venta.empresa_id == Empresa.id)
+                .where(Venta.id == documento.venta_id)
+            )
+            regen_row = regen_result.first()
+            if not regen_row:
+                raise HTTPException(status_code=404, detail="No se pudieron cargar los datos de la venta para regenerar el documento")
+            
+            venta_obj, cliente, vendedor, empresa = regen_row
+            
+            if documento.tipo_documento == TipoDocumento.BOLETA:
+                pdf_content = await generar_pdf_boleta(venta_obj, cliente, vendedor, empresa, db)
+            else:  # FACTURA
+                pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
+            
+            # Asegurar que el directorio existe (puede haberse perdido también)
+            DOCS_DIR.mkdir(parents=True, exist_ok=True)
+            
+            # Guardar el PDF regenerado en disco
+            with open(file_path, "wb") as f:
+                f.write(pdf_content)
+            
+            logger.info(f"PDF regenerado exitosamente y guardado en: {file_path} ({len(pdf_content)} bytes)")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error al regenerar PDF para token {token}: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Error al regenerar el documento. Intente generar un nuevo enlace.")
     
     # Incrementar contador de descargas
     documento.descargas += 1
