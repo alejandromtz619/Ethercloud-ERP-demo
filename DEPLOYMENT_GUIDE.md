@@ -139,16 +139,23 @@ REACT_APP_BACKEND_URL = https://luzbrill-backend.onrender.com
 
 ---
 
-## 🔍 IMPORTANTE: Características Preservadas
+## � Resumen Rápido
 
-✅ **Todas tus funcionalidades se mantienen**:
-- Módulos completos (Clientes, Proveedores, Productos, Stock, Ventas, etc.)
-- Plugins de webpack (health-check, visual-edits)
-- Configuración de CRACO
-- Todos los componentes UI de shadcn/ui
-- Sistema de autenticación JWT
-- Integración con APIs externas (emergentintegrations)
-- Context API y hooks personalizados
+```
+1. Base de Datos PostgreSQL (Render)
+   ↓
+2. Backend (Web Service) + Variables de Entorno
+   ↓
+3. Frontend (Web Service) + Variables de Entorno
+   ↓
+4. Actualizar CORS en Backend con URL del Frontend
+```
+
+**Archivos de configuración incluidos:**
+- `backend/Procfile`, `backend/render.yaml`, `backend/runtime.txt`
+- `frontend/render.yaml`
+
+**Tiempo estimado:** ~20 minutos total
 
 ---
 
