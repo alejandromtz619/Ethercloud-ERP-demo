@@ -81,10 +81,15 @@ pg_dump "postgresql://user:password@host:5432/dbname" \
   > db-backups/luzbrill_erp_backup.sql
 ```
 
-### 2.2 Transferir backup al VPS OVHcloud
+### 2.2 Backup reconstruido (ya disponible)
+
+El backup completo ya está generado en `db-backups/backup_complete.sql` (~85KB).  
+Incluye: 8 enum types, 28 sequences, 30 tablas, todos los datos, constraints e índices.
+
+### 2.3 Transferir backup al VPS OVHcloud
 ```bash
-# Desde tu máquina local o servidor actual
-scp db-backups/luzbrill_erp_*.sql root@TU_IP_OVH:/root/db-backups/
+# Desde tu máquina local
+scp db-backups/backup_complete.sql root@TU_IP_OVH:/root/db-backups/
 ```
 
 ---
@@ -113,19 +118,19 @@ Accede al panel de Coolify: `http://TU_IP_OVH:8000`
 
 # Opción 1: Con psql directo
 psql "postgresql://luzbrill:TU_PASSWORD@localhost:5432/luzbrill_erp" \
-  < /root/db-backups/luzbrill_erp_backup.sql
+  < /root/db-backups/backup_complete.sql
 
 # Opción 2: Si la DB está en Docker (Coolify crea un contenedor)
 # Buscar el contenedor de postgres
 docker ps | grep postgres
 # Restaurar
-cat /root/db-backups/luzbrill_erp_backup.sql | \
+cat /root/db-backups/backup_complete.sql | \
   docker exec -i CONTAINER_ID psql -U luzbrill -d luzbrill_erp
 
 # Verificar
 docker exec -it CONTAINER_ID psql -U luzbrill -d luzbrill_erp -c '\dt'
 docker exec -it CONTAINER_ID psql -U luzbrill -d luzbrill_erp \
-  -c 'SELECT count(*) FROM usuario;'
+  -c 'SELECT count(*) FROM usuarios;'
 ```
 
 > **Después de importar**: Desactivar el Public Port de la DB en Coolify por seguridad.
