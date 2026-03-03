@@ -68,12 +68,8 @@ const Home = () => {
             Cerrar Sesión
           </Button>
           
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary mb-6 overflow-hidden">
-            <img
-              src={empresa?.logo_url || "https://luzbrill.storage.ethercloud.co/core/preview?fileId=205&x=2303&y=1295&a=true&etag=8970340ea60a01978e360daeaf871a06"}
-              alt={empresa?.nombre || 'Logo'}
-              className="w-full h-full object-contain p-2"
-            />
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary mb-6">
+            <span className="text-white text-4xl font-extrabold tracking-wide select-none" style={{fontFamily: 'JetBrains Mono, monospace'}}>LB</span>
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold mb-2">
             ¡Bienvenido, {user?.nombre}!
