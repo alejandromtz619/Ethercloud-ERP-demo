@@ -275,7 +275,7 @@ const Dashboard = () => {
                 <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
               </div>
             ) : (
-              <div className="h-64">
+              <div className="h-64 w-full min-h-[16rem]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />

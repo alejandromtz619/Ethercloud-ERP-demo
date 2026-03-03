@@ -26,7 +26,7 @@ import {
 } from '../components/ui/popover';
 import { 
   FileText, Download, Loader2, Package, Users, Building2, 
-  DollarSign, Calendar, Search, X, Check
+  DollarSign, Calendar, Search, X, Check, FileSpreadsheet
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -95,16 +95,18 @@ const Reportes = () => {
     );
   });
 
-  const downloadReport = async (tipo, params = {}) => {
+  const downloadReport = async (tipo, params = {}, format = 'pdf') => {
     if (!empresa?.id) {
       toast.error('No se ha seleccionado una empresa');
       return;
     }
     
-    setLoading({ ...loading, [tipo]: true });
+    const loadingKey = format === 'excel' ? `${tipo}_excel` : tipo;
+    setLoading({ ...loading, [loadingKey]: true });
     
     try {
-      let url = `${API_URL}/reportes/${tipo}?empresa_id=${empresa.id}`;
+      const endpoint = format === 'excel' ? `${tipo}/excel` : tipo;
+      let url = `${API_URL}/reportes/${endpoint}?empresa_id=${empresa.id}`;
       
       // Add extra params
       Object.entries(params).forEach(([key, value]) => {
@@ -116,13 +118,11 @@ const Reportes = () => {
       });
       
       if (!response.ok) {
-        // Try to get error message from response
         let errorMessage = 'Error al generar reporte';
         try {
           const errorData = await response.json();
           errorMessage = errorData.detail || errorData.message || errorMessage;
         } catch (e) {
-          // If response is not JSON, use status text
           if (response.status === 404) {
             errorMessage = 'No se encontraron datos para este reporte';
           } else if (response.status === 403) {
@@ -137,19 +137,14 @@ const Reportes = () => {
       }
       
       const blob = await response.blob();
-      
-      // Verify we got a PDF
-      if (!blob.type.includes('pdf')) {
-        throw new Error('El servidor no devolvió un archivo PDF válido');
-      }
-      
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
       
-      // Get filename from Content-Disposition header or create one
+      const date = new Date().toISOString().split('T')[0];
+      const ext = format === 'excel' ? 'xlsx' : 'pdf';
       const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `reporte_${tipo}_${new Date().toISOString().split('T')[0]}.pdf`;
+      let filename = `reporte_${tipo}_${date}.${ext}`;
       if (contentDisposition) {
         const match = contentDisposition.match(/filename=(.+)/);
         if (match) filename = match[1];
@@ -161,12 +156,12 @@ const Reportes = () => {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(downloadUrl);
       
-      toast.success('Reporte descargado exitosamente');
+      toast.success(`${format === 'excel' ? 'Excel' : 'PDF'} descargado exitosamente`);
     } catch (e) {
       console.error('Error downloading report:', e);
       toast.error(e.message || 'Error al descargar reporte. Verifique su conexión e inténtelo nuevamente.');
     } finally {
-      setLoading({ ...loading, [tipo]: false });
+      setLoading({ ...loading, [loadingKey]: false });
     }
   };
 
@@ -333,7 +328,7 @@ const Reportes = () => {
     <div className="space-y-6" data-testid="reportes-page">
       <div>
         <h1 className="text-2xl font-bold">Reportes</h1>
-        <p className="text-muted-foreground">Genera y descarga reportes en formato PDF</p>
+        <p className="text-muted-foreground">Genera y descarga reportes en formato PDF o Excel</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -498,23 +493,43 @@ const Reportes = () => {
                   </div>
                 )}
                 
-                <Button
-                  className="w-full"
-                  onClick={() => downloadReport(reporte.id, reporte.getParams())}
-                  disabled={loading[reporte.id]}
-                >
-                  {loading[reporte.id] ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generando...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="mr-2 h-4 w-4" />
-                      Descargar PDF
-                    </>
-                  )}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => downloadReport(reporte.id, reporte.getParams(), 'excel')}
+                    disabled={loading[`${reporte.id}_excel`]}
+                  >
+                    {loading[`${reporte.id}_excel`] ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generando...
+                      </>
+                    ) : (
+                      <>
+                        <FileSpreadsheet className="mr-2 h-4 w-4" />
+                        Excel
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    onClick={() => downloadReport(reporte.id, reporte.getParams(), 'pdf')}
+                    disabled={loading[reporte.id]}
+                  >
+                    {loading[reporte.id] ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Generando...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-4 w-4" />
+                        PDF
+                      </>
+                    )}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           );

@@ -16,6 +16,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -220,6 +221,7 @@ const Funcionarios = () => {
               </Button>
             </DialogTrigger>
           <DialogContent>
+            <DialogDescription className="hidden">Formulario para crear o editar un funcionario</DialogDescription>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Funcionario</DialogTitle>
             </DialogHeader>

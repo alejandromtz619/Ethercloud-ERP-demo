@@ -20,12 +20,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Tag, Plus, Loader2, Search, Edit, Trash2 } from 'lucide-react';
+import { Layers, Plus, Loader2, Search, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-const Marcas = () => {
+const Categorias = () => {
   const { api, empresa } = useApp();
-  const [marcas, setMarcas] = useState([]);
+  const [categorias, setCategorias] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -33,20 +33,20 @@ const Marcas = () => {
   const [search, setSearch] = useState('');
   const [nombre, setNombre] = useState('');
 
-  const fetchMarcas = async () => {
+  const fetchCategorias = async () => {
     if (!empresa?.id) return;
     try {
-      const data = await api(`/marcas?empresa_id=${empresa.id}`);
-      setMarcas(data);
+      const data = await api(`/categorias?empresa_id=${empresa.id}`);
+      setCategorias(data);
     } catch (e) {
-      toast.error('Error al cargar marcas');
+      toast.error('Error al cargar categorías');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchMarcas();
+    fetchCategorias();
   }, [empresa?.id]);
 
   const resetForm = () => {
@@ -54,9 +54,9 @@ const Marcas = () => {
     setEditingId(null);
   };
 
-  const handleEdit = (marca) => {
-    setNombre(marca.nombre);
-    setEditingId(marca.id);
+  const handleEdit = (categoria) => {
+    setNombre(categoria.nombre);
+    setEditingId(categoria.id);
     setDialogOpen(true);
   };
 
@@ -66,26 +66,26 @@ const Marcas = () => {
       toast.error('El nombre es requerido');
       return;
     }
-    
+
     setSubmitting(true);
     try {
       if (editingId) {
-        await api(`/marcas/${editingId}`, {
+        await api(`/categorias/${editingId}`, {
           method: 'PUT',
           body: JSON.stringify({ nombre })
         });
-        toast.success('Marca actualizada');
+        toast.success('Categoría actualizada');
       } else {
-        await api('/marcas', {
+        await api('/categorias', {
           method: 'POST',
           body: JSON.stringify({ nombre, empresa_id: empresa.id })
         });
-        toast.success('Marca creada');
+        toast.success('Categoría creada');
       }
-      
+
       setDialogOpen(false);
       resetForm();
-      fetchMarcas();
+      fetchCategorias();
     } catch (e) {
       toast.error(e.message || 'Error al guardar');
     } finally {
@@ -94,18 +94,18 @@ const Marcas = () => {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('¿Eliminar esta marca?')) return;
+    if (!window.confirm('¿Eliminar esta categoría?')) return;
     try {
-      await api(`/marcas/${id}`, { method: 'DELETE' });
-      toast.success('Marca eliminada');
-      fetchMarcas();
+      await api(`/categorias/${id}`, { method: 'DELETE' });
+      toast.success('Categoría eliminada');
+      fetchCategorias();
     } catch (e) {
       toast.error('Error al eliminar');
     }
   };
 
-  const filteredMarcas = marcas.filter(m =>
-    m.nombre.toLowerCase().includes(search.toLowerCase())
+  const filteredCategorias = categorias.filter(c =>
+    c.nombre.toLowerCase().includes(search.toLowerCase())
   );
 
   if (loading) {
@@ -117,23 +117,23 @@ const Marcas = () => {
   }
 
   return (
-    <div className="space-y-6" data-testid="marcas-page">
+    <div className="space-y-6" data-testid="categorias-page">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Marcas</h1>
-          <p className="text-muted-foreground">Gestión de marcas de productos</p>
+          <h1 className="text-2xl font-bold">Categorías</h1>
+          <p className="text-muted-foreground">Gestión de categorías de productos</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
           <DialogTrigger asChild>
-            <Button data-testid="crear-marca-btn">
+            <Button data-testid="crear-categoria-btn">
               <Plus className="mr-2 h-4 w-4" />
-              Nueva Marca
+              Nueva Categoría
             </Button>
           </DialogTrigger>
           <DialogContent>
-            <DialogDescription className="hidden">Formulario para crear o editar una marca</DialogDescription>
+            <DialogDescription className="hidden">Formulario para crear o editar una categoría</DialogDescription>
             <DialogHeader>
-              <DialogTitle>{editingId ? 'Editar' : 'Nueva'} Marca</DialogTitle>
+              <DialogTitle>{editingId ? 'Editar' : 'Nueva'} Categoría</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -141,8 +141,8 @@ const Marcas = () => {
                 <Input
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Nombre de la marca"
-                  data-testid="marca-nombre-input"
+                  placeholder="Nombre de la categoría"
+                  data-testid="categoria-nombre-input"
                 />
               </div>
               <div className="flex justify-end gap-2">
@@ -163,13 +163,13 @@ const Marcas = () => {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
-              <Tag className="h-5 w-5" />
-              Listado ({filteredMarcas.length})
+              <Layers className="h-5 w-5" />
+              Listado ({filteredCategorias.length})
             </CardTitle>
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar marca..."
+                placeholder="Buscar categoría..."
                 className="pl-9"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -178,10 +178,10 @@ const Marcas = () => {
           </div>
         </CardHeader>
         <CardContent>
-          {filteredMarcas.length === 0 ? (
+          {filteredCategorias.length === 0 ? (
             <div className="text-center py-12">
-              <Tag className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">No hay marcas registradas</p>
+              <Layers className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">No hay categorías registradas</p>
             </div>
           ) : (
             <Table>
@@ -193,16 +193,16 @@ const Marcas = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredMarcas.map((marca) => (
-                  <TableRow key={marca.id}>
-                    <TableCell className="font-mono text-sm">{marca.id}</TableCell>
-                    <TableCell className="font-medium">{marca.nombre}</TableCell>
+                {filteredCategorias.map((categoria) => (
+                  <TableRow key={categoria.id}>
+                    <TableCell className="font-mono text-sm">{categoria.id}</TableCell>
+                    <TableCell className="font-medium">{categoria.nombre}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => handleEdit(marca)}>
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(categoria)}>
                           <Edit className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDelete(marca.id)}>
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(categoria.id)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -218,4 +218,4 @@ const Marcas = () => {
   );
 };
 
-export default Marcas;
+export default Categorias;

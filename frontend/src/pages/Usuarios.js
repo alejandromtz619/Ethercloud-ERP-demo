@@ -16,6 +16,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -183,6 +184,7 @@ const Usuarios = () => {
               </Button>
             </DialogTrigger>
           <DialogContent>
+            <DialogDescription className="hidden">Formulario para crear o editar un usuario</DialogDescription>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Usuario</DialogTitle>
             </DialogHeader>

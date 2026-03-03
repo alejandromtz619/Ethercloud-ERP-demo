@@ -8,6 +8,7 @@ import { Badge } from '../components/ui/badge';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -444,6 +445,7 @@ const Delivery = () => {
       {/* Modal de Detalles */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogDescription className="hidden">Detalles de la orden de delivery</DialogDescription>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Truck className="h-5 w-5" />

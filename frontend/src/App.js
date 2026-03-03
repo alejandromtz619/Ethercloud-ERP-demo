@@ -21,6 +21,7 @@ import Facturas from './pages/Facturas';
 import Usuarios from './pages/Usuarios';
 import Sistema from './pages/Sistema';
 import Marcas from './pages/Marcas';
+import Categorias from './pages/Categorias';
 import Permisos from './pages/Permisos';
 import HistorialVentas from './pages/HistorialVentas';
 import Reportes from './pages/Reportes';
@@ -233,6 +234,17 @@ const AppRoutes = () => {
           <ProtectedRoute permission="productos.ver">
             <Layout>
               <Marcas />
+            </Layout>
+          </ProtectedRoute>
+        } 
+      />
+      
+      <Route 
+        path="/categorias" 
+        element={
+          <ProtectedRoute permission="productos.ver">
+            <Layout>
+              <Categorias />
             </Layout>
           </ProtectedRoute>
         } 

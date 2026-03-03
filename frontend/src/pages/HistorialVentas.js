@@ -23,12 +23,13 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
 import { 
   History, Search, Filter, Printer, FileText, Receipt, Eye, 
-  Loader2, Calendar, DollarSign, User, XCircle, Edit 
+  Loader2, Calendar, DollarSign, User, XCircle, Edit, FileSpreadsheet
 } from 'lucide-react';
 import { toast } from 'sonner';
 import PrintModal from '../components/PrintModal';
@@ -157,36 +158,25 @@ const HistorialVentas = () => {
     }
   };
 
+  const buildHistorialUrl = (base) => {
+    let url = `${API_URL}/reportes/${base}?empresa_id=${empresa.id}`;
+    if (filters.fecha_desde) url += `&fecha_desde=${filters.fecha_desde}`;
+    if (filters.fecha_hasta) url += `&fecha_hasta=${filters.fecha_hasta}`;
+    if (filters.cliente_id && filters.cliente_id !== 'all') url += `&cliente_id=${filters.cliente_id}`;
+    if (filters.usuario_id && filters.usuario_id !== 'all') url += `&usuario_id=${filters.usuario_id}`;
+    if (filters.estado && filters.estado !== 'all') url += `&estado=${filters.estado}`;
+    if (filters.monto_min) url += `&monto_min=${filters.monto_min}`;
+    if (filters.monto_max) url += `&monto_max=${filters.monto_max}`;
+    return url;
+  };
+
   const handleDescargarPDF = async () => {
-    if (!empresa?.id) {
-      toast.error('No se ha seleccionado una empresa');
-      return;
-    }
-    
-    if (ventas.length === 0) {
-      toast.error('No hay ventas para exportar');
-      return;
-    }
-    
+    if (!empresa?.id) { toast.error('No se ha seleccionado una empresa'); return; }
+    if (ventas.length === 0) { toast.error('No hay ventas para exportar'); return; }
     try {
-      let url = `${API_URL}/reportes/historial-ventas?empresa_id=${empresa.id}`;
-      
-      if (filters.fecha_desde) url += `&fecha_desde=${filters.fecha_desde}`;
-      if (filters.fecha_hasta) url += `&fecha_hasta=${filters.fecha_hasta}`;
-      if (filters.cliente_id && filters.cliente_id !== 'all') url += `&cliente_id=${filters.cliente_id}`;
-      if (filters.usuario_id && filters.usuario_id !== 'all') url += `&usuario_id=${filters.usuario_id}`;
-      if (filters.estado && filters.estado !== 'all') url += `&estado=${filters.estado}`;
-      if (filters.monto_min) url += `&monto_min=${filters.monto_min}`;
-      if (filters.monto_max) url += `&monto_max=${filters.monto_max}`;
-      
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
+      const url = buildHistorialUrl('historial-ventas');
+      const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
       if (!response.ok) throw new Error('Error al generar PDF');
-      
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -196,11 +186,33 @@ const HistorialVentas = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(downloadUrl);
-      
       toast.success('PDF descargado exitosamente');
     } catch (e) {
       console.error('Error downloading PDF:', e);
       toast.error('Error al descargar PDF');
+    }
+  };
+
+  const handleDescargarExcel = async () => {
+    if (!empresa?.id) { toast.error('No se ha seleccionado una empresa'); return; }
+    if (ventas.length === 0) { toast.error('No hay ventas para exportar'); return; }
+    try {
+      const url = buildHistorialUrl('historial-ventas/excel');
+      const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (!response.ok) throw new Error('Error al generar Excel');
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `historial-ventas-${new Date().toISOString().split('T')[0]}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+      toast.success('Excel descargado exitosamente');
+    } catch (e) {
+      console.error('Error downloading Excel:', e);
+      toast.error('Error al descargar Excel');
     }
   };
 
@@ -244,11 +256,19 @@ const HistorialVentas = () => {
             {showFilters ? 'Ocultar Filtros' : 'Mostrar Filtros'}
           </Button>
           <Button 
+            variant="outline"
+            onClick={handleDescargarExcel}
+            disabled={ventas.length === 0}
+          >
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+            Excel
+          </Button>
+          <Button 
             onClick={handleDescargarPDF}
             disabled={ventas.length === 0}
           >
             <FileText className="mr-2 h-4 w-4" />
-            Generar PDF
+            PDF
           </Button>
         </div>
       </div>
@@ -385,12 +405,21 @@ const HistorialVentas = () => {
                     <TableHead>Cliente</TableHead>
                     <TableHead>Tipo Pago</TableHead>
                     <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Costo</TableHead>
+                    <TableHead className="text-right">Ganancia</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="w-32">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {ventas.map((venta) => (
+                  {ventas.map((venta) => {
+                    const mostrarCostos = venta.estado === 'CONFIRMADA';
+                    const ganancia = mostrarCostos ? (venta.ganancia ?? null) : null;
+                    const costoTotal = mostrarCostos ? (venta.costo_total ?? null) : null;
+                    const gananciaPct = costoTotal > 0 && ganancia !== null
+                      ? Math.round((ganancia / costoTotal) * 100)
+                      : null;
+                    return (
                     <TableRow key={venta.id}>
                       <TableCell className="font-mono text-sm">{venta.id}</TableCell>
                       <TableCell>
@@ -415,6 +444,19 @@ const HistorialVentas = () => {
                       </TableCell>
                       <TableCell className="text-right font-mono-data font-medium">
                         {formatCurrency(venta.total)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono-data text-muted-foreground">
+                        {costoTotal > 0 ? formatCurrency(costoTotal) : <span className="text-xs">—</span>}
+                      </TableCell>
+                      <TableCell className="text-right font-mono-data">
+                        {ganancia !== null && costoTotal > 0 ? (
+                          <span className={ganancia >= 0 ? 'text-green-600 dark:text-green-400 font-medium' : 'text-red-600 dark:text-red-400 font-medium'}>
+                            {formatCurrency(ganancia)}
+                            {gananciaPct !== null && (
+                              <span className="ml-1 text-xs opacity-70">({gananciaPct}%)</span>
+                            )}
+                          </span>
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
                         {getEstadoBadge(venta.estado)}
@@ -461,7 +503,8 @@ const HistorialVentas = () => {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -472,6 +515,7 @@ const HistorialVentas = () => {
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
         <DialogContent className="max-w-2xl">
+          <DialogDescription className="hidden">Detalles de la venta</DialogDescription>
           <DialogHeader>
             <DialogTitle>Detalle de Venta #{selectedVenta?.id}</DialogTitle>
           </DialogHeader>

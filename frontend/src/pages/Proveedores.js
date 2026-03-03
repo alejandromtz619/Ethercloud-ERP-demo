@@ -16,6 +16,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -212,6 +213,7 @@ const Proveedores = () => {
               </Button>
             </DialogTrigger>
           <DialogContent>
+            <DialogDescription className="hidden">Formulario para crear o editar un proveedor</DialogDescription>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Proveedor</DialogTitle>
             </DialogHeader>

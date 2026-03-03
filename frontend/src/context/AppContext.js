@@ -18,6 +18,7 @@ const ROUTE_PERMISSIONS = {
   '/laboratorio': 'laboratorio.ver',
   '/productos': 'productos.ver',
   '/marcas': 'productos.ver',
+  '/categorias': 'productos.ver',
   '/proveedores': 'proveedores.ver',
   '/clientes': 'clientes.ver',
   '/funcionarios': 'funcionarios.ver',

@@ -19,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -59,7 +60,7 @@ const Clientes = () => {
     email: '',
     acepta_cheque: false,
     descuento_porcentaje: '0',
-    limite_credito: '0'
+    limite_credito: '1'
   });
 
   const fetchClientes = async () => {
@@ -89,7 +90,7 @@ const Clientes = () => {
       email: '',
       acepta_cheque: false,
       descuento_porcentaje: '0',
-      limite_credito: '0'
+      limite_credito: '1'
     });
     setEditingId(null);
   };
@@ -235,6 +236,7 @@ const Clientes = () => {
               </Button>
             </DialogTrigger>
           <DialogContent className="max-w-lg">
+            <DialogDescription className="hidden">Formulario para crear o editar un cliente</DialogDescription>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Cliente</DialogTitle>
             </DialogHeader>
@@ -422,6 +424,7 @@ const Clientes = () => {
       {/* Dialog de Créditos */}
       <Dialog open={creditoDialogOpen} onOpenChange={setCreditoDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogDescription className="hidden">Historial de créditos del cliente</DialogDescription>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CreditCard className="h-5 w-5" />

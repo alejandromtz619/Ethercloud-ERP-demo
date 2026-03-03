@@ -23,6 +23,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -175,6 +176,7 @@ const Flota = () => {
               </Button>
             </DialogTrigger>
           <DialogContent>
+            <DialogDescription className="hidden">Formulario para crear o editar un vehículo</DialogDescription>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Vehículo</DialogTitle>
             </DialogHeader>

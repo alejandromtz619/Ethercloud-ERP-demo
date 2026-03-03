@@ -184,7 +184,7 @@ class Cliente(Base):
     email = Column(String(255))
     acepta_cheque = Column(Boolean, default=False)
     descuento_porcentaje = Column(Numeric(5, 2), default=0)
-    limite_credito = Column(Numeric(15, 2), default=0)  # Límite máximo de crédito
+    limite_credito = Column(Numeric(15, 2), default=1)  # Límite máximo de crédito (por defecto 1 Gs)
     estado = Column(Boolean, default=True)
     creado_en = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -293,8 +293,10 @@ class Producto(Base):
     marca_id = Column(Integer, ForeignKey("marcas.id"))
     nombre = Column(String(255), nullable=False)
     descripcion = Column(Text)
-    codigo_barra = Column(String(100), unique=True)
+    codigo_barra = Column(String(100), unique=True, nullable=True)
     precio_venta = Column(Numeric(15, 2), nullable=False)
+    precio_costo = Column(Numeric(15, 2), default=0)
+    proveedor_id = Column(Integer, ForeignKey("proveedores.id"), nullable=True)
     stock_minimo = Column(Integer, default=10)  # Stock mínimo para alertas
     fecha_vencimiento = Column(Date)
     activo = Column(Boolean, default=True)
@@ -304,6 +306,7 @@ class Producto(Base):
     categoria = relationship("Categoria", back_populates="productos")
     marca = relationship("Marca", back_populates="productos")
     proveedores = relationship("ProveedorProducto", back_populates="producto")
+    proveedor = relationship("Proveedor")
     stock = relationship("StockActual", back_populates="producto")
     movimientos = relationship("MovimientoStock", back_populates="producto")
     venta_items = relationship("VentaItem", back_populates="producto")
@@ -315,7 +318,7 @@ class MateriaLaboratorio(Base):
     empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     nombre = Column(String(255), nullable=False)
     descripcion = Column(Text)
-    codigo_barra = Column(String(100), unique=True)
+    codigo_barra = Column(String(100), unique=True, nullable=True)
     precio = Column(Numeric(15, 2), nullable=False)
     estado = Column(Enum(EstadoMateria), default=EstadoMateria.DISPONIBLE)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
@@ -357,10 +360,17 @@ class MovimientoStock(Base):
     cantidad = Column(Integer, nullable=False)
     referencia_tipo = Column(String(50))
     referencia_id = Column(Integer)
+    # Campos para entrada con proveedor, costo y condición de pago
+    proveedor_id = Column(Integer, ForeignKey("proveedores.id"), nullable=True)
+    costo_unitario = Column(Numeric(15, 2), nullable=True)
+    condicion_pago = Column(String(20), nullable=True)  # 'contado' o 'credito'
+    fecha_limite_pago = Column(Date, nullable=True)
+    notas = Column(Text, nullable=True)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     producto = relationship("Producto", back_populates="movimientos")
     almacen = relationship("Almacen", back_populates="movimientos")
+    proveedor = relationship("Proveedor", foreign_keys=[proveedor_id])
 
 class Venta(Base):
     __tablename__ = "ventas"
@@ -373,6 +383,8 @@ class Venta(Base):
     total = Column(Numeric(15, 2), default=0)
     iva = Column(Numeric(15, 2), default=0)
     descuento = Column(Numeric(15, 2), default=0)
+    costo_total = Column(Numeric(15, 2), default=0)
+    ganancia = Column(Numeric(15, 2), default=0)
     tipo_pago = Column(Enum(TipoPago), default=TipoPago.EFECTIVO)
     es_delivery = Column(Boolean, default=False)
     estado = Column(Enum(EstadoVenta), default=EstadoVenta.BORRADOR)
@@ -395,6 +407,7 @@ class VentaItem(Base):
     materia_laboratorio_id = Column(Integer, ForeignKey("materias_laboratorio.id"))
     cantidad = Column(Integer, nullable=False)
     precio_unitario = Column(Numeric(15, 2), nullable=False)
+    precio_costo = Column(Numeric(15, 2), default=0)
     total = Column(Numeric(15, 2), nullable=False)
     observaciones = Column(Text)
     

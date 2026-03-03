@@ -19,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -227,6 +228,7 @@ const Permisos = () => {
               </Button>
             </DialogTrigger>
             <DialogContent>
+              <DialogDescription className="hidden">Formulario para crear o editar un rol</DialogDescription>
               <DialogHeader>
                 <DialogTitle>{editingRolId ? 'Editar' : 'Nuevo'} Rol</DialogTitle>
               </DialogHeader>
@@ -268,6 +270,7 @@ const Permisos = () => {
               </Button>
             </DialogTrigger>
             <DialogContent>
+              <DialogDescription className="hidden">Formulario para crear un nuevo permiso</DialogDescription>
               <DialogHeader>
                 <DialogTitle>Nuevo Permiso</DialogTitle>
               </DialogHeader>

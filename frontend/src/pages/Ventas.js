@@ -19,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -281,6 +282,7 @@ const Ventas = () => {
           nombre: item.nombre,
           cantidad: 1,
           precio_unitario: parseFloat(item.precio_venta),
+          precio_costo: parseFloat(item.precio_costo) || 0,
           stock_disponible: item.stock_total,
           observaciones: ''
         }]);
@@ -335,6 +337,15 @@ const Ventas = () => {
   const iva = subtotalConDescuento * 10 / 110; // IVA 10% included
   const total = subtotalConDescuento;
 
+  // Ganancia: precio de venta final (con descuento proporcional) - costo
+  const costoTotal = cart.reduce((sum, item) => {
+    const costo = item.precio_costo ||
+      (item.producto_id ? (productos.find(p => p.id === item.producto_id)?.precio_costo || 0) : 0);
+    return sum + item.cantidad * parseFloat(costo);
+  }, 0);
+  const gananciaTotal = total - costoTotal;
+  const gananciaPct = costoTotal > 0 ? Math.round((gananciaTotal / costoTotal) * 100) : null;
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('es-PY', {
       style: 'currency',
@@ -365,12 +376,15 @@ const Ventas = () => {
       return;
     }
     
-    // Validate cheque payment
+    // Validaciones de pago
     if (tipoPago === 'CHEQUE' && !selectedCliente.acepta_cheque) {
       toast.error('Este cliente no tiene habilitado el pago con cheque');
       return;
     }
-    
+    if (tipoPago === 'CREDITO' && Number(selectedCliente.limite_credito) <= 0) {
+      toast.error('Este cliente no tiene crédito habilitado. Asigne un límite de crédito mayor a 0.');
+      return;
+    }
     // If cash payment, open cash modal
     if (tipoPago === 'EFECTIVO') {
       setMontoPagado('');
@@ -564,6 +578,7 @@ const Ventas = () => {
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="max-w-lg">
+                  <DialogDescription className="hidden">Selección de cliente para la venta</DialogDescription>
                   <DialogHeader>
                     <DialogTitle>Seleccionar Cliente</DialogTitle>
                   </DialogHeader>
@@ -680,39 +695,82 @@ const Ventas = () => {
             </div>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="h-96">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {filteredProductos.map((producto) => (
-                  <div
-                    key={producto.id}
-                    className={cn(
-                      "p-3 rounded-lg border cursor-pointer transition-all hover:shadow-md",
-                      producto.stock_total < 1 && "opacity-50 cursor-not-allowed"
-                    )}
-                    onClick={() => producto.stock_total > 0 && addToCart(producto, 'producto')}
-                    data-testid={`producto-card-${producto.id}`}
-                  >
-                    {producto.imagen_url ? (
-                      <img 
-                        src={producto.imagen_url} 
-                        alt={producto.nombre}
-                        className="w-full h-20 object-cover rounded mb-2"
-                      />
-                    ) : (
-                      <div className="w-full h-20 bg-muted rounded mb-2 flex items-center justify-center">
-                        <Package className="h-8 w-8 text-muted-foreground" />
+            <ScrollArea className="h-[520px]">
+              {/* Table header */}
+              <div className="grid grid-cols-[40px_1fr_110px_110px_80px_80px] gap-2 px-2 pb-1 border-b text-xs font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 bg-card z-10">
+                <span></span>
+                <span>Producto</span>
+                <span className="text-right">P. Costo</span>
+                <span className="text-right">P. Venta</span>
+                <span className="text-right">Ganancia</span>
+                <span className="text-center">Stock</span>
+              </div>
+              <div className="space-y-0.5 mt-1">
+                {filteredProductos.map((producto) => {
+                  const ganancia = (producto.precio_venta || 0) - (producto.precio_costo || 0);
+                  const pct = producto.precio_costo > 0
+                    ? Math.round((ganancia / producto.precio_costo) * 100)
+                    : null;
+                  return (
+                    <div
+                      key={producto.id}
+                      className={cn(
+                        "grid grid-cols-[40px_1fr_110px_110px_80px_80px] gap-2 items-center px-2 py-1.5 rounded-md cursor-pointer transition-colors hover:bg-secondary",
+                        producto.stock_total < 1 && "opacity-40 cursor-not-allowed"
+                      )}
+                      onClick={() => producto.stock_total > 0 && addToCart(producto, 'producto')}
+                      data-testid={`producto-card-${producto.id}`}
+                    >
+                      {/* Thumbnail */}
+                      <div className="w-8 h-8 rounded overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
+                        {producto.imagen_url ? (
+                          <img
+                            src={producto.imagen_url}
+                            alt={producto.nombre}
+                            className="w-full h-full object-cover"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              window.open(producto.imagen_url, '_blank');
+                            }}
+                          />
+                        ) : (
+                          <Package className="h-4 w-4 text-muted-foreground" />
+                        )}
                       </div>
-                    )}
-                    <Badge variant="outline" className="mb-1 text-xs">ID: {producto.id}</Badge>
-                    <p className="font-medium text-sm truncate">{producto.nombre}</p>
-                    <p className="font-mono-data text-sm text-primary font-semibold">
-                      {formatCurrency(producto.precio_venta)}
-                    </p>
-                    <Badge variant={producto.stock_total > 0 ? "secondary" : "destructive"} className="mt-1">
-                      Stock: {producto.stock_total}
-                    </Badge>
-                  </div>
-                ))}
+                      {/* Name + ID */}
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">ID: {producto.id}</p>
+                        <p className="text-sm font-medium leading-tight">{producto.nombre}</p>
+                      </div>
+                      {/* Precio costo */}
+                      <p className="font-mono-data text-xs text-right text-muted-foreground">
+                        {formatCurrency(producto.precio_costo)}
+                      </p>
+                      {/* Precio venta */}
+                      <p className="font-mono-data text-sm text-right text-primary font-semibold">
+                        {formatCurrency(producto.precio_venta)}
+                      </p>
+                      {/* Ganancia */}
+                      <div className="text-right">
+                        <p className="font-mono-data text-xs text-green-600 font-semibold">
+                          {formatCurrency(ganancia)}
+                        </p>
+                        {pct !== null && (
+                          <p className="text-xs text-muted-foreground">{pct}%</p>
+                        )}
+                      </div>
+                      {/* Stock */}
+                      <div className="flex justify-center">
+                        <Badge
+                          variant={producto.stock_total > 0 ? "secondary" : "destructive"}
+                          className="text-xs"
+                        >
+                          {producto.stock_total}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </ScrollArea>
 
@@ -858,6 +916,19 @@ const Ventas = () => {
                 <span>Total</span>
                 <span className="font-mono-data text-primary">{formatCurrency(total)}</span>
               </div>
+              {cart.length > 0 && costoTotal > 0 && (
+                <div className={`flex justify-between items-center text-sm pt-1 border-t border-dashed ${
+                  gananciaTotal >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                }`}>
+                  <span className="font-medium">
+                    Ganancia estimada
+                    {gananciaPct !== null && (
+                      <span className="ml-1 text-xs opacity-75">({gananciaPct}%)</span>
+                    )}
+                  </span>
+                  <span className="font-mono-data font-semibold">{formatCurrency(gananciaTotal)}</span>
+                </div>
+              )}
             </div>
 
             <Separator />
@@ -880,7 +951,12 @@ const Ventas = () => {
                     >
                       Cheque {selectedCliente && !selectedCliente.acepta_cheque && '(No habilitado)'}
                     </SelectItem>
-                    <SelectItem value="CREDITO">Crédito</SelectItem>
+                    <SelectItem 
+                      value="CREDITO"
+                      disabled={selectedCliente && Number(selectedCliente.limite_credito) <= 0}
+                    >
+                      Crédito {selectedCliente && Number(selectedCliente.limite_credito) <= 0 && '(No habilitado)'}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 {tipoPago === 'CHEQUE' && selectedCliente && !selectedCliente.acepta_cheque && (

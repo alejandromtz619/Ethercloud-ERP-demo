@@ -127,7 +127,7 @@ class ClienteBase(BaseModel):
     email: Optional[str] = None
     acepta_cheque: bool = False
     descuento_porcentaje: Optional[Decimal] = 0
-    limite_credito: Optional[Decimal] = 0
+    limite_credito: Optional[Decimal] = 1
 
 class ClienteCreate(ClienteBase):
     empresa_id: int
@@ -251,10 +251,12 @@ class ProductoBase(BaseModel):
     descripcion: Optional[str] = None
     codigo_barra: Optional[str] = None
     precio_venta: Decimal
+    precio_costo: Optional[Decimal] = 0
     fecha_vencimiento: Optional[date] = None
     imagen_url: Optional[str] = None
     categoria_id: Optional[int] = None
     marca_id: Optional[int] = None
+    proveedor_id: Optional[int] = None
 
 class ProductoCreate(ProductoBase):
     empresa_id: int
@@ -264,11 +266,13 @@ class ProductoResponse(ProductoBase):
     id: int
     empresa_id: int
     activo: bool
+    proveedor_nombre: Optional[str] = None
 
 class ProductoConStock(ProductoResponse):
     stock_total: int = 0
     categoria_nombre: Optional[str] = None
     marca_nombre: Optional[str] = None
+    proveedor_nombre: Optional[str] = None
 
 # Materia Laboratorio
 class MateriaLaboratorioBase(BaseModel):
@@ -328,11 +332,39 @@ class MovimientoStockBase(BaseModel):
     referencia_id: Optional[int] = None
 
 class MovimientoStockCreate(MovimientoStockBase):
-    pass
+    proveedor_id: Optional[int] = None
+    costo_unitario: Optional[Decimal] = None
+    condicion_pago: Optional[str] = None  # 'contado' o 'credito'
+    fecha_limite_pago: Optional[date] = None
+    notas: Optional[str] = None
 
 class MovimientoStockResponse(MovimientoStockBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    proveedor_id: Optional[int] = None
+    costo_unitario: Optional[Decimal] = None
+    condicion_pago: Optional[str] = None
+    fecha_limite_pago: Optional[date] = None
+    notas: Optional[str] = None
+    creado_en: Optional[datetime] = None
+
+class EntradaStockHistorialResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    producto_id: int
+    almacen_id: int
+    tipo: TipoMovimientoStock
+    cantidad: int
+    costo_unitario: Optional[Decimal] = None
+    total_compra: Optional[Decimal] = None
+    condicion_pago: Optional[str] = None
+    fecha_limite_pago: Optional[date] = None
+    notas: Optional[str] = None
+    proveedor_id: Optional[int] = None
+    proveedor_nombre: Optional[str] = None
+    almacen_nombre: Optional[str] = None
+    referencia_tipo: Optional[str] = None
+    referencia_id: Optional[int] = None
     creado_en: Optional[datetime] = None
 
 # Traspaso Stock
@@ -365,6 +397,7 @@ class VentaItemResponse(VentaItemBase):
     id: int
     venta_id: int
     total: Decimal
+    precio_costo: Optional[Decimal] = 0
     producto_nombre: Optional[str] = None
     materia_nombre: Optional[str] = None
     descripcion: Optional[str] = None
@@ -395,6 +428,8 @@ class VentaResponse(VentaBase):
     total: Decimal
     iva: Decimal
     descuento: Decimal
+    costo_total: Optional[Decimal] = 0
+    ganancia: Optional[Decimal] = 0
     estado: EstadoVenta
     creado_en: Optional[datetime] = None
 

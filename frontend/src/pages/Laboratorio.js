@@ -17,6 +17,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -239,6 +240,9 @@ const Laboratorio = () => {
             </Button>
           </DialogTrigger>
           <DialogContent>
+            <DialogDescription className="hidden">
+              Formulario para crear una nueva materia de laboratorio
+            </DialogDescription>
             <DialogHeader>
               <DialogTitle>Crear Nueva Materia</DialogTitle>
             </DialogHeader>
@@ -362,6 +366,9 @@ const Laboratorio = () => {
       {/* Barcode Print Dialog */}
       <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
         <DialogContent className="sm:max-w-md">
+          <DialogDescription className="hidden">
+            Diálogo para imprimir etiquetas de código de barras
+          </DialogDescription>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Printer className="h-5 w-5" />

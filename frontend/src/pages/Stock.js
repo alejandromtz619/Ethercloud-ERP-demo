@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -23,6 +23,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -39,7 +40,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../components/ui/popover';
-import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown } from 'lucide-react';
+import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 
@@ -59,8 +60,18 @@ const Stock = () => {
   const [entradaForm, setEntradaForm] = useState({
     producto_id: '',
     almacen_id: '',
-    cantidad: ''
+    cantidad: '',
+    proveedor_id: '',
+    costo_unitario: '',
+    condicion_pago: 'contado',
+    fecha_limite_pago: '',
+    notas: ''
   });
+
+  const [historialDialogOpen, setHistorialDialogOpen] = useState(false);
+  const [historialProducto, setHistorialProducto] = useState(null);
+  const [historialData, setHistorialData] = useState([]);
+  const [historialLoading, setHistorialLoading] = useState(false);
 
   const [salidaForm, setSalidaForm] = useState({
     producto_id: '',
@@ -88,6 +99,7 @@ const Stock = () => {
   const [productoSearchEntrada, setProductoSearchEntrada] = useState('');
   const [productoSearchSalida, setProductoSearchSalida] = useState('');
   const [productoSearchTraspaso, setProductoSearchTraspaso] = useState('');
+  const [proveedores, setProveedores] = useState([]);
 
   const fetchData = async () => {
     if (!empresa?.id) return;
@@ -95,15 +107,17 @@ const Stock = () => {
       let stockUrl = `/stock?empresa_id=${empresa.id}`;
       if (selectedAlmacen) stockUrl += `&almacen_id=${selectedAlmacen}`;
       
-      const [stockData, almacenesData, productosData] = await Promise.all([
+      const [stockData, almacenesData, productosData, proveedoresData] = await Promise.all([
         api(stockUrl),
         api(`/almacenes?empresa_id=${empresa.id}`),
-        api(`/productos?empresa_id=${empresa.id}`)
+        api(`/productos?empresa_id=${empresa.id}`),
+        api(`/proveedores?empresa_id=${empresa.id}`)
       ]);
       
       setStock(stockData);
       setAlmacenes(almacenesData);
       setProductos(productosData);
+      setProveedores(proveedoresData);
     } catch (e) {
       toast.error('Error al cargar datos');
     } finally {
@@ -121,24 +135,55 @@ const Stock = () => {
       toast.error('Complete todos los campos');
       return;
     }
+    if (entradaForm.condicion_pago === 'credito' && !entradaForm.proveedor_id) {
+      toast.error('Seleccione un proveedor para registrar la deuda a crÃ©dito');
+      return;
+    }
 
     try {
-      await api('/stock/entrada', {
-        method: 'POST',
-        body: JSON.stringify({
-          producto_id: parseInt(entradaForm.producto_id),
-          almacen_id: parseInt(entradaForm.almacen_id),
-          cantidad: parseInt(entradaForm.cantidad),
-          tipo: 'ENTRADA'
-        })
-      });
-      toast.success('Entrada registrada');
+      const payload = {
+        producto_id: parseInt(entradaForm.producto_id),
+        almacen_id: parseInt(entradaForm.almacen_id),
+        cantidad: parseInt(entradaForm.cantidad),
+        tipo: 'ENTRADA',
+        proveedor_id: entradaForm.proveedor_id ? parseInt(entradaForm.proveedor_id) : null,
+        costo_unitario: entradaForm.costo_unitario ? parseFloat(entradaForm.costo_unitario) : null,
+        condicion_pago: entradaForm.condicion_pago || null,
+        fecha_limite_pago: entradaForm.fecha_limite_pago || null,
+        notas: entradaForm.notas || null
+      };
+      await api('/stock/entrada', { method: 'POST', body: JSON.stringify(payload) });
+      if (entradaForm.condicion_pago === 'credito' && entradaForm.proveedor_id) {
+        toast.success('Entrada registrada y deuda enviada al proveedor');
+      } else {
+        toast.success('Entrada registrada');
+      }
       setDialogOpen(false);
-      setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '' });
+      setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
       fetchData();
     } catch (e) {
       toast.error('Error al registrar entrada');
     }
+  };
+
+  const fetchHistorial = async (productoId, productoNombre) => {
+    setHistorialProducto({ id: productoId, nombre: productoNombre });
+    setHistorialDialogOpen(true);
+    setHistorialLoading(true);
+    try {
+      const data = await api(`/stock/historial/${productoId}`);
+      setHistorialData(data);
+    } catch (e) {
+      toast.error('Error al cargar historial');
+      setHistorialData([]);
+    } finally {
+      setHistorialLoading(false);
+    }
+  };
+
+  const formatCurrency = (val) => {
+    if (val == null) return '-';
+    return 'Gs. ' + Number(val).toLocaleString('es-PY');
   };
 
   const handleTraspaso = async (e) => {
@@ -211,12 +256,12 @@ const Stock = () => {
         method: 'POST',
         body: JSON.stringify({ ...almacenForm, empresa_id: empresa.id })
       });
-      toast.success('Almacén creado');
+      toast.success('AlmacÃ©n creado');
       setAlmacenDialogOpen(false);
       setAlmacenForm({ nombre: '', ubicacion: '' });
       fetchData();
     } catch (e) {
-      toast.error('Error al crear almacén');
+      toast.error('Error al crear almacÃ©n');
     }
   };
 
@@ -247,20 +292,21 @@ const Stock = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Stock / Inventario</h1>
-          <p className="text-muted-foreground">Gestión de inventario multi-almacén</p>
+          <p className="text-muted-foreground">GestiÃ³n de inventario multi-almacÃ©n</p>
         </div>
         <div className="flex gap-2">
-          {/* Crear Almacén */}
+          {/* Crear AlmacÃ©n */}
           <Dialog open={almacenDialogOpen} onOpenChange={setAlmacenDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">
                 <Plus className="mr-2 h-4 w-4" />
-                Almacén
+                AlmacÃ©n
               </Button>
             </DialogTrigger>
             <DialogContent>
+              <DialogDescription className="hidden">Formulario para crear un nuevo almacÃ©n</DialogDescription>
               <DialogHeader>
-                <DialogTitle>Nuevo Almacén</DialogTitle>
+                <DialogTitle>Nuevo AlmacÃ©n</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleCrearAlmacen} className="space-y-4">
                 <div>
@@ -271,13 +317,13 @@ const Stock = () => {
                   />
                 </div>
                 <div>
-                  <Label>Ubicación</Label>
+                  <Label>UbicaciÃ³n</Label>
                   <Input
                     value={almacenForm.ubicacion}
                     onChange={(e) => setAlmacenForm({...almacenForm, ubicacion: e.target.value})}
                   />
                 </div>
-                <Button type="submit" className="w-full">Crear Almacén</Button>
+                <Button type="submit" className="w-full">Crear AlmacÃ©n</Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -292,6 +338,7 @@ const Stock = () => {
                 </Button>
               </DialogTrigger>
             <DialogContent>
+              <DialogDescription className="hidden">Formulario para traspasar stock entre almacenes</DialogDescription>
               <DialogHeader>
                 <DialogTitle>Traspaso entre Almacenes</DialogTitle>
               </DialogHeader>
@@ -315,11 +362,11 @@ const Stock = () => {
                     <PopoverContent className="w-[400px] p-0">
                       <Command shouldFilter={false}>
                         <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
+                          placeholder="Buscar por nombre o cÃ³digo..." 
                           value={productoSearchTraspaso}
                           onValueChange={setProductoSearchTraspaso}
                         />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
+                        <CommandEmpty>No se encontrÃ³ el producto.</CommandEmpty>
                         <CommandGroup className="max-h-64 overflow-auto">
                           {productos
                             .filter(p => 
@@ -346,7 +393,7 @@ const Stock = () => {
                                 <div className="flex flex-col">
                                   <span>{p.nombre}</span>
                                   {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
+                                    <span className="text-xs text-muted-foreground">CÃ³digo: {p.codigo_barra}</span>
                                   )}
                                 </div>
                               </CommandItem>
@@ -357,7 +404,7 @@ const Stock = () => {
                   </Popover>
                 </div>
                 <div>
-                  <Label>Almacén Origen</Label>
+                  <Label>AlmacÃ©n Origen</Label>
                   <Select value={traspasoForm.almacen_origen_id} onValueChange={(v) => setTraspasoForm({...traspasoForm, almacen_origen_id: v})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
@@ -370,7 +417,7 @@ const Stock = () => {
                   </Select>
                 </div>
                 <div>
-                  <Label>Almacén Destino</Label>
+                  <Label>AlmacÃ©n Destino</Label>
                   <Select value={traspasoForm.almacen_destino_id} onValueChange={(v) => setTraspasoForm({...traspasoForm, almacen_destino_id: v})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
@@ -407,6 +454,7 @@ const Stock = () => {
                 </Button>
               </DialogTrigger>
             <DialogContent>
+              <DialogDescription className="hidden">Formulario para registrar una entrada de stock</DialogDescription>
               <DialogHeader>
                 <DialogTitle>Entrada de Stock</DialogTitle>
               </DialogHeader>
@@ -430,11 +478,11 @@ const Stock = () => {
                     <PopoverContent className="w-[400px] p-0">
                       <Command shouldFilter={false}>
                         <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
+                          placeholder="Buscar por nombre o cÃ³digo..." 
                           value={productoSearchEntrada}
                           onValueChange={setProductoSearchEntrada}
                         />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
+                        <CommandEmpty>No se encontrÃ³ el producto.</CommandEmpty>
                         <CommandGroup className="max-h-64 overflow-auto">
                           {productos
                             .filter(p => 
@@ -447,7 +495,12 @@ const Stock = () => {
                                 key={p.id}
                                 value={p.nombre}
                                 onSelect={() => {
-                                  setEntradaForm({...entradaForm, producto_id: p.id.toString()});
+                                  setEntradaForm({
+                                    ...entradaForm,
+                                    producto_id: p.id.toString(),
+                                    costo_unitario: p.precio_costo ? p.precio_costo.toString() : '',
+                                    proveedor_id: p.proveedor_id ? p.proveedor_id.toString() : entradaForm.proveedor_id
+                                  });
                                   setEntradaPopoverOpen(false);
                                   setProductoSearchEntrada('');
                                 }}
@@ -461,7 +514,7 @@ const Stock = () => {
                                 <div className="flex flex-col">
                                   <span>{p.nombre}</span>
                                   {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
+                                    <span className="text-xs text-muted-foreground">CÃ³digo: {p.codigo_barra}</span>
                                   )}
                                 </div>
                               </CommandItem>
@@ -472,10 +525,10 @@ const Stock = () => {
                   </Popover>
                 </div>
                 <div>
-                  <Label>Almacén</Label>
+                  <Label>AlmacÃ©n</Label>
                   <Select value={entradaForm.almacen_id} onValueChange={(v) => setEntradaForm({...entradaForm, almacen_id: v})}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacén" />
+                      <SelectValue placeholder="Seleccionar almacÃ©n" />
                     </SelectTrigger>
                     <SelectContent>
                       {almacenes.map(a => (
@@ -484,13 +537,86 @@ const Stock = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Cantidad</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={entradaForm.cantidad}
+                      onChange={(e) => setEntradaForm({...entradaForm, cantidad: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <Label>Precio de Costo (Gs.)</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={entradaForm.costo_unitario}
+                      onChange={(e) => setEntradaForm({...entradaForm, costo_unitario: e.target.value})}
+                    />
+                  </div>
+                </div>
+                {entradaForm.costo_unitario && entradaForm.cantidad && (
+                  <div className="text-sm text-muted-foreground bg-muted/40 rounded px-3 py-2">
+                    Total compra: <span className="font-mono font-semibold">
+                      Gs. {(parseFloat(entradaForm.costo_unitario || 0) * parseInt(entradaForm.cantidad || 0)).toLocaleString('es-PY')}
+                    </span>
+                  </div>
+                )}
                 <div>
-                  <Label>Cantidad</Label>
+                  <Label>Proveedor</Label>
+                  <Select value={entradaForm.proveedor_id} onValueChange={(v) => setEntradaForm({...entradaForm, proveedor_id: v})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar proveedor (opcional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {proveedores.map(p => (
+                        <SelectItem key={p.id} value={p.id.toString()}>{p.nombre}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>CondiciÃ³n de Pago</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Button
+                      type="button"
+                      variant={entradaForm.condicion_pago === 'contado' ? 'default' : 'outline'}
+                      className="flex-1 gap-2"
+                      onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'contado', fecha_limite_pago: ''})}
+                    >
+                      <ShoppingCart className="h-4 w-4" />
+                      Contado
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={entradaForm.condicion_pago === 'credito' ? 'default' : 'outline'}
+                      className="flex-1 gap-2"
+                      onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'credito'})}
+                    >
+                      <CreditCard className="h-4 w-4" />
+                      CrÃ©dito
+                    </Button>
+                  </div>
+                </div>
+                {entradaForm.condicion_pago === 'credito' && (
+                  <div>
+                    <Label>Fecha LÃ­mite de Pago</Label>
+                    <Input
+                      type="date"
+                      value={entradaForm.fecha_limite_pago}
+                      onChange={(e) => setEntradaForm({...entradaForm, fecha_limite_pago: e.target.value})}
+                    />
+                  </div>
+                )}
+                <div>
+                  <Label>Notas (opcional)</Label>
                   <Input
-                    type="number"
-                    min="1"
-                    value={entradaForm.cantidad}
-                    onChange={(e) => setEntradaForm({...entradaForm, cantidad: e.target.value})}
+                    placeholder="Ej: Factura #1234, lote especial..."
+                    value={entradaForm.notas}
+                    onChange={(e) => setEntradaForm({...entradaForm, notas: e.target.value})}
                   />
                 </div>
                 <Button type="submit" className="w-full">Registrar Entrada</Button>
@@ -509,8 +635,9 @@ const Stock = () => {
                 </Button>
               </DialogTrigger>
             <DialogContent>
+              <DialogDescription className="hidden">Formulario para registrar una salida o eliminaciÃ³n de stock</DialogDescription>
               <DialogHeader>
-                <DialogTitle>Salida/Eliminación de Stock</DialogTitle>
+                <DialogTitle>Salida/EliminaciÃ³n de Stock</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSalida} className="space-y-4">
                 <div>
@@ -532,11 +659,11 @@ const Stock = () => {
                     <PopoverContent className="w-[400px] p-0">
                       <Command shouldFilter={false}>
                         <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
+                          placeholder="Buscar por nombre o cÃ³digo..." 
                           value={productoSearchSalida}
                           onValueChange={setProductoSearchSalida}
                         />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
+                        <CommandEmpty>No se encontrÃ³ el producto.</CommandEmpty>
                         <CommandGroup className="max-h-64 overflow-auto">
                           {productos
                             .filter(p => 
@@ -563,7 +690,7 @@ const Stock = () => {
                                 <div className="flex flex-col">
                                   <span>{p.nombre}</span>
                                   {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
+                                    <span className="text-xs text-muted-foreground">CÃ³digo: {p.codigo_barra}</span>
                                   )}
                                 </div>
                               </CommandItem>
@@ -574,10 +701,10 @@ const Stock = () => {
                   </Popover>
                 </div>
                 <div>
-                  <Label>Almacén</Label>
+                  <Label>AlmacÃ©n</Label>
                   <Select value={salidaForm.almacen_id} onValueChange={(v) => setSalidaForm({...salidaForm, almacen_id: v})}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacén" />
+                      <SelectValue placeholder="Seleccionar almacÃ©n" />
                     </SelectTrigger>
                     <SelectContent>
                       {almacenes.map(a => (
@@ -600,7 +727,7 @@ const Stock = () => {
                   <Input
                     value={salidaForm.motivo}
                     onChange={(e) => setSalidaForm({...salidaForm, motivo: e.target.value})}
-                    placeholder="Ej: Producto dañado, vencido, etc."
+                    placeholder="Ej: Producto daÃ±ado, vencido, etc."
                   />
                 </div>
                 <Button type="submit" variant="destructive" className="w-full">Registrar Salida</Button>
@@ -671,10 +798,11 @@ const Stock = () => {
               <TableHeader>
                 <TableRow className="table-compact">
                   <TableHead>Producto</TableHead>
-                  <TableHead>Almacén</TableHead>
+                  <TableHead>AlmacÃ©n</TableHead>
                   <TableHead>Cantidad</TableHead>
-                  <TableHead>Alerta Mínima</TableHead>
+                  <TableHead>Alerta MÃ­nima</TableHead>
                   <TableHead>Estado</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -707,6 +835,18 @@ const Stock = () => {
                           <Badge className="badge-success">OK</Badge>
                         )}
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => fetchHistorial(item.producto_id, item.producto_nombre)}
+                          title="Ver historial de movimientos"
+                        >
+                          <History className="h-4 w-4" />
+                          Historial
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -715,6 +855,103 @@ const Stock = () => {
           )}
         </CardContent>
       </Card>
+      {/* Historial Dialog */}
+      <Dialog open={historialDialogOpen} onOpenChange={setHistorialDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogDescription className="hidden">Historial de movimientos del producto</DialogDescription>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Historial â€” {historialProducto?.nombre}
+            </DialogTitle>
+          </DialogHeader>
+          {historialLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin" />
+            </div>
+          ) : historialData.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <History className="h-10 w-10 mx-auto mb-3 opacity-40" />
+              No hay movimientos registrados para este producto.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Tipo</TableHead>
+                  <TableHead>AlmacÃ©n</TableHead>
+                  <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-right">Costo Unit.</TableHead>
+                  <TableHead className="text-right">Total Compra</TableHead>
+                  <TableHead>CondiciÃ³n</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Notas</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historialData.map((mov) => {
+                  const tipoColor = {
+                    ENTRADA: 'text-green-600 dark:text-green-400',
+                    SALIDA: 'text-red-600 dark:text-red-400',
+                    TRASPASO: 'text-blue-600 dark:text-blue-400',
+                  };
+                  const tipoLabel = {
+                    ENTRADA: 'Entrada',
+                    SALIDA: 'Salida',
+                    TRASPASO: 'Traspaso',
+                  };
+                  return (
+                    <TableRow key={mov.id}>
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
+                          day: '2-digit', month: '2-digit', year: 'numeric',
+                          hour: '2-digit', minute: '2-digit'
+                        }) : '-'}
+                      </TableCell>
+                      <TableCell className={cn('font-semibold text-xs', tipoColor[mov.tipo])}>
+                        {tipoLabel[mov.tipo] || mov.tipo}
+                      </TableCell>
+                      <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
+                      <TableCell className="text-right font-mono font-bold">
+                        {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-semibold">
+                        {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {mov.condicion_pago ? (
+                          <Badge variant={mov.condicion_pago === 'credito' ? 'outline' : 'secondary'} className="text-xs capitalize">
+                            {mov.condicion_pago === 'credito' ? (
+                              <><CreditCard className="h-3 w-3 mr-1" />CrÃ©dito</>
+                            ) : (
+                              <><ShoppingCart className="h-3 w-3 mr-1" />Contado</>
+                            )}
+                          </Badge>
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {mov.proveedor_nombre ? (
+                          <span className="flex items-center gap-1">
+                            <Building2 className="h-3 w-3 opacity-60" />
+                            {mov.proveedor_nombre}
+                          </span>
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
+                        {mov.notas || '-'}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

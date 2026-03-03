@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Button } from '../components/ui/button';
@@ -39,13 +39,17 @@ const Login = () => {
     <div 
       className="min-h-screen flex items-center justify-center p-4 bg-cover bg-center"
       style={{
-        backgroundImage: 'linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.7)), url(https://images.unsplash.com/photo-1717343655388-3114d3badb20?crop=entropy&cs=srgb&fm=jpg&q=85)'
+        backgroundImage: "linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.7)), url('/lago-republica.jpg')"
       }}
     >
       <Card className="w-full max-w-md shadow-2xl" style={{ backgroundColor: 'white' }} data-testid="login-card">
         <CardHeader className="text-center">
-          <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4">
-            <span className="text-2xl font-bold text-white font-['Manrope']">LB</span>
+          <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4 overflow-hidden">
+            <img
+              src="https://luzbrill.storage.ethercloud.co/core/preview?fileId=205&x=2303&y=1295&a=true&etag=8970340ea60a01978e360daeaf871a06"
+              alt="Logo"
+              className="w-full h-full object-contain p-1"
+            />
           </div>
           <CardTitle className="text-2xl font-bold text-gray-900">Luz Brill ERP</CardTitle>
           <CardDescription className="text-gray-600">Ingrese sus credenciales para continuar</CardDescription>
