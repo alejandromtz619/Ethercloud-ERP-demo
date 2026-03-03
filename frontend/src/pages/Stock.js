@@ -136,7 +136,7 @@ const Stock = () => {
       return;
     }
     if (entradaForm.condicion_pago === 'credito' && !entradaForm.proveedor_id) {
-      toast.error('Seleccione un proveedor para registrar la deuda a crÃ©dito');
+      toast.error('Seleccione un proveedor para registrar la deuda a crédito');
       return;
     }
 
@@ -256,12 +256,12 @@ const Stock = () => {
         method: 'POST',
         body: JSON.stringify({ ...almacenForm, empresa_id: empresa.id })
       });
-      toast.success('AlmacÃ©n creado');
+      toast.success('Almacén creado');
       setAlmacenDialogOpen(false);
       setAlmacenForm({ nombre: '', ubicacion: '' });
       fetchData();
     } catch (e) {
-      toast.error('Error al crear almacÃ©n');
+      toast.error('Error al crear almacén');
     }
   };
 
@@ -292,21 +292,21 @@ const Stock = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Stock / Inventario</h1>
-          <p className="text-muted-foreground">GestiÃ³n de inventario multi-almacÃ©n</p>
+          <p className="text-muted-foreground">Gestión de inventario multi-almacén</p>
         </div>
         <div className="flex gap-2">
-          {/* Crear AlmacÃ©n */}
+          {/* Crear Almacén */}
           <Dialog open={almacenDialogOpen} onOpenChange={setAlmacenDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="outline">
                 <Plus className="mr-2 h-4 w-4" />
-                AlmacÃ©n
+                Almacén
               </Button>
             </DialogTrigger>
             <DialogContent>
-              <DialogDescription className="hidden">Formulario para crear un nuevo almacÃ©n</DialogDescription>
+              <DialogDescription className="hidden">Formulario para crear un nuevo almacén</DialogDescription>
               <DialogHeader>
-                <DialogTitle>Nuevo AlmacÃ©n</DialogTitle>
+                <DialogTitle>Nuevo Almacén</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleCrearAlmacen} className="space-y-4">
                 <div>
@@ -317,13 +317,13 @@ const Stock = () => {
                   />
                 </div>
                 <div>
-                  <Label>UbicaciÃ³n</Label>
+                  <Label>Ubicación</Label>
                   <Input
                     value={almacenForm.ubicacion}
                     onChange={(e) => setAlmacenForm({...almacenForm, ubicacion: e.target.value})}
                   />
                 </div>
-                <Button type="submit" className="w-full">Crear AlmacÃ©n</Button>
+                <Button type="submit" className="w-full">Crear Almacén</Button>
               </form>
             </DialogContent>
           </Dialog>
@@ -362,11 +362,11 @@ const Stock = () => {
                     <PopoverContent className="w-[400px] p-0">
                       <Command shouldFilter={false}>
                         <CommandInput 
-                          placeholder="Buscar por nombre o cÃ³digo..." 
+                          placeholder="Buscar por nombre o código..." 
                           value={productoSearchTraspaso}
                           onValueChange={setProductoSearchTraspaso}
                         />
-                        <CommandEmpty>No se encontrÃ³ el producto.</CommandEmpty>
+                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
                         <CommandGroup className="max-h-64 overflow-auto">
                           {productos
                             .filter(p => 
@@ -393,7 +393,7 @@ const Stock = () => {
                                 <div className="flex flex-col">
                                   <span>{p.nombre}</span>
                                   {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">CÃ³digo: {p.codigo_barra}</span>
+                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
                                   )}
                                 </div>
                               </CommandItem>
@@ -404,7 +404,7 @@ const Stock = () => {
                   </Popover>
                 </div>
                 <div>
-                  <Label>AlmacÃ©n Origen</Label>
+                  <Label>Almacén Origen</Label>
                   <Select value={traspasoForm.almacen_origen_id} onValueChange={(v) => setTraspasoForm({...traspasoForm, almacen_origen_id: v})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
@@ -417,7 +417,7 @@ const Stock = () => {
                   </Select>
                 </div>
                 <div>
-                  <Label>AlmacÃ©n Destino</Label>
+                  <Label>Almacén Destino</Label>
                   <Select value={traspasoForm.almacen_destino_id} onValueChange={(v) => setTraspasoForm({...traspasoForm, almacen_destino_id: v})}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar" />
@@ -478,11 +478,11 @@ const Stock = () => {
                     <PopoverContent className="w-[400px] p-0">
                       <Command shouldFilter={false}>
                         <CommandInput 
-                          placeholder="Buscar por nombre o cÃ³digo..." 
+                          placeholder="Buscar por nombre o código..." 
                           value={productoSearchEntrada}
                           onValueChange={setProductoSearchEntrada}
                         />
-                        <CommandEmpty>No se encontrÃ³ el producto.</CommandEmpty>
+                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
                         <CommandGroup className="max-h-64 overflow-auto">
                           {productos
                             .filter(p => 
@@ -514,7 +514,7 @@ const Stock = () => {
                                 <div className="flex flex-col">
                                   <span>{p.nombre}</span>
                                   {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">CÃ³digo: {p.codigo_barra}</span>
+                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
                                   )}
                                 </div>
                               </CommandItem>
@@ -525,10 +525,10 @@ const Stock = () => {
                   </Popover>
                 </div>
                 <div>
-                  <Label>AlmacÃ©n</Label>
+                  <Label>Almacén</Label>
                   <Select value={entradaForm.almacen_id} onValueChange={(v) => setEntradaForm({...entradaForm, almacen_id: v})}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacÃ©n" />
+                      <SelectValue placeholder="Seleccionar almacén" />
                     </SelectTrigger>
                     <SelectContent>
                       {almacenes.map(a => (
@@ -579,7 +579,7 @@ const Stock = () => {
                   </Select>
                 </div>
                 <div>
-                  <Label>CondiciÃ³n de Pago</Label>
+                  <Label>Condición de Pago</Label>
                   <div className="flex gap-2 mt-1">
                     <Button
                       type="button"
@@ -597,13 +597,13 @@ const Stock = () => {
                       onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'credito'})}
                     >
                       <CreditCard className="h-4 w-4" />
-                      CrÃ©dito
+                      Crédito
                     </Button>
                   </div>
                 </div>
                 {entradaForm.condicion_pago === 'credito' && (
                   <div>
-                    <Label>Fecha LÃ­mite de Pago</Label>
+                    <Label>Fecha Límite de Pago</Label>
                     <Input
                       type="date"
                       value={entradaForm.fecha_limite_pago}
@@ -635,9 +635,9 @@ const Stock = () => {
                 </Button>
               </DialogTrigger>
             <DialogContent>
-              <DialogDescription className="hidden">Formulario para registrar una salida o eliminaciÃ³n de stock</DialogDescription>
+              <DialogDescription className="hidden">Formulario para registrar una salida o eliminación de stock</DialogDescription>
               <DialogHeader>
-                <DialogTitle>Salida/EliminaciÃ³n de Stock</DialogTitle>
+                <DialogTitle>Salida/Eliminación de Stock</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSalida} className="space-y-4">
                 <div>
@@ -659,11 +659,11 @@ const Stock = () => {
                     <PopoverContent className="w-[400px] p-0">
                       <Command shouldFilter={false}>
                         <CommandInput 
-                          placeholder="Buscar por nombre o cÃ³digo..." 
+                          placeholder="Buscar por nombre o código..." 
                           value={productoSearchSalida}
                           onValueChange={setProductoSearchSalida}
                         />
-                        <CommandEmpty>No se encontrÃ³ el producto.</CommandEmpty>
+                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
                         <CommandGroup className="max-h-64 overflow-auto">
                           {productos
                             .filter(p => 
@@ -690,7 +690,7 @@ const Stock = () => {
                                 <div className="flex flex-col">
                                   <span>{p.nombre}</span>
                                   {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">CÃ³digo: {p.codigo_barra}</span>
+                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
                                   )}
                                 </div>
                               </CommandItem>
@@ -701,10 +701,10 @@ const Stock = () => {
                   </Popover>
                 </div>
                 <div>
-                  <Label>AlmacÃ©n</Label>
+                  <Label>Almacén</Label>
                   <Select value={salidaForm.almacen_id} onValueChange={(v) => setSalidaForm({...salidaForm, almacen_id: v})}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacÃ©n" />
+                      <SelectValue placeholder="Seleccionar almacén" />
                     </SelectTrigger>
                     <SelectContent>
                       {almacenes.map(a => (
@@ -727,7 +727,7 @@ const Stock = () => {
                   <Input
                     value={salidaForm.motivo}
                     onChange={(e) => setSalidaForm({...salidaForm, motivo: e.target.value})}
-                    placeholder="Ej: Producto daÃ±ado, vencido, etc."
+                    placeholder="Ej: Producto dañado, vencido, etc."
                   />
                 </div>
                 <Button type="submit" variant="destructive" className="w-full">Registrar Salida</Button>
@@ -798,9 +798,9 @@ const Stock = () => {
               <TableHeader>
                 <TableRow className="table-compact">
                   <TableHead>Producto</TableHead>
-                  <TableHead>AlmacÃ©n</TableHead>
+                  <TableHead>Almacén</TableHead>
                   <TableHead>Cantidad</TableHead>
-                  <TableHead>Alerta MÃ­nima</TableHead>
+                  <TableHead>Alerta Mínima</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
@@ -880,11 +880,11 @@ const Stock = () => {
                 <TableRow>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Tipo</TableHead>
-                  <TableHead>AlmacÃ©n</TableHead>
+                  <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
                   <TableHead className="text-right">Costo Unit.</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
-                  <TableHead>CondiciÃ³n</TableHead>
+                  <TableHead>Condición</TableHead>
                   <TableHead>Proveedor</TableHead>
                   <TableHead>Notas</TableHead>
                 </TableRow>
@@ -926,7 +926,7 @@ const Stock = () => {
                         {mov.condicion_pago ? (
                           <Badge variant={mov.condicion_pago === 'credito' ? 'outline' : 'secondary'} className="text-xs capitalize">
                             {mov.condicion_pago === 'credito' ? (
-                              <><CreditCard className="h-3 w-3 mr-1" />CrÃ©dito</>
+                              <><CreditCard className="h-3 w-3 mr-1" />Crédito</>
                             ) : (
                               <><ShoppingCart className="h-3 w-3 mr-1" />Contado</>
                             )}
