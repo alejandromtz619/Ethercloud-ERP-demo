@@ -30,6 +30,7 @@ import {
 } from '../components/ui/dialog';
 import { Car, Plus, Loader2, Edit, Trash2, Bike, Truck as TruckIcon, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 import { cn } from '../lib/utils';
 
 const vehiculoIcons = {
@@ -205,18 +206,16 @@ const Flota = () => {
               </div>
               <div>
                 <Label>Vencimiento Habilitación</Label>
-                <Input
-                  type="date"
+                <DatePickerInput
                   value={formData.vencimiento_habilitacion}
-                  onChange={(e) => setFormData({...formData, vencimiento_habilitacion: e.target.value})}
+                  onChange={(val) => setFormData({...formData, vencimiento_habilitacion: val})}
                 />
               </div>
               <div>
                 <Label>Vencimiento Cédula Verde</Label>
-                <Input
-                  type="date"
+                <DatePickerInput
                   value={formData.vencimiento_cedula_verde}
-                  onChange={(e) => setFormData({...formData, vencimiento_cedula_verde: e.target.value})}
+                  onChange={(val) => setFormData({...formData, vencimiento_cedula_verde: val})}
                 />
               </div>
               <div className="flex justify-end gap-2">

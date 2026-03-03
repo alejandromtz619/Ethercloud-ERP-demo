@@ -23,6 +23,7 @@ import {
 } from '../components/ui/dialog';
 import { UserCog, Plus, Loader2, Search, Edit, Trash2, Wallet, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 
 const Funcionarios = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -273,10 +274,9 @@ const Funcionarios = () => {
                 </div>
                 <div className="col-span-2">
                   <Label>Fecha Nacimiento</Label>
-                  <Input
-                    type="date"
+                  <DatePickerInput
                     value={formData.fecha_nacimiento}
-                    onChange={(e) => setFormData({...formData, fecha_nacimiento: e.target.value})}
+                    onChange={(val) => setFormData({...formData, fecha_nacimiento: val})}
                   />
                 </div>
               </div>

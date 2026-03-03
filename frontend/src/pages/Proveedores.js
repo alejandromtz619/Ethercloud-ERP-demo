@@ -23,6 +23,7 @@ import {
 } from '../components/ui/dialog';
 import { Building2, Plus, Loader2, Search, Edit, Trash2, DollarSign, Check } from 'lucide-react';
 import { toast } from 'sonner';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 
 const Proveedores = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -306,10 +307,9 @@ const Proveedores = () => {
                 </div>
                 <div>
                   <Label className="text-xs">Fecha Límite</Label>
-                  <Input
-                    type="date"
+                  <DatePickerInput
                     value={deudaForm.fecha_limite}
-                    onChange={(e) => setDeudaForm({...deudaForm, fecha_limite: e.target.value})}
+                    onChange={(val) => setDeudaForm({...deudaForm, fecha_limite: val})}
                   />
                 </div>
               </div>

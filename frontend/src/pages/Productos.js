@@ -25,6 +25,7 @@ import {
 } from '../components/ui/dialog';
 import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 import {
   Command,
   CommandEmpty,
@@ -409,10 +410,9 @@ const Productos = () => {
                 </div>
                 <div>
                   <Label>Fecha Vencimiento</Label>
-                  <Input
-                    type="date"
+                  <DatePickerInput
                     value={formData.fecha_vencimiento}
-                    onChange={(e) => setFormData({...formData, fecha_vencimiento: e.target.value})}
+                    onChange={(val) => setFormData({...formData, fecha_vencimiento: val})}
                   />
                 </div>
                 <div>

@@ -33,6 +33,7 @@ import {
 import { Truck, Loader2, Filter, User, Phone, Package, MapPin, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 
 const estadoColors = {
   PENDIENTE: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400 border-yellow-300',
@@ -237,18 +238,16 @@ const Delivery = () => {
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div>
               <Label>Fecha Desde</Label>
-              <Input
-                type="date"
+              <DatePickerInput
                 value={filtros.fechaDesde}
-                onChange={(e) => setFiltros({...filtros, fechaDesde: e.target.value})}
+                onChange={(val) => setFiltros({...filtros, fechaDesde: val})}
               />
             </div>
             <div>
               <Label>Fecha Hasta</Label>
-              <Input
-                type="date"
+              <DatePickerInput
                 value={filtros.fechaHasta}
-                onChange={(e) => setFiltros({...filtros, fechaHasta: e.target.value})}
+                onChange={(val) => setFiltros({...filtros, fechaHasta: val})}
               />
             </div>
             <div>

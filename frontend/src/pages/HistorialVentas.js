@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import PrintModal from '../components/PrintModal';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 
 const formatCurrency = (val) => {
   return new Intl.NumberFormat('es-PY', {
@@ -280,18 +281,16 @@ const HistorialVentas = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <Label>Fecha Desde</Label>
-                <Input
-                  type="date"
+                <DatePickerInput
                   value={filters.fecha_desde}
-                  onChange={(e) => setFilters({...filters, fecha_desde: e.target.value})}
+                  onChange={(val) => setFilters({...filters, fecha_desde: val})}
                 />
               </div>
               <div>
                 <Label>Fecha Hasta</Label>
-                <Input
-                  type="date"
+                <DatePickerInput
                   value={filters.fecha_hasta}
-                  onChange={(e) => setFilters({...filters, fecha_hasta: e.target.value})}
+                  onChange={(val) => setFilters({...filters, fecha_hasta: val})}
                 />
               </div>
               <div>

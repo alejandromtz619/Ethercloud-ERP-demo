@@ -43,6 +43,7 @@ import {
 import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { DatePickerInput } from '../components/ui/date-picker-input';
 
 const Stock = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -604,10 +605,9 @@ const Stock = () => {
                 {entradaForm.condicion_pago === 'credito' && (
                   <div>
                     <Label>Fecha Límite de Pago</Label>
-                    <Input
-                      type="date"
+                    <DatePickerInput
                       value={entradaForm.fecha_limite_pago}
-                      onChange={(e) => setEntradaForm({...entradaForm, fecha_limite_pago: e.target.value})}
+                      onChange={(val) => setEntradaForm({...entradaForm, fecha_limite_pago: val})}
                     />
                   </div>
                 )}
@@ -862,7 +862,7 @@ const Stock = () => {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <History className="h-5 w-5" />
-              Historial â€” {historialProducto?.nombre}
+              Historial &mdash; {historialProducto?.nombre}
             </DialogTitle>
           </DialogHeader>
           {historialLoading ? (
