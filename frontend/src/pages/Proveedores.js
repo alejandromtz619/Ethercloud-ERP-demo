@@ -177,6 +177,17 @@ const Proveedores = () => {
     }
   };
 
+  const handleEliminarDeuda = async (deudaId) => {
+    if (!window.confirm('¿Eliminar esta deuda permanentemente? Esta acción no se puede deshacer.')) return;
+    try {
+      await api(`/deudas/${deudaId}`, { method: 'DELETE' });
+      toast.success('Deuda eliminada');
+      fetchDeudas(selectedProveedor.id);
+    } catch (e) {
+      toast.error('Error al eliminar deuda');
+    }
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('es-PY', {
       style: 'currency',
@@ -346,20 +357,31 @@ const Proveedores = () => {
                           )}
                         </div>
                       </div>
-                      {deuda.pagado ? (
-                        <div className="text-right">
-                          <Badge className="badge-success">Pagado</Badge>
-                          {deuda.fecha_pago && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {new Date(deuda.fecha_pago).toLocaleDateString('es-PY')}
-                            </p>
-                          )}
-                        </div>
-                      ) : (
-                        <Button size="sm" onClick={() => handlePagarDeuda(deuda.id)}>
-                          <Check className="h-4 w-4 mr-1" /> Pagar
+                      <div className="flex items-center gap-2">
+                        {deuda.pagado ? (
+                          <div className="text-right">
+                            <Badge className="badge-success">Pagado</Badge>
+                            {deuda.fecha_pago && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {new Date(deuda.fecha_pago).toLocaleDateString('es-PY')}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <Button size="sm" onClick={() => handlePagarDeuda(deuda.id)}>
+                            <Check className="h-4 w-4 mr-1" /> Pagar
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 px-2"
+                          onClick={() => handleEliminarDeuda(deuda.id)}
+                          title="Eliminar deuda"
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 ))

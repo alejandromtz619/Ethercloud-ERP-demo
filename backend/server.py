@@ -783,6 +783,16 @@ async def pagar_deuda(deuda_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"message": "Deuda marcada como pagada"}
 
+@api_router.delete("/deudas/{deuda_id}")
+async def eliminar_deuda(deuda_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(DeudaProveedor).where(DeudaProveedor.id == deuda_id))
+    deuda = result.scalar_one_or_none()
+    if not deuda:
+        raise HTTPException(status_code=404, detail="Deuda no encontrada")
+    await db.delete(deuda)
+    await db.commit()
+    return {"message": "Deuda eliminada"}
+
 # ==================== CATEGORIAS ====================
 @api_router.post("/categorias", response_model=CategoriaResponse)
 async def crear_categoria(data: CategoriaCreate, db: AsyncSession = Depends(get_db)):
