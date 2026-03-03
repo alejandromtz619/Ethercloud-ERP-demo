@@ -810,6 +810,8 @@ async def actualizar_categoria(categoria_id: int, data: dict, db: AsyncSession =
     return categoria
 
 @api_router.delete("/categorias/{categoria_id}")
+async def eliminar_categoria(categoria_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Categoria).where(Categoria.id == categoria_id))
     categoria = result.scalar_one_or_none()
     if categoria:
         await db.delete(categoria)
