@@ -20,16 +20,16 @@ async def seed_database():
     
     async with async_session_maker() as session:
         # 1. Crear Empresa
-        result = await session.execute(select(Empresa).where(Empresa.ruc == "12345678901"))
+        result = await session.execute(select(Empresa).where(Empresa.ruc == "00000000001"))
         empresa = result.scalar_one_or_none()
         
         if not empresa:
             empresa = Empresa(
-                ruc="12345678901",
-                nombre="Luz Brill S.A.",
-                direccion="Av. Principal 123",
-                telefono="123456789",
-                email="contacto@luzbrill.com",
+                ruc="00000000001",
+                nombre="Mi Empresa",
+                direccion="Dirección Principal 123",
+                telefono="000000000",
+                email="contacto@empresa.com",
                 estado=True
             )
             session.add(empresa)
@@ -57,16 +57,16 @@ async def seed_database():
             print(f"ℹ️  Rol ya existe: {rol_admin.nombre}")
         
         # 3. Crear Usuario Administrador
-        result = await session.execute(select(Usuario).where(Usuario.email == "admin@luzbrill.com"))
+        result = await session.execute(select(Usuario).where(Usuario.email == "admin@ether.com"))
         usuario = result.scalar_one_or_none()
         
         if not usuario:
             usuario = Usuario(
-                email="admin@luzbrill.com",
+                email="admin@ether.com",
                 password_hash=hash_password("admin123"),
                 nombre="Admin",
-                apellido="Sistema",
-                telefono="123456789",
+                apellido="Ether",
+                telefono="000000000",
                 empresa_id=empresa.id,
                 activo=True
             )
@@ -74,7 +74,7 @@ async def seed_database():
             await session.commit()
             await session.refresh(usuario)
             print(f"✅ Usuario creado: {usuario.email}")
-            print(f"   📧 Email: admin@luzbrill.com")
+            print(f"   📧 Email: admin@ether.com")
             print(f"   🔑 Password: admin123")
         else:
             print(f"ℹ️  Usuario ya existe: {usuario.email}")
@@ -196,7 +196,7 @@ async def seed_database():
         print("🎉 Base de datos poblada exitosamente!")
         print("="*50)
         print("\n📋 CREDENCIALES DE LOGIN:")
-        print(f"   📧 Email:    admin@luzbrill.com")
+        print(f"   📧 Email:    admin@ether.com")
         print(f"   🔑 Password: admin123")
         print("="*50 + "\n")
 
