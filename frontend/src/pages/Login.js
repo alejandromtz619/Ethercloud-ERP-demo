@@ -65,10 +65,14 @@ const Login = () => {
     >
       <Card className="w-full max-w-md shadow-2xl" style={{ backgroundColor: 'white' }} data-testid="login-card">
         <CardHeader className="text-center">
-          <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4">
-            <span className="text-2xl font-bold text-white tracking-tight">
-              {empresa ? getInitials(empresa.nombre) : '?'}
-            </span>
+          <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4 overflow-hidden">
+            {empresa?.logo_url ? (
+              <img src={empresa.logo_url} alt={empresa.nombre} className="w-full h-full object-contain p-1" />
+            ) : (
+              <span className="text-2xl font-bold text-white tracking-tight">
+                {empresa ? getInitials(empresa.nombre) : '?'}
+              </span>
+            )}
           </div>
           <CardTitle className="text-2xl font-bold text-gray-900">
             {empresa ? empresa.nombre : 'Cargando...'}
