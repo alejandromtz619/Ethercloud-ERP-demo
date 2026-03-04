@@ -40,7 +40,14 @@ const allMenuItems = [
 ];
 
 const Layout = ({ children }) => {
-  const { user, empresa, logout, theme, setTheme, canAccessRoute } = useApp();
+  const { user, empresa, logout, theme, setTheme, canAccessRoute, primaryColor } = useApp();
+
+  const getInitials = (nombre) => {
+    if (!nombre) return '?';
+    const words = nombre.trim().split(/\s+/);
+    if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+    return (words[0][0] + words[1][0]).toUpperCase();
+  };
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -64,22 +71,23 @@ const Layout = ({ children }) => {
     <div className="min-h-screen bg-background">
       {/* Desktop Sidebar */}
       <aside className={cn(
-        "fixed left-0 top-0 z-40 h-screen w-64 bg-neutral-900 text-white transition-transform lg:translate-x-0",
+        "fixed left-0 top-0 z-40 h-screen w-64 text-white transition-transform lg:translate-x-0",
+        primaryColor === 'ether' ? "bg-[#141414]" : "bg-neutral-900",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         {/* Logo */}
-        <div className="flex h-16 items-center justify-between px-4 border-b border-neutral-800">
+        <div className={cn("flex h-16 items-center justify-between px-4 border-b", primaryColor === 'ether' ? "border-[#2a2a2a]" : "border-neutral-800")}>
           <div className="flex items-center gap-2">
             {empresa?.logo_url ? (
-              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain" />
+              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain rounded-md" />
             ) : (
               <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-                <span className="font-bold text-white">
-                  {empresa?.nombre?.substring(0, 2).toUpperCase() || 'LB'}
+                <span className="font-bold text-primary-foreground text-xs">
+                  {getInitials(empresa?.nombre)}
                 </span>
               </div>
             )}
-            <span className="font-bold text-lg font-['Manrope']">{empresa?.nombre || 'Luz Brill'}</span>
+            <span className="font-bold text-lg font-['Manrope']">{empresa?.nombre || 'ERP'}</span>
           </div>
           <Button 
             variant="ghost" 
@@ -102,8 +110,8 @@ const Layout = ({ children }) => {
                 className={({ isActive }) => cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
                   isActive 
-                    ? "bg-primary text-white" 
-                    : "text-neutral-300 hover:bg-neutral-800 hover:text-white"
+                    ? "bg-primary text-primary-foreground" 
+                    : cn("text-neutral-300 hover:text-white", primaryColor === 'ether' ? "hover:bg-[#2a2a2a]" : "hover:bg-neutral-800")
                 )}
               >
                 <item.icon className="h-5 w-5" />

@@ -68,8 +68,14 @@ const Home = () => {
             Cerrar Sesión
           </Button>
           
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary mb-6">
-            <span className="text-white text-4xl font-extrabold tracking-wide select-none" style={{fontFamily: 'JetBrains Mono, monospace'}}>LB</span>
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary mb-6 overflow-hidden">
+            {empresa?.logo_url ? (
+              <img src={empresa.logo_url} alt={empresa.nombre} className="w-full h-full object-contain p-1" />
+            ) : (
+              <span className="text-primary-foreground text-3xl font-extrabold tracking-wide select-none" style={{fontFamily: 'JetBrains Mono, monospace'}}>
+                {empresa?.nombre ? (empresa.nombre.trim().split(/\s+/).length > 1 ? (empresa.nombre.trim().split(/\s+/)[0][0] + empresa.nombre.trim().split(/\s+/)[1][0]).toUpperCase() : empresa.nombre.substring(0, 2).toUpperCase()) : '?'}
+              </span>
+            )}
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold mb-2">
             ¡Bienvenido, {user?.nombre}!
