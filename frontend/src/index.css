@@ -181,13 +181,37 @@
 [data-theme-color="ether"] {
   --primary: 0 0% 95%;
   --primary-foreground: 0 0% 5%;
-  --secondary: 0 0% 88%;
-  --secondary-foreground: 0 0% 10%;
-  --accent: 0 0% 82%;
-  --accent-foreground: 0 0% 10%;
   --ring: 0 0% 60%;
-  --muted: 0 0% 85%;
-  --muted-foreground: 0 0% 35%;
+}
+
+/* Ether dark mode - pure gray backgrounds, no blue tint */
+.dark[data-theme-color="ether"],
+[data-theme-color="ether"] .dark,
+[data-theme-color="ether"].dark {
+  --background: 0 0% 8%;
+  --foreground: 0 0% 92%;
+
+  --card: 0 0% 11%;
+  --card-foreground: 0 0% 92%;
+
+  --popover: 0 0% 11%;
+  --popover-foreground: 0 0% 92%;
+
+  --primary: 0 0% 93%;
+  --primary-foreground: 0 0% 5%;
+
+  --secondary: 0 0% 17%;
+  --secondary-foreground: 0 0% 90%;
+
+  --muted: 0 0% 16%;
+  --muted-foreground: 0 0% 55%;
+
+  --accent: 0 0% 20%;
+  --accent-foreground: 0 0% 90%;
+
+  --border: 0 0% 20%;
+  --input: 0 0% 20%;
+  --ring: 0 0% 55%;
 }
 
 /* Mobile bottom nav */
