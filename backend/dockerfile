@@ -18,8 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código
 COPY . .
 
-# Crear un usuario no-root para seguridad
-RUN useradd -m appuser && chown -R appuser:appuser /app
+# Crear directorio de uploads y usuario no-root
+RUN mkdir -p /app/uploads && \
+    useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Exponer puerto
