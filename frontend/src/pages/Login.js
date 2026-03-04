@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Button } from '../components/ui/button';
@@ -8,13 +8,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
+const getInitials = (nombre) => {
+  if (!nombre) return '?';
+  const words = nombre.trim().split(/\s+/);
+  if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+};
+
 const Login = () => {
-  const { login } = useApp();
+  const { login, API_URL } = useApp();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [empresa, setEmpresa] = useState(null);
+
+  useEffect(() => {
+    const fetchEmpresa = async () => {
+      try {
+        const res = await fetch(`${API_URL}/empresas/1`);
+        if (res.ok) {
+          const data = await res.json();
+          setEmpresa(data);
+        }
+      } catch (_) {}
+    };
+    fetchEmpresa();
+  }, [API_URL]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -45,9 +66,13 @@ const Login = () => {
       <Card className="w-full max-w-md shadow-2xl" style={{ backgroundColor: 'white' }} data-testid="login-card">
         <CardHeader className="text-center">
           <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4">
-            <span className="text-2xl font-bold text-white tracking-tight">LB</span>
+            <span className="text-2xl font-bold text-white tracking-tight">
+              {empresa ? getInitials(empresa.nombre) : '?'}
+            </span>
           </div>
-          <CardTitle className="text-2xl font-bold text-gray-900">Luz Brill ERP</CardTitle>
+          <CardTitle className="text-2xl font-bold text-gray-900">
+            {empresa ? empresa.nombre : 'Cargando...'}
+          </CardTitle>
           <CardDescription className="text-gray-600">Ingrese sus credenciales para continuar</CardDescription>
         </CardHeader>
         <CardContent>

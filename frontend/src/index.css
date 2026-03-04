@@ -170,12 +170,25 @@
 }
 
 /* Primary color themes */
-[data-theme-color="blue"] { --primary: 220 90% 40%; }
-[data-theme-color="green"] { --primary: 160 84% 39%; }
-[data-theme-color="purple"] { --primary: 280 65% 55%; }
-[data-theme-color="red"] { --primary: 0 84% 50%; }
-[data-theme-color="orange"] { --primary: 24 100% 50%; }
-[data-theme-color="teal"] { --primary: 180 70% 40%; }
+[data-theme-color="blue"]   { --primary: 220 90% 40%; --primary-foreground: 0 0% 100%; --ring: 220 90% 40%; }
+[data-theme-color="green"]  { --primary: 160 84% 39%; --primary-foreground: 0 0% 100%; --ring: 160 84% 39%; }
+[data-theme-color="purple"] { --primary: 280 65% 55%; --primary-foreground: 0 0% 100%; --ring: 280 65% 55%; }
+[data-theme-color="red"]    { --primary: 0 84% 50%;   --primary-foreground: 0 0% 100%; --ring: 0 84% 50%; }
+[data-theme-color="orange"] { --primary: 24 100% 50%; --primary-foreground: 0 0% 100%; --ring: 24 100% 50%; }
+[data-theme-color="teal"]   { --primary: 180 70% 40%; --primary-foreground: 0 0% 100%; --ring: 180 70% 40%; }
+
+/* Ether theme - white buttons, black text, gray accents */
+[data-theme-color="ether"] {
+  --primary: 0 0% 95%;
+  --primary-foreground: 0 0% 5%;
+  --secondary: 0 0% 88%;
+  --secondary-foreground: 0 0% 10%;
+  --accent: 0 0% 82%;
+  --accent-foreground: 0 0% 10%;
+  --ring: 0 0% 60%;
+  --muted: 0 0% 85%;
+  --muted-foreground: 0 0% 35%;
+}
 
 /* Mobile bottom nav */
 @media (max-width: 768px) {
