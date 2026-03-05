@@ -540,9 +540,18 @@ const TabCierre = ({ empresa, API_URL, token }) => {
             />
           </div>
 
-          {/* Gastos operativos KPI */}
-          {(data.gastos_operativos?.total || 0) > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Stock valor + Gastos operativos */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {(data.valor_stock_actual?.total || 0) > 0 && (
+              <KpiCard
+                title="Valor excedente en stock"
+                value={formatPYG(data.valor_stock_actual.total)}
+                sub={`${formatNum(data.valor_stock_actual.num_tandas)} tandas · ${formatNum(data.valor_stock_actual.num_productos)} productos`}
+                icon={BoxesIcon}
+                colorClass="text-cyan-500"
+              />
+            )}
+            {(data.gastos_operativos?.total || 0) > 0 && (
               <KpiCard
                 title="Gastos operativos"
                 value={formatPYG(data.gastos_operativos.total)}
@@ -550,8 +559,8 @@ const TabCierre = ({ empresa, API_URL, token }) => {
                 icon={AlertTriangle}
                 colorClass="text-red-600"
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Balance summary */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

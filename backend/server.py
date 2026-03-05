@@ -5410,18 +5410,39 @@ async def bi_cierre(
                Gasto.fecha >= f_ini.date(), Gasto.fecha <= f_fin.date())
     )
 
+    # Valor excedente de stock (FIFO): suma de tandas con unidades restantes × costo de compra
+    # No filtrado por fecha — representa el estado actual del inventario como snapshot
+    stock_valor_q = (
+        select(
+            func_sql.sum(
+                MovimientoStock.cantidad_restante * MovimientoStock.costo_unitario
+            ).label("valor_total"),
+            func_sql.count(MovimientoStock.id).label("num_tandas"),
+            func_sql.count(func_sql.distinct(MovimientoStock.producto_id)).label("num_productos"),
+        )
+        .join(Almacen, MovimientoStock.almacen_id == Almacen.id)
+        .where(
+            Almacen.empresa_id == empresa_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0,
+            MovimientoStock.costo_unitario.isnot(None),
+        )
+    )
+
     vr = await db.execute(venta_q)
     cr = await db.execute(compras_q)
     sr = await db.execute(salarios_q)
     dr = await db.execute(deudas_q)
     vmr = await db.execute(ventas_mes_q)
     gr = await db.execute(gastos_q)
+    svr = await db.execute(stock_valor_q)
 
     vrow = vr.one()
     crow = cr.one()
     srow = sr.one()
     drow = dr.one()
     grow = gr.one()
+    svrow = svr.one()
 
     total_ventas = float(vrow.total_ventas or 0)
     total_ganancia = float(vrow.total_ganancia or 0)
@@ -5431,6 +5452,9 @@ async def bi_cierre(
     total_salarios = float(srow.total_salarios or 0)
     total_deudas_pendientes = float(drow.total_deudas or 0)
     total_gastos_op = float(grow.total_gastos or 0)
+    valor_stock = float(svrow.valor_total or 0)
+    num_tandas = int(svrow.num_tandas or 0)
+    num_productos_stock = int(svrow.num_productos or 0)
 
     total_egresos = total_compras + total_salarios + total_gastos_op
     balance_neto = total_ventas - total_egresos
@@ -5471,6 +5495,11 @@ async def bi_cierre(
         "deudas_pendientes": {
             "total": total_deudas_pendientes,
             "cantidad": int(drow.num_deudas or 0),
+        },
+        "valor_stock_actual": {
+            "total": valor_stock,
+            "num_tandas": num_tandas,
+            "num_productos": num_productos_stock,
         },
         "resumen": {
             "total_ingresos": total_ventas,
