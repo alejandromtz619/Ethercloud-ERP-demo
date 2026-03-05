@@ -22,6 +22,7 @@ class TipoMovimientoStock(str, Enum):
     SALIDA = "SALIDA"
     AJUSTE = "AJUSTE"
     TRASPASO = "TRASPASO"
+    VENTA = "VENTA"
 
 class EstadoEntrega(str, Enum):
     PENDIENTE = "PENDIENTE"
