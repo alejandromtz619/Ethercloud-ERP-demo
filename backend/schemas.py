@@ -246,6 +246,25 @@ class MarcaResponse(MarcaBase):
     id: int
     empresa_id: int
 
+# Gasto
+class GastoBase(BaseModel):
+    monto: Decimal
+    responsable_nombre: str
+    fecha: date
+    motivo: str
+
+class GastoCreate(GastoBase):
+    empresa_id: int
+
+class GastoUpdate(GastoBase):
+    pass
+
+class GastoResponse(GastoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empresa_id: int
+    creado_en: Optional[datetime] = None
+
 # Producto
 class ProductoBase(BaseModel):
     nombre: str

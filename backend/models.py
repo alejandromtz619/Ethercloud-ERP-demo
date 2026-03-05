@@ -525,3 +525,18 @@ class PreferenciaUsuario(Base):
     color_primario = Column(String(50), default="#0044CC")
     
     usuario = relationship("Usuario", back_populates="preferencias")
+
+
+class Gasto(Base):
+    """Gastos operativos de la empresa (agua, combustible, imprevistos, etc.)"""
+    __tablename__ = "gastos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    monto = Column(Numeric(15, 2), nullable=False)
+    responsable_nombre = Column(String(255), nullable=False)
+    fecha = Column(Date, nullable=False)
+    motivo = Column(String(500), nullable=False)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
+    empresa = relationship("Empresa", backref="gastos")

@@ -31,6 +31,7 @@ const ROUTE_PERMISSIONS = {
   '/historial-ventas': 'ventas.ver_historial',
   '/reportes': 'reportes.ver',
   '/bi': 'bi.ver',
+  '/gastos': 'gastos.ver',
 };
 
 // Decode JWT payload without verification (for client-side expiration check)

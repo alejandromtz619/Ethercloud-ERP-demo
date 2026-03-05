@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text
+from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract
 from sqlalchemy.orm import selectinload
 from dotenv import load_dotenv
 from pathlib import Path
@@ -42,7 +42,8 @@ from models import (
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
-    DocumentoTemporal, TipoDocumento
+    DocumentoTemporal, TipoDocumento,
+    Gasto,
 )
 from schemas import (
     EmpresaCreate, EmpresaResponse,
@@ -51,6 +52,7 @@ from schemas import (
     ClienteCreate, ClienteResponse, CreditoClienteCreate, CreditoClienteResponse,
     ProveedorCreate, ProveedorResponse, DeudaProveedorCreate, DeudaProveedorResponse,
     CategoriaCreate, CategoriaResponse, MarcaCreate, MarcaResponse,
+    GastoCreate, GastoUpdate, GastoResponse,
     ProductoCreate, ProductoResponse, ProductoConStock,
     MateriaLaboratorioCreate, MateriaLaboratorioResponse,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
@@ -5121,6 +5123,72 @@ async def alertas_salarios_pendientes(empresa_id: int, db: AsyncSession = Depend
     
     return alertas
 
+# ==================== GASTOS OPERATIVOS ====================
+
+@api_router.get("/gastos")
+async def list_gastos(
+    empresa_id: int,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_usuario),
+):
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    q = select(Gasto).where(Gasto.empresa_id == empresa_id)
+    if fecha_desde:
+        q = q.where(Gasto.fecha >= datetime.fromisoformat(fecha_desde).date())
+    if fecha_hasta:
+        q = q.where(Gasto.fecha <= datetime.fromisoformat(fecha_hasta).date())
+    q = q.order_by(Gasto.fecha.desc(), Gasto.id.desc())
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+@api_router.post("/gastos", response_model=GastoResponse, status_code=201)
+async def create_gasto(
+    gasto: GastoCreate,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_usuario),
+):
+    db_gasto = Gasto(**gasto.model_dump())
+    db.add(db_gasto)
+    await db.commit()
+    await db.refresh(db_gasto)
+    return db_gasto
+
+
+@api_router.put("/gastos/{gasto_id}", response_model=GastoResponse)
+async def update_gasto(
+    gasto_id: int,
+    gasto: GastoUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_usuario),
+):
+    result = await db.execute(select(Gasto).where(Gasto.id == gasto_id))
+    db_gasto = result.scalar_one_or_none()
+    if not db_gasto:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    for field, value in gasto.model_dump().items():
+        setattr(db_gasto, field, value)
+    await db.commit()
+    await db.refresh(db_gasto)
+    return db_gasto
+
+
+@api_router.delete("/gastos/{gasto_id}", status_code=204)
+async def delete_gasto(
+    gasto_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(get_current_usuario),
+):
+    result = await db.execute(select(Gasto).where(Gasto.id == gasto_id))
+    db_gasto = result.scalar_one_or_none()
+    if not db_gasto:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    await db.delete(db_gasto)
+    await db.commit()
+
+
 # ==================== BUSINESS INTELLIGENCE ====================
 
 @api_router.get("/bi/estadisticas-productos")
@@ -5327,28 +5395,33 @@ async def bi_cierre(
         .where(Proveedor.empresa_id == empresa_id, DeudaProveedor.pagado == False)
     )
 
-    # Monthly breakdown of sales
-    mes_q = (
-        select(func_sql.strftime('%Y-%m', Venta.creado_en).label("mes"),
-               func_sql.sum(Venta.total).label("ventas"),
-               func_sql.sum(Venta.ganancia).label("ganancia"),
-               func_sql.sum(Venta.costo_total).label("costo"))
+    # Monthly breakdown of sales — Python-side grouping for cross-DB compatibility
+    ventas_mes_q = (
+        select(Venta.creado_en, Venta.total, Venta.ganancia, Venta.costo_total)
         .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
                Venta.creado_en >= f_ini, Venta.creado_en <= f_fin)
-        .group_by(func_sql.strftime('%Y-%m', Venta.creado_en))
-        .order_by(func_sql.strftime('%Y-%m', Venta.creado_en))
+    )
+
+    # Gastos operativos en el período
+    gastos_q = (
+        select(func_sql.sum(Gasto.monto).label("total_gastos"),
+               func_sql.count(Gasto.id).label("num_gastos"))
+        .where(Gasto.empresa_id == empresa_id,
+               Gasto.fecha >= f_ini.date(), Gasto.fecha <= f_fin.date())
     )
 
     vr = await db.execute(venta_q)
     cr = await db.execute(compras_q)
     sr = await db.execute(salarios_q)
     dr = await db.execute(deudas_q)
-    mr = await db.execute(mes_q)
+    vmr = await db.execute(ventas_mes_q)
+    gr = await db.execute(gastos_q)
 
     vrow = vr.one()
     crow = cr.one()
     srow = sr.one()
     drow = dr.one()
+    grow = gr.one()
 
     total_ventas = float(vrow.total_ventas or 0)
     total_ganancia = float(vrow.total_ganancia or 0)
@@ -5357,13 +5430,22 @@ async def bi_cierre(
     total_compras = float(crow.total_compras or 0)
     total_salarios = float(srow.total_salarios or 0)
     total_deudas_pendientes = float(drow.total_deudas or 0)
+    total_gastos_op = float(grow.total_gastos or 0)
 
-    total_egresos = total_compras + total_salarios
-    balance_neto = total_ganancia - total_salarios
+    total_egresos = total_compras + total_salarios + total_gastos_op
+    balance_neto = total_ganancia - total_salarios - total_gastos_op
 
-    meses = [{"mes": r.mes, "ventas": float(r.ventas or 0),
-               "ganancia": float(r.ganancia or 0), "costo": float(r.costo or 0)}
-             for r in mr.all()]
+    # Group ventas by month in Python
+    from collections import defaultdict
+    mes_map = defaultdict(lambda: {"ventas": 0.0, "ganancia": 0.0, "costo": 0.0})
+    for row in vmr.all():
+        key = row.creado_en.strftime('%Y-%m') if row.creado_en else None
+        if key:
+            mes_map[key]["ventas"] += float(row.total or 0)
+            mes_map[key]["ganancia"] += float(row.ganancia or 0)
+            mes_map[key]["costo"] += float(row.costo_total or 0)
+    meses = [{"mes": k, "ventas": v["ventas"], "ganancia": v["ganancia"], "costo": v["costo"]}
+             for k, v in sorted(mes_map.items())]
 
     return {
         "periodo": {"desde": fecha_desde, "hasta": fecha_hasta},
@@ -5381,6 +5463,10 @@ async def bi_cierre(
         "salarios": {
             "total_pagado": total_salarios,
             "num_ciclos": int(srow.num_ciclos or 0),
+        },
+        "gastos_operativos": {
+            "total": total_gastos_op,
+            "cantidad": int(grow.num_gastos or 0),
         },
         "deudas_pendientes": {
             "total": total_deudas_pendientes,

@@ -470,6 +470,7 @@ const TabCierre = ({ empresa, API_URL, token }) => {
     { name: 'Ganancia neta', value: Math.max(0, data.resumen.balance_neto) },
     { name: 'Costo mercadería', value: data.ventas.costo },
     { name: 'Salarios', value: data.salarios.total_pagado },
+    { name: 'Gastos operativos', value: data.gastos_operativos?.total || 0 },
   ].filter(d => d.value > 0) : [];
 
   const balanceBar = data?.evolucion_mensual?.map(m => ({
@@ -539,6 +540,19 @@ const TabCierre = ({ empresa, API_URL, token }) => {
             />
           </div>
 
+          {/* Gastos operativos KPI */}
+          {(data.gastos_operativos?.total || 0) > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <KpiCard
+                title="Gastos operativos"
+                value={formatPYG(data.gastos_operativos.total)}
+                sub={`${formatNum(data.gastos_operativos.cantidad)} gastos registrados`}
+                icon={AlertTriangle}
+                colorClass="text-red-600"
+              />
+            </div>
+          )}
+
           {/* Balance summary */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="md:col-span-2">
@@ -600,7 +614,7 @@ const TabCierre = ({ empresa, API_URL, token }) => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground font-medium">Balance neto del período</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Ganancia bruta − Salarios pagados</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Ganancia bruta − Salarios pagados − Gastos operativos</p>
                 </div>
                 <p className={cn('text-3xl font-extrabold font-mono', data.resumen.balance_neto >= 0 ? 'text-emerald-600' : 'text-red-600')}>
                   {formatPYG(data.resumen.balance_neto)}

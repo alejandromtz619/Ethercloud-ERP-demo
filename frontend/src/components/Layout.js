@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext';
 import { 
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
-  Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2
+  Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2, Receipt
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -30,6 +30,7 @@ const allMenuItems = [
   { path: '/proveedores', icon: Building2, label: 'Proveedores' },
   { path: '/clientes', icon: Users, label: 'Clientes' },
   { path: '/funcionarios', icon: UserCog, label: 'Funcionarios' },
+  { path: '/gastos', icon: Receipt, label: 'Gastos' },
   { path: '/stock', icon: Warehouse, label: 'Stock' },
   { path: '/flota', icon: Car, label: 'Flota' },
   { path: '/facturas', icon: FileText, label: 'Facturas' },
