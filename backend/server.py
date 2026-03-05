@@ -5433,7 +5433,7 @@ async def bi_cierre(
     total_gastos_op = float(grow.total_gastos or 0)
 
     total_egresos = total_compras + total_salarios + total_gastos_op
-    balance_neto = total_ganancia - total_salarios - total_gastos_op
+    balance_neto = total_ventas - total_egresos
 
     # Group ventas by month in Python
     from collections import defaultdict
