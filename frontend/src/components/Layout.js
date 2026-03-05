@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext';
 import { 
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
-  Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers
+  Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -34,6 +34,7 @@ const allMenuItems = [
   { path: '/flota', icon: Car, label: 'Flota' },
   { path: '/facturas', icon: FileText, label: 'Facturas' },
   { path: '/reportes', icon: FileBarChart, label: 'Reportes' },
+  { path: '/bi', icon: BarChart2, label: 'B.I.' },
   { path: '/usuarios', icon: Users, label: 'Usuarios' },
   { path: '/permisos', icon: Shield, label: 'Permisos' },
   { path: '/sistema', icon: Settings, label: 'Sistema' },

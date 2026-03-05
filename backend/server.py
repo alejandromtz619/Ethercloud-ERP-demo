@@ -5120,6 +5120,474 @@ async def alertas_salarios_pendientes(empresa_id: int, db: AsyncSession = Depend
     
     return alertas
 
+# ==================== BUSINESS INTELLIGENCE ====================
+
+@api_router.get("/bi/estadisticas-productos")
+async def bi_estadisticas_productos(
+    empresa_id: int,
+    periodo: str = "semanal",  # semanal | mensual
+    periodos: int = 8,
+    db: AsyncSession = Depends(get_db)
+):
+    """Estadísticas de ventas por producto con promedio y comparativa de período."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    now = datetime.now(PARAGUAY_TZ)
+    if periodo == "semanal":
+        delta = timedelta(weeks=periodos)
+    else:
+        delta = timedelta(days=periodos * 30)
+    fecha_inicio = now - delta
+
+    # Overall stats per product
+    stats_q = (
+        select(
+            VentaItem.producto_id,
+            Producto.nombre.label("producto_nombre"),
+            func_sql.sum(VentaItem.cantidad).label("total_unidades"),
+            func_sql.sum(VentaItem.total).label("total_ventas"),
+            func_sql.sum(VentaItem.precio_costo * VentaItem.cantidad).label("total_costo"),
+            func_sql.count(func_sql.distinct(Venta.id)).label("num_ventas"),
+        )
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .join(Producto, VentaItem.producto_id == Producto.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= fecha_inicio,
+            VentaItem.producto_id.isnot(None),
+        )
+        .group_by(VentaItem.producto_id, Producto.nombre)
+        .order_by(func_sql.sum(VentaItem.total).desc())
+        .limit(50)
+    )
+
+    # Current period (latest period)
+    if periodo == "semanal":
+        current_inicio = now - timedelta(weeks=1)
+        prev_inicio = now - timedelta(weeks=2)
+        prev_fin = current_inicio
+    else:
+        import calendar as cal_mod
+        first_this = datetime(now.year, now.month, 1, tzinfo=PARAGUAY_TZ)
+        m = now.month - 1 if now.month > 1 else 12
+        y = now.year if now.month > 1 else now.year - 1
+        first_prev = datetime(y, m, 1, tzinfo=PARAGUAY_TZ)
+        current_inicio = first_this
+        prev_inicio = first_prev
+        prev_fin = first_this
+
+    cur_q = (
+        select(VentaItem.producto_id,
+               func_sql.sum(VentaItem.cantidad).label("unidades"),
+               func_sql.sum(VentaItem.total).label("ventas"))
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= current_inicio, VentaItem.producto_id.isnot(None))
+        .group_by(VentaItem.producto_id)
+    )
+    prev_q = (
+        select(VentaItem.producto_id,
+               func_sql.sum(VentaItem.cantidad).label("unidades"),
+               func_sql.sum(VentaItem.total).label("ventas"))
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= prev_inicio, Venta.creado_en < prev_fin,
+               VentaItem.producto_id.isnot(None))
+        .group_by(VentaItem.producto_id)
+    )
+    stock_q = (
+        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_total"))
+        .join(Almacen, StockActual.almacen_id == Almacen.id)
+        .where(Almacen.empresa_id == empresa_id)
+        .group_by(StockActual.producto_id)
+    )
+
+    stats_r, cur_r, prev_r, stock_r = await db.execute(stats_q), await db.execute(cur_q), await db.execute(prev_q), await db.execute(stock_q)
+    cur_map = {r.producto_id: r for r in cur_r.all()}
+    prev_map = {r.producto_id: r for r in prev_r.all()}
+    stock_map = {r.producto_id: int(r.stock_total) for r in stock_r.all()}
+
+    productos = []
+    for row in stats_r.all():
+        pid = row.producto_id
+        cu = cur_map.get(pid)
+        pv = prev_map.get(pid)
+        cu_uni = int(cu.unidades) if cu else 0
+        pv_uni = int(pv.unidades) if pv else 0
+        if pv_uni > 0:
+            variacion = round(((cu_uni - pv_uni) / pv_uni) * 100, 1)
+        elif cu_uni > 0:
+            variacion = 100.0
+        else:
+            variacion = 0.0
+        total_u = int(row.total_unidades)
+        total_v = float(row.total_ventas or 0)
+        total_c = float(row.total_costo or 0)
+        productos.append({
+            "producto_id": pid,
+            "producto_nombre": row.producto_nombre,
+            "total_unidades": total_u,
+            "total_ventas": total_v,
+            "total_costo": total_c,
+            "ganancia_bruta": round(total_v - total_c, 2),
+            "num_ventas": int(row.num_ventas),
+            "promedio_por_periodo": round(total_u / periodos, 1),
+            "periodo_actual_unidades": cu_uni,
+            "periodo_anterior_unidades": pv_uni,
+            "variacion_pct": variacion,
+            "stock_actual": stock_map.get(pid, 0),
+        })
+
+    # Build trend bars (one per period)
+    tendencia = []
+    for i in range(periodos - 1, -1, -1):
+        if periodo == "semanal":
+            t_ini = now - timedelta(weeks=i + 1)
+            t_fin = now - timedelta(weeks=i)
+            label = f"Sem -{i}" if i > 0 else "Esta sem."
+        else:
+            import calendar as cal_mod
+            m_off = now.month - i - 1
+            yr = now.year + (m_off // 12 if m_off >= 0 else (m_off - 11) // 12)
+            mo = m_off % 12
+            if mo <= 0:
+                mo += 12
+                yr -= 1
+            days_m = cal_mod.monthrange(yr, mo)[1]
+            t_ini = datetime(yr, mo, 1, tzinfo=PARAGUAY_TZ)
+            t_fin = datetime(yr, mo, days_m, 23, 59, 59, tzinfo=PARAGUAY_TZ)
+            label = f"{yr}-{mo:02d}" if i > 0 else f"{now.year}-{now.month:02d}"
+        t_q = (
+            select(func_sql.sum(VentaItem.total).label("ventas"),
+                   func_sql.sum(VentaItem.cantidad).label("unidades"))
+            .join(Venta, VentaItem.venta_id == Venta.id)
+            .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+                   Venta.creado_en >= t_ini, Venta.creado_en < t_fin,
+                   VentaItem.producto_id.isnot(None))
+        )
+        t_r = await db.execute(t_q)
+        t_row = t_r.one()
+        tendencia.append({"label": label, "ventas": float(t_row.ventas or 0), "unidades": int(t_row.unidades or 0)})
+
+    return {"periodo": periodo, "periodos": periodos, "productos": productos, "tendencia": tendencia}
+
+
+@api_router.get("/bi/cierre")
+async def bi_cierre(
+    empresa_id: int,
+    fecha_desde: str,
+    fecha_hasta: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Balance de cierre: ventas/ganancias vs compras de mercadería vs salarios."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    try:
+        f_ini = datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ)
+        f_fin = datetime.fromisoformat(fecha_hasta).replace(hour=23, minute=59, second=59, tzinfo=PARAGUAY_TZ)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido (YYYY-MM-DD)")
+
+    # Ventas confirmadas
+    venta_q = (
+        select(func_sql.sum(Venta.total).label("total_ventas"),
+               func_sql.sum(Venta.ganancia).label("total_ganancia"),
+               func_sql.sum(Venta.costo_total).label("total_costo_ventas"),
+               func_sql.sum(Venta.iva).label("total_iva"),
+               func_sql.count(Venta.id).label("cantidad_ventas"))
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= f_ini, Venta.creado_en <= f_fin)
+    )
+
+    # Compras de mercadería (entradas de stock con costo)
+    compras_q = (
+        select(func_sql.sum(MovimientoStock.costo_unitario * MovimientoStock.cantidad).label("total_compras"),
+               func_sql.count(MovimientoStock.id).label("num_entradas"))
+        .join(Almacen, MovimientoStock.almacen_id == Almacen.id)
+        .where(Almacen.empresa_id == empresa_id,
+               MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+               MovimientoStock.costo_unitario.isnot(None),
+               MovimientoStock.creado_en >= f_ini, MovimientoStock.creado_en <= f_fin)
+    )
+
+    # Salarios pagados (ciclos)
+    salarios_q = (
+        select(func_sql.sum(CicloSalario.salario_neto).label("total_salarios"),
+               func_sql.count(CicloSalario.id).label("num_ciclos"))
+        .join(Funcionario, CicloSalario.funcionario_id == Funcionario.id)
+        .where(Funcionario.empresa_id == empresa_id, CicloSalario.pagado == True,
+               CicloSalario.fecha_pago >= f_ini, CicloSalario.fecha_pago <= f_fin)
+    )
+
+    # Deudas proveedores pendientes (registradas en el período)
+    deudas_q = (
+        select(func_sql.sum(DeudaProveedor.monto).label("total_deudas"),
+               func_sql.count(DeudaProveedor.id).label("num_deudas"))
+        .join(Proveedor, DeudaProveedor.proveedor_id == Proveedor.id)
+        .where(Proveedor.empresa_id == empresa_id, DeudaProveedor.pagado == False)
+    )
+
+    # Monthly breakdown of sales
+    mes_q = (
+        select(func_sql.strftime('%Y-%m', Venta.creado_en).label("mes"),
+               func_sql.sum(Venta.total).label("ventas"),
+               func_sql.sum(Venta.ganancia).label("ganancia"),
+               func_sql.sum(Venta.costo_total).label("costo"))
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= f_ini, Venta.creado_en <= f_fin)
+        .group_by(func_sql.strftime('%Y-%m', Venta.creado_en))
+        .order_by(func_sql.strftime('%Y-%m', Venta.creado_en))
+    )
+
+    vr = await db.execute(venta_q)
+    cr = await db.execute(compras_q)
+    sr = await db.execute(salarios_q)
+    dr = await db.execute(deudas_q)
+    mr = await db.execute(mes_q)
+
+    vrow = vr.one()
+    crow = cr.one()
+    srow = sr.one()
+    drow = dr.one()
+
+    total_ventas = float(vrow.total_ventas or 0)
+    total_ganancia = float(vrow.total_ganancia or 0)
+    total_costo_ventas = float(vrow.total_costo_ventas or 0)
+    total_iva = float(vrow.total_iva or 0)
+    total_compras = float(crow.total_compras or 0)
+    total_salarios = float(srow.total_salarios or 0)
+    total_deudas_pendientes = float(drow.total_deudas or 0)
+
+    total_egresos = total_compras + total_salarios
+    balance_neto = total_ganancia - total_salarios
+
+    meses = [{"mes": r.mes, "ventas": float(r.ventas or 0),
+               "ganancia": float(r.ganancia or 0), "costo": float(r.costo or 0)}
+             for r in mr.all()]
+
+    return {
+        "periodo": {"desde": fecha_desde, "hasta": fecha_hasta},
+        "ventas": {
+            "total": total_ventas,
+            "ganancia": total_ganancia,
+            "costo": total_costo_ventas,
+            "iva": total_iva,
+            "cantidad": int(vrow.cantidad_ventas or 0),
+        },
+        "compras_mercaderia": {
+            "total": total_compras,
+            "num_entradas": int(crow.num_entradas or 0),
+        },
+        "salarios": {
+            "total_pagado": total_salarios,
+            "num_ciclos": int(srow.num_ciclos or 0),
+        },
+        "deudas_pendientes": {
+            "total": total_deudas_pendientes,
+            "cantidad": int(drow.num_deudas or 0),
+        },
+        "resumen": {
+            "total_ingresos": total_ventas,
+            "total_egresos": total_egresos,
+            "balance_neto": balance_neto,
+            "margen_bruto_pct": round((total_ganancia / total_ventas * 100) if total_ventas > 0 else 0, 1),
+        },
+        "evolucion_mensual": meses,
+    }
+
+
+@api_router.get("/bi/sugerencias-compra")
+async def bi_sugerencias_compra(
+    empresa_id: int,
+    semanas_analisis: int = 4,
+    semanas_cobertura: int = 4,
+    db: AsyncSession = Depends(get_db)
+):
+    """Sugerencias de compra basadas en velocidad de venta histórica."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    now = datetime.now(PARAGUAY_TZ)
+    fecha_inicio = now - timedelta(weeks=semanas_analisis)
+
+    # Sales velocity per product
+    vel_q = (
+        select(VentaItem.producto_id, Producto.nombre.label("producto_nombre"),
+               func_sql.sum(VentaItem.cantidad).label("total_unidades"),
+               func_sql.count(func_sql.distinct(Venta.id)).label("num_ventas"))
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .join(Producto, VentaItem.producto_id == Producto.id)
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= fecha_inicio, VentaItem.producto_id.isnot(None))
+        .group_by(VentaItem.producto_id, Producto.nombre)
+        .order_by(func_sql.sum(VentaItem.cantidad).desc())
+    )
+
+    # Current stock
+    stock_q = (
+        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_total"),
+               Producto.nombre.label("producto_nombre"), Producto.precio_costo.label("precio_costo"))
+        .join(Almacen, StockActual.almacen_id == Almacen.id)
+        .join(Producto, StockActual.producto_id == Producto.id)
+        .where(Almacen.empresa_id == empresa_id)
+        .group_by(StockActual.producto_id, Producto.nombre, Producto.precio_costo)
+    )
+
+    vel_r = await db.execute(vel_q)
+    stock_r = await db.execute(stock_q)
+
+    stock_map = {r.producto_id: {"stock": int(r.stock_total), "nombre": r.producto_nombre,
+                                  "precio_costo": float(r.precio_costo or 0)}
+                 for r in stock_r.all()}
+
+    sugerencias = []
+    for row in vel_r.all():
+        pid = row.producto_id
+        total_u = int(row.total_unidades)
+        vel_semanal = round(total_u / semanas_analisis, 1)
+        stock_recomendado = round(vel_semanal * semanas_cobertura)
+        stock_actual = stock_map.get(pid, {}).get("stock", 0)
+        compra_sugerida = max(0, stock_recomendado - stock_actual)
+        precio_costo = stock_map.get(pid, {}).get("precio_costo", 0)
+        if compra_sugerida > 0:
+            sugerencias.append({
+                "producto_id": pid,
+                "producto_nombre": row.producto_nombre,
+                "velocidad_semanal": vel_semanal,
+                "stock_actual": stock_actual,
+                "stock_recomendado": stock_recomendado,
+                "compra_sugerida": int(compra_sugerida),
+                "costo_estimado": round(compra_sugerida * precio_costo, 2),
+                "cobertura_actual_semanas": round(stock_actual / vel_semanal, 1) if vel_semanal > 0 else None,
+                "urgencia": "ALTA" if stock_actual <= 0 else ("MEDIA" if stock_actual < vel_semanal else "BAJA"),
+            })
+
+    sugerencias.sort(key=lambda x: (x["urgencia"] != "ALTA", x["urgencia"] != "MEDIA", -x["velocidad_semanal"]))
+    costo_total = sum(s["costo_estimado"] for s in sugerencias)
+
+    return {
+        "parametros": {"semanas_analisis": semanas_analisis, "semanas_cobertura": semanas_cobertura},
+        "sugerencias": sugerencias,
+        "resumen": {
+            "productos_con_necesidad": len(sugerencias),
+            "costo_total_estimado": round(costo_total, 2),
+            "urgentes": sum(1 for s in sugerencias if s["urgencia"] == "ALTA"),
+            "media_urgencia": sum(1 for s in sugerencias if s["urgencia"] == "MEDIA"),
+        }
+    }
+
+
+@api_router.get("/bi/exceso-compras")
+async def bi_exceso_compras(
+    empresa_id: int,
+    semanas_referencia: int = 4,
+    db: AsyncSession = Depends(get_db)
+):
+    """Detección de compras en exceso: productos con stock alto respecto a su velocidad de venta."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    now = datetime.now(PARAGUAY_TZ)
+    fecha_inicio = now - timedelta(weeks=semanas_referencia)
+
+    # Sales velocity últimas N semanas
+    vel_q = (
+        select(VentaItem.producto_id,
+               func_sql.sum(VentaItem.cantidad).label("total_unidades"))
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= fecha_inicio, VentaItem.producto_id.isnot(None))
+        .group_by(VentaItem.producto_id)
+    )
+
+    # Entradas de stock recientes
+    entradas_q = (
+        select(MovimientoStock.producto_id,
+               func_sql.sum(MovimientoStock.cantidad).label("total_comprado"),
+               func_sql.sum(MovimientoStock.costo_unitario * MovimientoStock.cantidad).label("total_costo"))
+        .join(Almacen, MovimientoStock.almacen_id == Almacen.id)
+        .where(Almacen.empresa_id == empresa_id,
+               MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+               MovimientoStock.creado_en >= fecha_inicio)
+        .group_by(MovimientoStock.producto_id)
+    )
+
+    # Stock actual + product info
+    stock_q = (
+        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_total"),
+               Producto.nombre.label("nombre"), Producto.precio_venta.label("precio_venta"),
+               Producto.precio_costo.label("precio_costo"))
+        .join(Almacen, StockActual.almacen_id == Almacen.id)
+        .join(Producto, StockActual.producto_id == Producto.id)
+        .where(Almacen.empresa_id == empresa_id)
+        .group_by(StockActual.producto_id, Producto.nombre, Producto.precio_venta, Producto.precio_costo)
+    )
+
+    vel_r = await db.execute(vel_q)
+    ent_r = await db.execute(entradas_q)
+    stk_r = await db.execute(stock_q)
+
+    vel_map = {r.producto_id: int(r.total_unidades) for r in vel_r.all()}
+    ent_map = {r.producto_id: {"comprado": int(r.total_comprado),
+                                "costo": float(r.total_costo or 0)} for r in ent_r.all()}
+
+    excesos = []
+    sin_movimiento = []
+
+    for row in stk_r.all():
+        pid = row.producto_id
+        stock = int(row.stock_total)
+        vendido = vel_map.get(pid, 0)
+        vel_semanal = round(vendido / semanas_referencia, 1)
+        entrada = ent_map.get(pid, {})
+        comprado = entrada.get("comprado", 0)
+        costo_sobrante = float(row.precio_costo or 0)
+
+        if stock <= 0:
+            continue
+
+        # Sin ventas recientes pero con stock
+        if vendido == 0 and stock > 0:
+            sin_movimiento.append({
+                "producto_id": pid,
+                "producto_nombre": row.nombre,
+                "stock_actual": stock,
+                "vendido_periodo": 0,
+                "velocidad_semanal": 0,
+                "dias_para_agotar": None,
+                "valor_inmovilizado": round(stock * costo_sobrante, 2),
+                "tipo": "SIN_VENTAS",
+            })
+        # Stock alto comparado con velocidad de venta
+        elif vel_semanal > 0:
+            semanas_para_agotar = stock / vel_semanal
+            if semanas_para_agotar > semanas_referencia * 2:
+                excesos.append({
+                    "producto_id": pid,
+                    "producto_nombre": row.nombre,
+                    "stock_actual": stock,
+                    "vendido_periodo": vendido,
+                    "velocidad_semanal": vel_semanal,
+                    "semanas_para_agotar": round(semanas_para_agotar, 1),
+                    "comprado_periodo": comprado,
+                    "exceso_vs_venta": max(0, comprado - vendido),
+                    "valor_inmovilizado": round(stock * costo_sobrante, 2),
+                    "tipo": "EXCESO_STOCK",
+                })
+
+    excesos.sort(key=lambda x: -x["valor_inmovilizado"])
+    sin_movimiento.sort(key=lambda x: -x["valor_inmovilizado"])
+
+    return {
+        "parametros": {"semanas_referencia": semanas_referencia},
+        "exceso_stock": excesos,
+        "sin_ventas_recientes": sin_movimiento,
+        "resumen": {
+            "productos_exceso": len(excesos),
+            "productos_sin_ventas": len(sin_movimiento),
+            "valor_total_inmovilizado": round(
+                sum(e["valor_inmovilizado"] for e in excesos) +
+                sum(s["valor_inmovilizado"] for s in sin_movimiento), 2
+            ),
+        }
+    }
+
+
 # ==================== SEED DATA ====================
 @api_router.post("/seed")
 async def seed_data(db: AsyncSession = Depends(get_db)):
@@ -5207,6 +5675,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         ("sistema.configurar", "Configurar sistema"),
         ("reportes.ver", "Ver reportes"),
         ("reportes.exportar", "Exportar reportes"),
+        # Business Intelligence
+        ("bi.ver", "Ver Business Intelligence"),
         # Additional view permissions
         ("productos.ver", "Ver productos"),
         ("proveedores.ver", "Ver proveedores"),
@@ -5247,7 +5717,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "funcionarios.ver", "funcionarios.ver_salarios", "funcionarios.adelantos",
         "delivery.ver", "delivery.crear", "delivery.actualizar_estado",
         "flota.ver", "laboratorio.ver", "laboratorio.crear",
-        "reportes.ver", "reportes.exportar"
+        "reportes.ver", "reportes.exportar",
+        "bi.ver"
     ]
     if gerente_rol:
         for perm_clave in gerente_permisos:

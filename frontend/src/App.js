@@ -25,6 +25,7 @@ import Categorias from './pages/Categorias';
 import Permisos from './pages/Permisos';
 import HistorialVentas from './pages/HistorialVentas';
 import Reportes from './pages/Reportes';
+import BusinessIntelligence from './pages/BusinessIntelligence';
 
 import './App.css';
 
@@ -271,7 +272,18 @@ const AppRoutes = () => {
           </ProtectedRoute>
         } 
       />
-      
+
+      <Route
+        path="/bi"
+        element={
+          <ProtectedRoute permission="bi.ver">
+            <Layout>
+              <BusinessIntelligence />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+
       <Route 
         path="/sistema" 
         element={
