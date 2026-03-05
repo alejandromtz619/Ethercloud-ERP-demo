@@ -5159,7 +5159,7 @@ async def bi_estadisticas_productos(
         )
         .group_by(VentaItem.producto_id, Producto.nombre)
         .order_by(func_sql.sum(VentaItem.total).desc())
-        .limit(50)
+        .limit(200)
     )
 
     # Current period (latest period)
@@ -5586,6 +5586,77 @@ async def bi_exceso_compras(
                 sum(s["valor_inmovilizado"] for s in sin_movimiento), 2
             ),
         }
+    }
+
+
+@api_router.get("/bi/producto-evolucion")
+async def bi_producto_evolucion(
+    empresa_id: int,
+    producto_id: int,
+    periodo: str = "semanal",
+    periodos: int = 12,
+    db: AsyncSession = Depends(get_db)
+):
+    """Retorna la evolución por período (semana/mes) de un producto específico."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    now = datetime.now(PARAGUAY_TZ)
+
+    prod_q = select(Producto.nombre).where(Producto.id == producto_id)
+    prod_r = await db.execute(prod_q)
+    prod_nombre = prod_r.scalar_one_or_none()
+    if not prod_nombre:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    tendencia = []
+    for i in range(periodos - 1, -1, -1):
+        if periodo == "semanal":
+            t_ini = now - timedelta(weeks=i + 1)
+            t_fin = now - timedelta(weeks=i)
+            label = f"Sem -{i}" if i > 0 else "Esta sem."
+        else:
+            import calendar as cal_mod
+            m_off = now.month - i - 1
+            yr = now.year + (m_off // 12 if m_off >= 0 else (m_off - 11) // 12)
+            mo = m_off % 12
+            if mo <= 0:
+                mo += 12
+                yr -= 1
+            days_m = cal_mod.monthrange(yr, mo)[1]
+            t_ini = datetime(yr, mo, 1, tzinfo=PARAGUAY_TZ)
+            t_fin = datetime(yr, mo, days_m, 23, 59, 59, tzinfo=PARAGUAY_TZ)
+            label = f"{yr}-{mo:02d}" if i > 0 else f"{now.year}-{now.month:02d}"
+        t_q = (
+            select(
+                func_sql.sum(VentaItem.total).label("ventas"),
+                func_sql.sum(VentaItem.cantidad).label("unidades"),
+                func_sql.sum(
+                    VentaItem.total - (VentaItem.precio_costo * VentaItem.cantidad)
+                ).label("ganancia"),
+            )
+            .join(Venta, VentaItem.venta_id == Venta.id)
+            .where(
+                Venta.empresa_id == empresa_id,
+                Venta.estado == EstadoVenta.CONFIRMADA,
+                VentaItem.producto_id == producto_id,
+                Venta.creado_en >= t_ini,
+                Venta.creado_en < t_fin,
+            )
+        )
+        t_r = await db.execute(t_q)
+        t_row = t_r.one()
+        tendencia.append({
+            "label": label,
+            "ventas": float(t_row.ventas or 0),
+            "unidades": int(t_row.unidades or 0),
+            "ganancia": float(t_row.ganancia or 0),
+        })
+
+    return {
+        "producto_id": producto_id,
+        "producto_nombre": prod_nombre,
+        "periodo": periodo,
+        "periodos": periodos,
+        "tendencia": tendencia,
     }
 
 

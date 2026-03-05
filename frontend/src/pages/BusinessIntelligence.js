@@ -17,6 +17,7 @@ import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Package, DollarSign,
   Users, AlertTriangle, ArrowUpRight, ArrowDownRight, RefreshCw,
   ShoppingBag, Loader2, Target, BoxesIcon, BarChart2, Lightbulb, FileSpreadsheet,
+  Search, X, MousePointerClick,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -89,6 +90,10 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
   const [periodo, setPeriodo] = useState('semanal');
   const [periodos, setPeriodos] = useState('8');
   const [metrica, setMetrica] = useState('ventas');
+  const [productoSearch, setProductoSearch] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState(null); // { id, nombre }
+  const [productoEvolucion, setProductoEvolucion] = useState(null);
+  const [loadingEvolucion, setLoadingEvolucion] = useState(false);
 
   const fetch = useCallback(async () => {
     if (!empresa) return;
@@ -130,6 +135,33 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
     }
   }, [empresa, API_URL, token, periodo, periodos, metrica]);
 
+  const fetchProductoEvolucion = useCallback(async (pid) => {
+    if (!empresa || !pid) return;
+    setLoadingEvolucion(true);
+    try {
+      const res = await window.fetch(
+        `${API_URL}/bi/producto-evolucion?empresa_id=${empresa.id}&producto_id=${pid}&periodo=${periodo}&periodos=${periodos}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error('Error al cargar evolución del producto');
+      setProductoEvolucion(await res.json());
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setLoadingEvolucion(false);
+    }
+  }, [empresa, API_URL, token, periodo, periodos]);
+
+  useEffect(() => {
+    if (selectedProduct) fetchProductoEvolucion(selectedProduct.id);
+    else setProductoEvolucion(null);
+  }, [selectedProduct, fetchProductoEvolucion]);
+
+  // Reset selected product when period changes so evolution chart re-fetches
+  useEffect(() => {
+    if (selectedProduct) fetchProductoEvolucion(selectedProduct.id);
+  }, [periodo, periodos]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => { fetch(); }, [fetch]);
 
   const TOP_N = 30;
@@ -141,8 +173,14 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
   }));
 
   const metricaLabel = { ventas: 'Ingresos (₲)', unidades: 'Unidades vendidas', ganancia: 'Ganancia bruta (₲)' }[metrica];
-  const promLabel = periodo === 'semanal' ? 'Prom. uds/sem.' : 'Prom. uds/mes.';
+  const periodoLabel = periodo === 'semanal' ? 'semana' : 'mes';
+  const promHeaderLabel = periodo === 'semanal' ? 'Promedio/semana' : 'Promedio/mes';
+  const curHeaderLabel = periodo === 'semanal' ? 'Esta semana' : 'Este mes';
+  const prevHeaderLabel = periodo === 'semanal' ? 'Sem. anterior' : 'Mes anterior';
   const barChartHeight = Math.max(300, topBar.length * 30);
+  const filteredProducts = (data?.productos || []).filter(p =>
+    p.producto_nombre.toLowerCase().includes(productoSearch.toLowerCase())
+  );
 
   return (
     <div className="space-y-6">
@@ -152,7 +190,7 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
           <div className="flex flex-wrap gap-4 items-end">
             <div className="space-y-1">
               <Label className="text-xs">Período</Label>
-              <Select value={periodo} onValueChange={setPeriodo}>
+              <Select value={periodo} onValueChange={v => { setPeriodo(v); setSelectedProduct(null); }}>
                 <SelectTrigger className="w-36 h-8 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="semanal">Semanal</SelectItem>
@@ -178,9 +216,26 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
                 <SelectContent>
                   <SelectItem value="ventas">Ventas (₲)</SelectItem>
                   <SelectItem value="ganancia">Ganancia (₲)</SelectItem>
-                  <SelectItem value="unidades">Unidades</SelectItem>
+                  <SelectItem value="unidades">Unidades vendidas</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Buscar producto</Label>
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input
+                  value={productoSearch}
+                  onChange={e => setProductoSearch(e.target.value)}
+                  placeholder="Filtrar tabla…"
+                  className="h-8 text-sm pl-7 pr-7 w-44 rounded-md border border-input bg-background px-3 py-1 shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+                {productoSearch && (
+                  <button onClick={() => setProductoSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             </div>
             <Button size="sm" variant="outline" onClick={fetch} disabled={loading} className="h-8 gap-1">
               <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
@@ -257,10 +312,22 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
           {/* Product Table */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Detalle por producto</CardTitle>
-              <CardDescription className="text-xs">
-                {periodo === 'semanal' ? 'Comparativa: esta semana vs. semana anterior' : 'Comparativa: este mes vs. mes anterior'}
-              </CardDescription>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <CardTitle className="text-sm font-semibold">Detalle por producto</CardTitle>
+                  <CardDescription className="text-xs mt-0.5">
+                    {filteredProducts.length} producto{filteredProducts.length !== 1 ? 's' : ''} — comparativa {curHeaderLabel.toLowerCase()} vs. {prevHeaderLabel.toLowerCase()} &middot; Hacé clic en una fila para ver su evolución
+                  </CardDescription>
+                </div>
+                {selectedProduct && (
+                  <button
+                    onClick={() => setSelectedProduct(null)}
+                    className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0 mt-0.5"
+                  >
+                    <X className="h-3 w-3" /> Deseleccionar
+                  </button>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -269,32 +336,100 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
                     <tr>
                       <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">#</th>
                       <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Producto</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ventas (₲)</th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ventas totales (₲)</th>
                       <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ganancia (₲)</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Unidades</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">{promLabel}</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock</th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title={`Total de unidades vendidas en los últimos ${periodos} ${periodoLabel}s`}>Uds. vendidas<br /><span className="font-normal text-[10px] text-muted-foreground/70">{periodos} {periodoLabel}s</span></th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">{curHeaderLabel}<br /><span className="font-normal text-[10px] text-muted-foreground/70">uds. vendidas</span></th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">{prevHeaderLabel}<br /><span className="font-normal text-[10px] text-muted-foreground/70">uds. vendidas</span></th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">{promHeaderLabel}<br /><span className="font-normal text-[10px] text-muted-foreground/70">uds. vendidas</span></th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock actual</th>
                       <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Variación</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {data.productos.map((p, idx) => (
-                      <tr key={p.producto_id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-4 py-2 text-muted-foreground">{idx + 1}</td>
-                        <td className="px-4 py-2 font-medium max-w-[180px] truncate">{p.producto_nombre}</td>
-                        <td className="px-4 py-2 text-right font-mono">{formatPYG(p.total_ventas)}</td>
-                        <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatPYG(p.ganancia_bruta)}</td>
-                        <td className="px-4 py-2 text-right font-mono">{formatNum(p.total_unidades)}</td>
-                        <td className="px-4 py-2 text-right font-mono text-muted-foreground">{p.promedio_por_periodo}</td>
-                        <td className="px-4 py-2 text-right font-mono">{formatNum(p.stock_actual)}</td>
-                        <td className="px-4 py-2 text-center"><VariacionBadge pct={p.variacion_pct} /></td>
-                      </tr>
-                    ))}
+                    {filteredProducts.length === 0 && (
+                      <tr><td colSpan={10} className="px-4 py-8 text-center text-muted-foreground">Sin resultados para "{productoSearch}"</td></tr>
+                    )}
+                    {filteredProducts.map((p, idx) => {
+                      const isSelected = selectedProduct?.id === p.producto_id;
+                      return (
+                        <tr
+                          key={p.producto_id}
+                          onClick={() => setSelectedProduct(isSelected ? null : { id: p.producto_id, nombre: p.producto_nombre })}
+                          className={cn(
+                            'cursor-pointer transition-colors',
+                            isSelected ? 'bg-primary/10 border-l-2 border-l-primary' : 'hover:bg-muted/30'
+                          )}
+                        >
+                          <td className="px-4 py-2 text-muted-foreground">{idx + 1}</td>
+                          <td className="px-4 py-2 font-medium max-w-[200px]">
+                            <div className="flex items-center gap-1.5">
+                              {isSelected && <MousePointerClick className="h-3 w-3 text-primary shrink-0" />}
+                              <span className="truncate">{p.producto_nombre}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono">{formatPYG(p.total_ventas)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatPYG(p.ganancia_bruta)}</td>
+                          <td className="px-4 py-2 text-right font-mono">{formatNum(p.total_unidades)}</td>
+                          <td className="px-4 py-2 text-right font-mono font-semibold">{formatNum(p.periodo_actual_unidades)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-muted-foreground">{formatNum(p.periodo_anterior_unidades)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-muted-foreground">{p.promedio_por_periodo}</td>
+                          <td className="px-4 py-2 text-right font-mono">{formatNum(p.stock_actual)}</td>
+                          <td className="px-4 py-2 text-center"><VariacionBadge pct={p.variacion_pct} /></td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             </CardContent>
           </Card>
+
+          {/* Per-product evolution chart */}
+          {selectedProduct && (
+            <Card className="border-primary/30 border">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-sm font-semibold">Evolución: {selectedProduct.nombre}</CardTitle>
+                    <CardDescription className="text-xs">Últimos {periodos} períodos ({periodo})</CardDescription>
+                  </div>
+                  <button onClick={() => setSelectedProduct(null)} className="text-muted-foreground hover:text-foreground">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {loadingEvolucion ? (
+                  <div className="flex items-center justify-center h-48 text-muted-foreground gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin" /> Cargando evolución…
+                  </div>
+                ) : productoEvolucion ? (
+                  <div className="h-56 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={productoEvolucion.tendencia}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" height={45} />
+                        <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px', fontSize: '12px' }}
+                          formatter={(value, name) => [
+                            name === 'Unidades vendidas' ? `${formatNum(value)} uds.` : formatPYG(value),
+                            name,
+                          ]}
+                        />
+                        <Legend wrapperStyle={{ fontSize: '11px' }} />
+                        <Bar yAxisId="left" dataKey="ventas" name="Ventas (₲)" fill="#0044CC" radius={[4, 4, 0, 0]} opacity={0.85} />
+                        <Bar yAxisId="left" dataKey="ganancia" name="Ganancia (₲)" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.7} />
+                        <Line yAxisId="right" type="monotone" dataKey="unidades" name="Unidades vendidas" stroke="#FF6B00" strokeWidth={2} dot={{ r: 3 }} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
         </>
       ) : null}
     </div>
