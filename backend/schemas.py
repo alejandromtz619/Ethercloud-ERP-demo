@@ -367,6 +367,8 @@ class EntradaStockHistorialResponse(BaseModel):
     referencia_tipo: Optional[str] = None
     referencia_id: Optional[int] = None
     creado_en: Optional[datetime] = None
+    cantidad_restante: Optional[int] = None
+    estado: Optional[str] = None  # "Activo" | "Agotado" — only for ENTRADA movements
 
 # Traspaso Stock
 class TraspasoStockCreate(BaseModel):

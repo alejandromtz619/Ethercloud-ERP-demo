@@ -31,6 +31,7 @@ class EstadoVenta(str, enum.Enum):
 class TipoMovimientoStock(str, enum.Enum):
     ENTRADA = "ENTRADA"
     SALIDA = "SALIDA"
+    VENTA = "VENTA"
     AJUSTE = "AJUSTE"
     TRASPASO = "TRASPASO"
 
@@ -366,6 +367,7 @@ class MovimientoStock(Base):
     condicion_pago = Column(String(20), nullable=True)  # 'contado' o 'credito'
     fecha_limite_pago = Column(Date, nullable=True)
     notas = Column(Text, nullable=True)
+    cantidad_restante = Column(Integer, nullable=True)  # For ENTRADA batches: remaining units (FIFO tracking)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     
     producto = relationship("Producto", back_populates="movimientos")

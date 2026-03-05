@@ -1148,7 +1148,51 @@ async def listar_stock(empresa_id: int, almacen_id: Optional[int] = None, db: As
     
     return stocks
 
-@api_router.post("/stock/entrada", response_model=MovimientoStockResponse)
+
+async def _consume_entrada_fifo(db: AsyncSession, producto_id: int, almacen_id: int, cantidad_consumida: int):
+    """Reduce cantidad_restante on ENTRADA batches using FIFO (oldest batch first)."""
+    result = await db.execute(
+        select(MovimientoStock)
+        .where(
+            MovimientoStock.producto_id == producto_id,
+            MovimientoStock.almacen_id == almacen_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0
+        )
+        .order_by(MovimientoStock.creado_en.asc())
+    )
+    batches = result.scalars().all()
+    remaining = cantidad_consumida
+    for batch in batches:
+        if remaining <= 0:
+            break
+        consumable = min(batch.cantidad_restante, remaining)
+        batch.cantidad_restante -= consumable
+        remaining -= consumable
+
+
+async def _restore_entrada_fifo(db: AsyncSession, producto_id: int, almacen_id: int, cantidad_restaurar: int):
+    """Restore cantidad_restante on ENTRADA batches — newest first (FIFO reversal)."""
+    result = await db.execute(
+        select(MovimientoStock)
+        .where(
+            MovimientoStock.producto_id == producto_id,
+            MovimientoStock.almacen_id == almacen_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante < MovimientoStock.cantidad
+        )
+        .order_by(MovimientoStock.creado_en.desc())
+    )
+    batches = result.scalars().all()
+    remaining = cantidad_restaurar
+    for batch in batches:
+        if remaining <= 0:
+            break
+        can_restore = min(batch.cantidad - batch.cantidad_restante, remaining)
+        batch.cantidad_restante += can_restore
+        remaining -= can_restore
+
+
 async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(StockActual).where(
@@ -1192,6 +1236,7 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         condicion_pago=data.condicion_pago,
         fecha_limite_pago=data.fecha_limite_pago,
         notas=data.notas,
+        cantidad_restante=data.cantidad,
         creado_en=now_paraguay()
     )
     db.add(movimiento)
@@ -1292,6 +1337,9 @@ async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Dep
     
     stock.cantidad -= data.cantidad
     
+    # Apply FIFO: consume from oldest active ENTRADA batches
+    await _consume_entrada_fifo(db, data.producto_id, data.almacen_id, data.cantidad)
+    
     # Register movement
     movimiento = MovimientoStock(
         producto_id=data.producto_id,
@@ -1362,7 +1410,13 @@ async def historial_stock_producto(producto_id: int, db: AsyncSession = Depends(
             almacen_nombre=almacen_nombre,
             referencia_tipo=mov.referencia_tipo,
             referencia_id=mov.referencia_id,
-            creado_en=mov.creado_en
+            creado_en=mov.creado_en,
+            cantidad_restante=mov.cantidad_restante,
+            estado=(
+                "Activo" if (mov.cantidad_restante or 0) > 0
+                else "Agotado" if mov.cantidad_restante == 0
+                else "Activo"  # old records without tracking
+            ) if mov.tipo == TipoMovimientoStock.ENTRADA else None
         ))
 
     return response
@@ -1510,10 +1564,12 @@ async def confirmar_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 stock.cantidad -= a_descontar
                 cantidad_restante -= a_descontar
                 
+                await _consume_entrada_fifo(db, item.producto_id, stock.almacen_id, a_descontar)
+                
                 mov = MovimientoStock(
                     producto_id=item.producto_id,
                     almacen_id=stock.almacen_id,
-                    tipo=TipoMovimientoStock.SALIDA,
+                    tipo=TipoMovimientoStock.VENTA,
                     cantidad=-a_descontar,
                     referencia_tipo='venta',
                     referencia_id=venta.id,
@@ -1742,10 +1798,12 @@ async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(ge
                 stock.cantidad -= a_descontar
                 cantidad_restante -= a_descontar
                 
+                await _consume_entrada_fifo(db, item.producto_id, stock.almacen_id, a_descontar)
+                
                 mov = MovimientoStock(
                     producto_id=item.producto_id,
                     almacen_id=stock.almacen_id,
-                    tipo=TipoMovimientoStock.SALIDA,
+                    tipo=TipoMovimientoStock.VENTA,
                     cantidad=-a_descontar,
                     referencia_tipo='venta',
                     referencia_id=venta.id,
@@ -1937,13 +1995,13 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
         
         for item in items:
             if item.producto_id:
-                # Buscar los movimientos de SALIDA de esta venta para devolver al mismo almacén
+                # Buscar los movimientos de VENTA/SALIDA de esta venta para devolver al mismo almacén
                 movimientos_salida_result = await db.execute(
                     select(MovimientoStock).where(
                         MovimientoStock.referencia_tipo == 'venta',
                         MovimientoStock.referencia_id == venta_id,
                         MovimientoStock.producto_id == item.producto_id,
-                        MovimientoStock.tipo == TipoMovimientoStock.SALIDA
+                        MovimientoStock.tipo.in_([TipoMovimientoStock.SALIDA, TipoMovimientoStock.VENTA])
                     )
                 )
                 movimientos_salida = movimientos_salida_result.scalars().all()
@@ -1972,6 +2030,9 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                         )
                         db.add(stock)
                     
+                    # Restore FIFO batches
+                    await _restore_entrada_fifo(db, item.producto_id, mov_salida.almacen_id, cantidad_devolver)
+                    
                     # Registrar movimiento de ENTRADA (devolución)
                     movimiento = MovimientoStock(
                         almacen_id=mov_salida.almacen_id,
@@ -1980,6 +2041,7 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                         cantidad=cantidad_devolver,
                         referencia_tipo="ANULACION_VENTA",
                         referencia_id=venta_id,
+                        cantidad_restante=cantidad_devolver,
                         creado_en=now_paraguay()
                     )
                     db.add(movimiento)
@@ -5374,6 +5436,30 @@ async def migrate_documentos_temporales():
 @app.on_event("startup")
 async def startup():
     await init_db()
+    # Auto-migration: add cantidad_restante column and VENTA enum value if missing
+    try:
+        async with engine.begin() as conn:
+            db_url = str(engine.url)
+            if 'postgresql' in db_url:
+                await conn.execute(text(
+                    "ALTER TABLE movimientos_stock ADD COLUMN IF NOT EXISTS cantidad_restante INTEGER"
+                ))
+                # Add VENTA enum value (idempotent)
+                await conn.execute(text(
+                    "DO $$ BEGIN ALTER TYPE tipomovimientostock ADD VALUE IF NOT EXISTS 'VENTA'; "
+                    "EXCEPTION WHEN duplicate_object THEN null; END $$"
+                ))
+            else:
+                # SQLite: ADD COLUMN ignores if column exists via try/except
+                try:
+                    await conn.execute(text(
+                        "ALTER TABLE movimientos_stock ADD COLUMN cantidad_restante INTEGER"
+                    ))
+                except Exception:
+                    pass  # Column already exists
+        logger.info("Stock migration check completed")
+    except Exception as e:
+        logger.warning(f"Stock migration warning (may be harmless): {e}")
     logger.info("Database initialized")
 
 @app.on_event("shutdown")

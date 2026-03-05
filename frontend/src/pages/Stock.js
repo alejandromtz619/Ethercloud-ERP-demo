@@ -40,10 +40,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../components/ui/popover';
-import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2 } from 'lucide-react';
+import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2, AlertTriangle, Calculator, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { DatePickerInput } from '../components/ui/date-picker-input';
+import { Alert, AlertDescription } from '../components/ui/alert';
 
 const Stock = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -53,6 +54,10 @@ const Stock = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [salidaDialogOpen, setSalidaDialogOpen] = useState(false);
+  const [stockTotalMap, setStockTotalMap] = useState({});  // producto_id -> total qty across all almacenes
+  const [entradaProductoStock, setEntradaProductoStock] = useState(0); // current total stock of selected product
+  const [entradaProductoPrecioCosto, setEntradaProductoPrecioCosto] = useState(0); // original precio_costo before this entrada
+  const [historialFilter, setHistorialFilter] = useState('ALL'); // 'ALL' | 'ENTRADA' | 'VENTA' | 'SALIDA'
   const [traspasoDialogOpen, setTraspasoDialogOpen] = useState(false);
   const [almacenDialogOpen, setAlmacenDialogOpen] = useState(false);
   const [selectedAlmacen, setSelectedAlmacen] = useState('');
@@ -109,17 +114,25 @@ const Stock = () => {
       let stockUrl = `/stock?empresa_id=${empresa.id}`;
       if (selectedAlmacen) stockUrl += `&almacen_id=${selectedAlmacen}`;
       
-      const [stockData, almacenesData, productosData, proveedoresData] = await Promise.all([
+      const [stockData, almacenesData, productosData, proveedoresData, allStockData] = await Promise.all([
         api(stockUrl),
         api(`/almacenes?empresa_id=${empresa.id}`),
         api(`/productos?empresa_id=${empresa.id}`),
-        api(`/proveedores?empresa_id=${empresa.id}`)
+        api(`/proveedores?empresa_id=${empresa.id}`),
+        api(`/stock?empresa_id=${empresa.id}`)  // unfiltered, for CPP/warning calculations
       ]);
       
       setStock(stockData);
       setAlmacenes(almacenesData);
       setProductos(productosData);
       setProveedores(proveedoresData);
+
+      // Build total stock map across all almacenes
+      const map = {};
+      for (const s of allStockData) {
+        map[s.producto_id] = (map[s.producto_id] || 0) + (s.cantidad || 0);
+      }
+      setStockTotalMap(map);
     } catch (e) {
       toast.error('Error al cargar datos');
     } finally {
@@ -163,6 +176,8 @@ const Stock = () => {
       }
       setDialogOpen(false);
       setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', precio_venta: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
+      setEntradaProductoStock(0);
+      setEntradaProductoPrecioCosto(0);
       fetchData();
     } catch (e) {
       toast.error('Error al registrar entrada');
@@ -505,6 +520,9 @@ const Stock = () => {
                                     precio_venta: p.precio_venta ? p.precio_venta.toString() : '',
                                     proveedor_id: p.proveedor_id ? p.proveedor_id.toString() : entradaForm.proveedor_id
                                   });
+                                  const totalStock = stockTotalMap[p.id] || 0;
+                                  setEntradaProductoStock(totalStock);
+                                  setEntradaProductoPrecioCosto(p.precio_costo ? parseFloat(p.precio_costo) : 0);
                                   setEntradaPopoverOpen(false);
                                   setProductoSearchEntrada('');
                                 }}
@@ -562,6 +580,46 @@ const Stock = () => {
                     />
                   </div>
                 </div>
+                {/* Warning: product already has stock */}
+                {entradaForm.producto_id && entradaProductoStock > 0 && (
+                  <Alert variant="destructive" className="py-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Este producto tiene <strong>{entradaProductoStock.toLocaleString('es-PY')} unidades</strong> en stock actualmente. ¿Estás seguro de que querés cargar una nueva tanda?
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {/* CPP button: shown when existing stock AND qty AND cost are all set */}
+                {entradaForm.producto_id && entradaProductoStock > 0 && entradaForm.cantidad && entradaForm.costo_unitario && (
+                  (() => {
+                    const currentStock = entradaProductoStock;
+                    const currentCosto = entradaProductoPrecioCosto;
+                    const newQty = parseInt(entradaForm.cantidad) || 0;
+                    const newCosto = parseFloat(entradaForm.costo_unitario) || 0;
+                    const cpp = newQty + currentStock > 0
+                      ? Math.round(((currentStock * currentCosto) + (newQty * newCosto)) / (currentStock + newQty))
+                      : newCosto;
+                    return (
+                      <div className="flex items-center gap-2 bg-muted/40 rounded px-3 py-2">
+                        <Calculator className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">CPP:</span>{' '}
+                          ({currentStock} × {currentCosto.toLocaleString('es-PY')} + {newQty} × {newCosto.toLocaleString('es-PY')}) ÷ {currentStock + newQty}{' '}
+                          = <span className="font-mono font-semibold text-foreground">Gs. {cpp.toLocaleString('es-PY')}</span>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="text-xs h-7 shrink-0"
+                          onClick={() => setEntradaForm({...entradaForm, costo_unitario: cpp.toString()})}
+                        >
+                          Aplicar
+                        </Button>
+                      </div>
+                    );
+                  })()
+                )}
                 <div>
                   <Label>Precio de Venta (Gs.) <span className="text-muted-foreground text-xs font-normal">(opcional)</span></Label>
                   <Input
@@ -869,7 +927,7 @@ const Stock = () => {
         </CardContent>
       </Card>
       {/* Historial Dialog */}
-      <Dialog open={historialDialogOpen} onOpenChange={setHistorialDialogOpen}>
+      <Dialog open={historialDialogOpen} onOpenChange={(open) => { setHistorialDialogOpen(open); if (!open) setHistorialFilter('ALL'); }}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
           <DialogDescription className="hidden">Historial de movimientos del producto</DialogDescription>
           <DialogHeader>
@@ -878,6 +936,28 @@ const Stock = () => {
               Historial &mdash; {historialProducto?.nombre}
             </DialogTitle>
           </DialogHeader>
+          {/* Filter buttons */}
+          {!historialLoading && historialData.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { key: 'ALL', label: 'Todos' },
+                { key: 'ENTRADA', label: 'Entradas' },
+                { key: 'VENTA', label: 'Ventas' },
+                { key: 'SALIDA', label: 'Bajas' },
+              ].map(f => (
+                <Button
+                  key={f.key}
+                  type="button"
+                  size="sm"
+                  variant={historialFilter === f.key ? 'default' : 'outline'}
+                  className="h-7 text-xs"
+                  onClick={() => setHistorialFilter(f.key)}
+                >
+                  {f.label}
+                </Button>
+              ))}
+            </div>
+          )}
           {historialLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin" />
@@ -893,6 +973,7 @@ const Stock = () => {
                 <TableRow>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Tipo</TableHead>
+                  <TableHead>Estado</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
                   <TableHead className="text-right">Costo Unit.</TableHead>
@@ -903,15 +984,19 @@ const Stock = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {historialData.map((mov) => {
+                {historialData
+                  .filter(mov => historialFilter === 'ALL' || mov.tipo === historialFilter)
+                  .map((mov) => {
                   const tipoColor = {
                     ENTRADA: 'text-green-600 dark:text-green-400',
-                    SALIDA: 'text-red-600 dark:text-red-400',
+                    SALIDA: 'text-orange-500 dark:text-orange-400',
+                    VENTA: 'text-red-600 dark:text-red-400',
                     TRASPASO: 'text-blue-600 dark:text-blue-400',
                   };
                   const tipoLabel = {
                     ENTRADA: 'Entrada',
-                    SALIDA: 'Salida',
+                    SALIDA: 'Baja',
+                    VENTA: 'Venta',
                     TRASPASO: 'Traspaso',
                   };
                   return (
@@ -924,6 +1009,18 @@ const Stock = () => {
                       </TableCell>
                       <TableCell className={cn('font-semibold text-xs', tipoColor[mov.tipo])}>
                         {tipoLabel[mov.tipo] || mov.tipo}
+                      </TableCell>
+                      <TableCell>
+                        {mov.tipo === 'ENTRADA' && mov.estado ? (
+                          <Badge
+                            className={cn('text-xs', mov.estado === 'Activo'
+                              ? 'badge-success'
+                              : 'bg-muted text-muted-foreground'
+                            )}
+                          >
+                            {mov.estado}
+                          </Badge>
+                        ) : '-'}
                       </TableCell>
                       <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
                       <TableCell className="text-right font-mono font-bold">
