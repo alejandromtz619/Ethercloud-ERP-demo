@@ -31,7 +31,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
-from database import get_db, init_db, engine, Base
+from database import get_db, init_db, engine, Base, async_session_maker
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
     Cliente, CreditoCliente, PagoCredito, Proveedor, ProveedorProducto, DeudaProveedor,
@@ -5974,6 +5974,31 @@ async def startup():
         logger.info("Stock migration: cantidad_restante column ensured")
     except Exception as e:
         logger.warning(f"Stock migration warning (may be harmless): {e}")
+
+    # Auto-migration: ensure bi.ver permission exists and is assigned to ADMIN roles
+    try:
+        async with async_session_maker() as db:
+            # Insert permission if missing
+            existing = await db.execute(select(Permiso).where(Permiso.clave == "bi.ver"))
+            if not existing.scalar_one_or_none():
+                bi_perm = Permiso(clave="bi.ver", descripcion="Ver Business Intelligence")
+                db.add(bi_perm)
+                await db.flush()
+                # Assign to every ADMIN rol found
+                admin_roles = await db.execute(select(Rol).where(Rol.nombre == "ADMIN"))
+                for admin_rol in admin_roles.scalars().all():
+                    db.add(RolPermiso(rol_id=admin_rol.id, permiso_id=bi_perm.id))
+                # Assign to every GERENTE rol found
+                gerente_roles = await db.execute(select(Rol).where(Rol.nombre == "GERENTE"))
+                for g_rol in gerente_roles.scalars().all():
+                    db.add(RolPermiso(rol_id=g_rol.id, permiso_id=bi_perm.id))
+                await db.commit()
+                logger.info("BI migration: bi.ver permission created and assigned")
+            else:
+                logger.info("BI migration: bi.ver already exists, skipping")
+    except Exception as e:
+        logger.warning(f"BI permission migration warning: {e}")
+
     logger.info("Database initialized")
 
 @app.on_event("shutdown")
