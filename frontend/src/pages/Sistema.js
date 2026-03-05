@@ -7,7 +7,7 @@ import { Label } from '../components/ui/label';
 import { Switch } from '../components/ui/switch';
 import { Separator } from '../components/ui/separator';
 import { Badge } from '../components/ui/badge';
-import { Settings, Sun, Moon, Palette, Phone, User, DollarSign, RefreshCw, Loader2 } from 'lucide-react';
+import { Settings, Sun, Moon, Palette, Phone, User, DollarSign, RefreshCw, Loader2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 
@@ -111,6 +111,24 @@ const Sistema = () => {
       toast.error('Error al guardar preferencias');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const [syncingPermisos, setSyncingPermisos] = useState(false);
+
+  const handleSyncPermisos = async () => {
+    setSyncingPermisos(true);
+    try {
+      const data = await api('/sistema/sync-permisos', { method: 'POST' });
+      if (data.permisos_added?.length > 0) {
+        toast.success(`Permisos actualizados: ${data.permisos_added.join(', ')}`);
+      } else {
+        toast.info('Todo al día — no había permisos faltantes');
+      }
+    } catch (e) {
+      toast.error('Error al sincronizar permisos');
+    } finally {
+      setSyncingPermisos(false);
     }
   };
 
@@ -332,6 +350,33 @@ const Sistema = () => {
                 <p className="text-primary font-mono mt-1">0976 574 271</p>
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Maintenance */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5" />
+            Mantenimiento
+          </CardTitle>
+          <CardDescription>
+            Herramientas de mantenimiento del sistema
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Sincronizar permisos</p>
+              <p className="text-xs text-muted-foreground">
+                Agrega permisos nuevos a la base de datos y los asigna al rol ADMIN
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleSyncPermisos} disabled={syncingPermisos}>
+              {syncingPermisos ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              Sincronizar
+            </Button>
           </div>
         </CardContent>
       </Card>

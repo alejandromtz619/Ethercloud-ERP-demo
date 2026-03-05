@@ -5976,6 +5976,48 @@ async def bi_estadisticas_productos_excel(
     )
 
 
+# ==================== SYNC PERMISSIONS ====================
+@api_router.post("/sistema/sync-permisos")
+async def sync_permisos(db: AsyncSession = Depends(get_db)):
+    """Add any missing permissions and assign them to all ADMIN roles. Safe to run on production."""
+    all_permisos = [
+        ("gastos.ver", "Ver gastos operativos"),
+        ("gastos.gestionar", "Gestionar gastos operativos"),
+    ]
+
+    added_perms = []
+    for clave, desc in all_permisos:
+        existing = await db.execute(select(Permiso).where(Permiso.clave == clave))
+        if not existing.scalar_one_or_none():
+            perm = Permiso(clave=clave, descripcion=desc)
+            db.add(perm)
+            await db.flush()
+            added_perms.append(clave)
+
+    # Assign new permissions to all ADMIN roles
+    assigned = 0
+    for clave in added_perms:
+        perm_result = await db.execute(select(Permiso).where(Permiso.clave == clave))
+        perm = perm_result.scalar_one_or_none()
+        if not perm:
+            continue
+        admin_roles = await db.execute(select(Rol).where(Rol.nombre == "ADMIN"))
+        for rol in admin_roles.scalars().all():
+            existing_rp = await db.execute(
+                select(RolPermiso).where(RolPermiso.rol_id == rol.id, RolPermiso.permiso_id == perm.id)
+            )
+            if not existing_rp.scalar_one_or_none():
+                db.add(RolPermiso(rol_id=rol.id, permiso_id=perm.id))
+                assigned += 1
+
+    await db.commit()
+    return {
+        "permisos_added": added_perms,
+        "rol_permisos_assigned": assigned,
+        "message": "Sincronización de permisos completada" if added_perms else "No hay permisos nuevos para agregar"
+    }
+
+
 # ==================== SEED DATA ====================
 @api_router.post("/seed")
 async def seed_data(db: AsyncSession = Depends(get_db)):
@@ -6071,6 +6113,9 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         ("clientes.ver", "Ver clientes"),
         ("facturas.ver", "Ver facturas"),
         ("ventas.ver_historial", "Ver historial de ventas"),
+        # Gastos operativos
+        ("gastos.ver", "Ver gastos operativos"),
+        ("gastos.gestionar", "Gestionar gastos operativos"),
     ]
     for clave, desc in permisos_data:
         db.add(Permiso(clave=clave, descripcion=desc))
@@ -6106,7 +6151,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "delivery.ver", "delivery.crear", "delivery.actualizar_estado",
         "flota.ver", "laboratorio.ver", "laboratorio.crear",
         "reportes.ver", "reportes.exportar",
-        "bi.ver"
+        "bi.ver",
+        "gastos.ver", "gastos.gestionar"
     ]
     if gerente_rol:
         for perm_clave in gerente_permisos:
@@ -6247,6 +6293,8 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
             ("funcionarios.editar", "Editar funcionarios"),
             ("usuarios.gestionar", "Gestionar usuarios"),
             ("sistema.configurar", "Configurar sistema"),
+            ("gastos.ver", "Ver gastos operativos"),
+            ("gastos.gestionar", "Gestionar gastos operativos"),
         ]
         for clave, desc in permisos_data:
             permiso = Permiso(clave=clave, descripcion=desc, estado=True)

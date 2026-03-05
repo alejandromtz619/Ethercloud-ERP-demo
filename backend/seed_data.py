@@ -117,6 +117,9 @@ async def seed_database():
             ("ventas.imprimir_boleta", "Imprimir boletas"),
             ("ventas.imprimir_factura", "Imprimir facturas"),
             ("ventas.ver_historial", "Ver historial de ventas"),
+            # Gastos operativos
+            ("gastos.ver", "Ver gastos operativos"),
+            ("gastos.gestionar", "Gestionar gastos operativos"),
             # Productos
             ("productos.ver", "Ver productos"),
             ("productos.crear", "Crear productos"),
