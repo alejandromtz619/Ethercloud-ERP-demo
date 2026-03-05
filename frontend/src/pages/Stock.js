@@ -64,6 +64,7 @@ const Stock = () => {
     cantidad: '',
     proveedor_id: '',
     costo_unitario: '',
+    precio_venta: '',
     condicion_pago: 'contado',
     fecha_limite_pago: '',
     notas: ''
@@ -149,6 +150,7 @@ const Stock = () => {
         tipo: 'ENTRADA',
         proveedor_id: entradaForm.proveedor_id ? parseInt(entradaForm.proveedor_id) : null,
         costo_unitario: entradaForm.costo_unitario ? parseFloat(entradaForm.costo_unitario) : null,
+        precio_venta: entradaForm.precio_venta ? parseFloat(entradaForm.precio_venta) : null,
         condicion_pago: entradaForm.condicion_pago || null,
         fecha_limite_pago: entradaForm.fecha_limite_pago || null,
         notas: entradaForm.notas || null
@@ -160,7 +162,7 @@ const Stock = () => {
         toast.success('Entrada registrada');
       }
       setDialogOpen(false);
-      setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
+      setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', precio_venta: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
       fetchData();
     } catch (e) {
       toast.error('Error al registrar entrada');
@@ -500,6 +502,7 @@ const Stock = () => {
                                     ...entradaForm,
                                     producto_id: p.id.toString(),
                                     costo_unitario: p.precio_costo ? p.precio_costo.toString() : '',
+                                    precio_venta: p.precio_venta ? p.precio_venta.toString() : '',
                                     proveedor_id: p.proveedor_id ? p.proveedor_id.toString() : entradaForm.proveedor_id
                                   });
                                   setEntradaPopoverOpen(false);
@@ -558,6 +561,16 @@ const Stock = () => {
                       onChange={(e) => setEntradaForm({...entradaForm, costo_unitario: e.target.value})}
                     />
                   </div>
+                </div>
+                <div>
+                  <Label>Precio de Venta (Gs.) <span className="text-muted-foreground text-xs font-normal">(opcional)</span></Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={entradaForm.precio_venta}
+                    onChange={(e) => setEntradaForm({...entradaForm, precio_venta: e.target.value})}
+                  />
                 </div>
                 {entradaForm.costo_unitario && entradaForm.cantidad && (
                   <div className="text-sm text-muted-foreground bg-muted/40 rounded px-3 py-2">

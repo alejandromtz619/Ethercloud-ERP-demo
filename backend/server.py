@@ -1169,7 +1169,7 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         db.add(stock)
     
     # Actualizar precio_costo y/o proveedor del producto si se proporcionan
-    if data.costo_unitario is not None or data.proveedor_id is not None:
+    if data.costo_unitario is not None or data.proveedor_id is not None or data.precio_venta is not None:
         prod_result = await db.execute(select(Producto).where(Producto.id == data.producto_id))
         producto_obj = prod_result.scalar_one_or_none()
         if producto_obj:
@@ -1177,6 +1177,8 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
                 producto_obj.precio_costo = data.costo_unitario
             if data.proveedor_id is not None:
                 producto_obj.proveedor_id = data.proveedor_id
+            if data.precio_venta is not None:
+                producto_obj.precio_venta = data.precio_venta
 
     movimiento = MovimientoStock(
         producto_id=data.producto_id,

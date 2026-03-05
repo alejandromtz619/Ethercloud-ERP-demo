@@ -334,6 +334,7 @@ class MovimientoStockBase(BaseModel):
 class MovimientoStockCreate(MovimientoStockBase):
     proveedor_id: Optional[int] = None
     costo_unitario: Optional[Decimal] = None
+    precio_venta: Optional[Decimal] = None
     condicion_pago: Optional[str] = None  # 'contado' o 'credito'
     fecha_limite_pago: Optional[date] = None
     notas: Optional[str] = None
