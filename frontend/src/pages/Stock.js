@@ -939,7 +939,7 @@ const Stock = () => {
       </Card>
       {/* Historial Dialog */}
       <Dialog open={historialDialogOpen} onOpenChange={(open) => { setHistorialDialogOpen(open); if (!open) setHistorialFilter('ALL'); }}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl max-h-[88vh] overflow-y-auto">
           <DialogDescription className="hidden">Historial de movimientos del producto</DialogDescription>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -987,7 +987,7 @@ const Stock = () => {
                   <TableHead>Estado</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
-                  <TableHead className="text-right">Costo Real</TableHead>
+                  <TableHead className="text-right">Costo Compra</TableHead>
                   <TableHead className="text-right">CPP Pond.</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
                   <TableHead>Condición</TableHead>

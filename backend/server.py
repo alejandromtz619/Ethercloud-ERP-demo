@@ -1193,6 +1193,45 @@ async def _restore_entrada_fifo(db: AsyncSession, producto_id: int, almacen_id: 
         remaining -= can_restore
 
 
+async def _recalculate_precio_costo_fifo(db: AsyncSession, producto_id: int):
+    """After a consumption, recalculate producto.precio_costo based on remaining active ENTRADA batches.
+    - 1 active batch  → use its real costo_unitario
+    - Multiple batches → weighted average CPP across all active batches
+    - 0 active batches → no change
+    """
+    result = await db.execute(
+        select(MovimientoStock)
+        .where(
+            MovimientoStock.producto_id == producto_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0,
+            MovimientoStock.costo_unitario.isnot(None),
+        )
+        .order_by(MovimientoStock.creado_en.asc())
+    )
+    active_batches = result.scalars().all()
+
+    if not active_batches:
+        return  # nothing to recalculate
+
+    if len(active_batches) == 1:
+        new_costo = active_batches[0].costo_unitario
+    else:
+        total_qty = sum(b.cantidad_restante for b in active_batches)
+        if total_qty == 0:
+            return
+        total_value = sum(
+            Decimal(str(b.costo_unitario)) * Decimal(str(b.cantidad_restante))
+            for b in active_batches
+        )
+        new_costo = round(total_value / Decimal(str(total_qty)))
+
+    prod_result = await db.execute(select(Producto).where(Producto.id == producto_id))
+    producto_obj = prod_result.scalar_one_or_none()
+    if producto_obj:
+        producto_obj.precio_costo = new_costo
+
+
 @api_router.post("/stock/entrada")
 async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -1343,7 +1382,8 @@ async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Dep
     
     # Apply FIFO: consume from oldest active ENTRADA batches
     await _consume_entrada_fifo(db, data.producto_id, data.almacen_id, data.cantidad)
-    
+    await _recalculate_precio_costo_fifo(db, data.producto_id)
+
     # Register movement
     movimiento = MovimientoStock(
         producto_id=data.producto_id,
@@ -1353,7 +1393,7 @@ async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Dep
         creado_en=now_paraguay()
     )
     db.add(movimiento)
-    
+
     await db.commit()
     return {"message": "Salida registrada correctamente", "stock_restante": stock.cantidad}
 
@@ -1582,6 +1622,8 @@ async def confirmar_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 )
                 db.add(mov)
         
+            await _recalculate_precio_costo_fifo(db, item.producto_id)
+
         elif item.materia_laboratorio_id:
             materia_result = await db.execute(
                 select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id)
@@ -1815,7 +1857,9 @@ async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(ge
                     creado_en=now_paraguay()
                 )
                 db.add(mov)
-        
+
+            await _recalculate_precio_costo_fifo(db, item.producto_id)
+
         elif item.materia_laboratorio_id:
             materia_result = await db.execute(
                 select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id)
