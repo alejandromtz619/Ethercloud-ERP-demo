@@ -57,6 +57,7 @@ const Stock = () => {
   const [stockTotalMap, setStockTotalMap] = useState({});  // producto_id -> total qty across all almacenes
   const [entradaProductoStock, setEntradaProductoStock] = useState(0); // current total stock of selected product
   const [entradaProductoPrecioCosto, setEntradaProductoPrecioCosto] = useState(0); // original precio_costo before this entrada
+  const [entradaCPPAplicado, setEntradaCPPAplicado] = useState(null); // CPP value applied to product pricing (separate from real cost)
   const [historialFilter, setHistorialFilter] = useState('ALL'); // 'ALL' | 'ENTRADA' | 'VENTA' | 'BAJA'
   const [traspasoDialogOpen, setTraspasoDialogOpen] = useState(false);
   const [almacenDialogOpen, setAlmacenDialogOpen] = useState(false);
@@ -163,6 +164,7 @@ const Stock = () => {
         tipo: 'ENTRADA',
         proveedor_id: entradaForm.proveedor_id ? parseInt(entradaForm.proveedor_id) : null,
         costo_unitario: entradaForm.costo_unitario ? parseFloat(entradaForm.costo_unitario) : null,
+        costo_ponderado: entradaCPPAplicado,
         precio_venta: entradaForm.precio_venta ? parseFloat(entradaForm.precio_venta) : null,
         condicion_pago: entradaForm.condicion_pago || null,
         fecha_limite_pago: entradaForm.fecha_limite_pago || null,
@@ -178,6 +180,7 @@ const Stock = () => {
       setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', precio_venta: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
       setEntradaProductoStock(0);
       setEntradaProductoPrecioCosto(0);
+      setEntradaCPPAplicado(null);
       fetchData();
     } catch (e) {
       toast.error('Error al registrar entrada');
@@ -523,6 +526,7 @@ const Stock = () => {
                                   const totalStock = stockTotalMap[p.id] || 0;
                                   setEntradaProductoStock(totalStock);
                                   setEntradaProductoPrecioCosto(p.precio_costo ? parseFloat(p.precio_costo) : 0);
+                                  setEntradaCPPAplicado(null);
                                   setEntradaPopoverOpen(false);
                                   setProductoSearchEntrada('');
                                 }}
@@ -576,7 +580,7 @@ const Stock = () => {
                       min="0"
                       placeholder="0"
                       value={entradaForm.costo_unitario}
-                      onChange={(e) => setEntradaForm({...entradaForm, costo_unitario: e.target.value})}
+                      onChange={(e) => { setEntradaForm({...entradaForm, costo_unitario: e.target.value}); setEntradaCPPAplicado(null); }}
                     />
                   </div>
                 </div>
@@ -607,15 +611,22 @@ const Stock = () => {
                           ({currentStock} × {currentCosto.toLocaleString('es-PY')} + {newQty} × {newCosto.toLocaleString('es-PY')}) ÷ {currentStock + newQty}{' '}
                           = <span className="font-mono font-semibold text-foreground">Gs. {cpp.toLocaleString('es-PY')}</span>
                         </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="text-xs h-7 shrink-0"
-                          onClick={() => setEntradaForm({...entradaForm, costo_unitario: cpp.toString()})}
-                        >
-                          Aplicar
-                        </Button>
+                        {entradaCPPAplicado === cpp ? (
+                          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-semibold">
+                            ✓ Aplicado
+                            <button type="button" className="ml-1 opacity-60 hover:opacity-100" onClick={() => setEntradaCPPAplicado(null)}>✕</button>
+                          </span>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-xs h-7 shrink-0"
+                            onClick={() => setEntradaCPPAplicado(cpp)}
+                          >
+                            Aplicar
+                          </Button>
+                        )}
                       </div>
                     );
                   })()
@@ -976,7 +987,8 @@ const Stock = () => {
                   <TableHead>Estado</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
-                  <TableHead className="text-right">Costo Unit.</TableHead>
+                  <TableHead className="text-right">Costo Real</TableHead>
+                  <TableHead className="text-right">CPP Pond.</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
                   <TableHead>Condición</TableHead>
                   <TableHead>Proveedor</TableHead>
@@ -1039,6 +1051,11 @@ const Stock = () => {
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {mov.tipo === 'ENTRADA' && mov.costo_ponderado != null
+                          ? <span className="text-amber-500 dark:text-amber-400">{formatCurrency(mov.costo_ponderado)}</span>
+                          : <span className="text-muted-foreground">-</span>}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs font-semibold">
                         {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}

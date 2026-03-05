@@ -363,7 +363,8 @@ class MovimientoStock(Base):
     referencia_id = Column(Integer)
     # Campos para entrada con proveedor, costo y condición de pago
     proveedor_id = Column(Integer, ForeignKey("proveedores.id"), nullable=True)
-    costo_unitario = Column(Numeric(15, 2), nullable=True)
+    costo_unitario = Column(Numeric(15, 2), nullable=True)   # real purchase cost per unit
+    costo_ponderado = Column(Numeric(15, 2), nullable=True)  # CPP applied to product pricing at time of entry
     condicion_pago = Column(String(20), nullable=True)  # 'contado' o 'credito'
     fecha_limite_pago = Column(Date, nullable=True)
     notas = Column(Text, nullable=True)

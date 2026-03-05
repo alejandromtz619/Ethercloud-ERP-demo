@@ -1214,12 +1214,14 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         db.add(stock)
     
     # Actualizar precio_costo y/o proveedor del producto si se proporcionan
-    if data.costo_unitario is not None or data.proveedor_id is not None or data.precio_venta is not None:
+    if data.costo_unitario is not None or data.costo_ponderado is not None or data.proveedor_id is not None or data.precio_venta is not None:
         prod_result = await db.execute(select(Producto).where(Producto.id == data.producto_id))
         producto_obj = prod_result.scalar_one_or_none()
         if producto_obj:
-            if data.costo_unitario is not None:
-                producto_obj.precio_costo = data.costo_unitario
+            # Use CPP if provided, otherwise fall back to real unit cost
+            costo_para_producto = data.costo_ponderado if data.costo_ponderado is not None else data.costo_unitario
+            if costo_para_producto is not None:
+                producto_obj.precio_costo = costo_para_producto
             if data.proveedor_id is not None:
                 producto_obj.proveedor_id = data.proveedor_id
             if data.precio_venta is not None:
@@ -1234,6 +1236,7 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         referencia_id=data.referencia_id,
         proveedor_id=data.proveedor_id,
         costo_unitario=data.costo_unitario,
+        costo_ponderado=data.costo_ponderado,
         condicion_pago=data.condicion_pago,
         fecha_limite_pago=data.fecha_limite_pago,
         notas=data.notas,
@@ -1402,6 +1405,7 @@ async def historial_stock_producto(producto_id: int, db: AsyncSession = Depends(
             tipo=mov.tipo,
             cantidad=mov.cantidad,
             costo_unitario=mov.costo_unitario,
+            costo_ponderado=mov.costo_ponderado,
             total_compra=total_compra,
             condicion_pago=mov.condicion_pago,
             fecha_limite_pago=mov.fecha_limite_pago,

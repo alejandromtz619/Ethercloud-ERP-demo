@@ -334,7 +334,8 @@ class MovimientoStockBase(BaseModel):
 
 class MovimientoStockCreate(MovimientoStockBase):
     proveedor_id: Optional[int] = None
-    costo_unitario: Optional[Decimal] = None
+    costo_unitario: Optional[Decimal] = None       # real purchase cost per unit
+    costo_ponderado: Optional[Decimal] = None      # CPP applied to product pricing
     precio_venta: Optional[Decimal] = None
     condicion_pago: Optional[str] = None  # 'contado' o 'credito'
     fecha_limite_pago: Optional[date] = None
@@ -358,6 +359,7 @@ class EntradaStockHistorialResponse(BaseModel):
     tipo: TipoMovimientoStock
     cantidad: int
     costo_unitario: Optional[Decimal] = None
+    costo_ponderado: Optional[Decimal] = None
     total_compra: Optional[Decimal] = None
     condicion_pago: Optional[str] = None
     fecha_limite_pago: Optional[date] = None
