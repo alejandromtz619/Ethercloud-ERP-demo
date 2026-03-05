@@ -57,7 +57,7 @@ const Stock = () => {
   const [stockTotalMap, setStockTotalMap] = useState({});  // producto_id -> total qty across all almacenes
   const [entradaProductoStock, setEntradaProductoStock] = useState(0); // current total stock of selected product
   const [entradaProductoPrecioCosto, setEntradaProductoPrecioCosto] = useState(0); // original precio_costo before this entrada
-  const [historialFilter, setHistorialFilter] = useState('ALL'); // 'ALL' | 'ENTRADA' | 'VENTA' | 'SALIDA'
+  const [historialFilter, setHistorialFilter] = useState('ALL'); // 'ALL' | 'ENTRADA' | 'VENTA' | 'BAJA'
   const [traspasoDialogOpen, setTraspasoDialogOpen] = useState(false);
   const [almacenDialogOpen, setAlmacenDialogOpen] = useState(false);
   const [selectedAlmacen, setSelectedAlmacen] = useState('');
@@ -943,7 +943,7 @@ const Stock = () => {
                 { key: 'ALL', label: 'Todos' },
                 { key: 'ENTRADA', label: 'Entradas' },
                 { key: 'VENTA', label: 'Ventas' },
-                { key: 'SALIDA', label: 'Bajas' },
+                { key: 'BAJA', label: 'Bajas' },
               ].map(f => (
                 <Button
                   key={f.key}
@@ -985,20 +985,30 @@ const Stock = () => {
               </TableHeader>
               <TableBody>
                 {historialData
-                  .filter(mov => historialFilter === 'ALL' || mov.tipo === historialFilter)
+                  .filter(mov => {
+                    if (historialFilter === 'ALL') return true;
+                    if (historialFilter === 'ENTRADA') return mov.tipo === 'ENTRADA';
+                    if (historialFilter === 'VENTA') return mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta';
+                    if (historialFilter === 'BAJA') return mov.tipo === 'SALIDA' && mov.referencia_tipo !== 'venta';
+                    if (historialFilter === 'TRASPASO') return mov.tipo === 'TRASPASO';
+                    return true;
+                  })
                   .map((mov) => {
+                  const esVenta = mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta';
                   const tipoColor = {
                     ENTRADA: 'text-green-600 dark:text-green-400',
-                    SALIDA: 'text-orange-500 dark:text-orange-400',
-                    VENTA: 'text-red-600 dark:text-red-400',
                     TRASPASO: 'text-blue-600 dark:text-blue-400',
                   };
-                  const tipoLabel = {
-                    ENTRADA: 'Entrada',
-                    SALIDA: 'Baja',
-                    VENTA: 'Venta',
-                    TRASPASO: 'Traspaso',
-                  };
+                  const tipoColorResolved = esVenta
+                    ? 'text-red-600 dark:text-red-400'
+                    : mov.tipo === 'SALIDA'
+                    ? 'text-orange-500 dark:text-orange-400'
+                    : tipoColor[mov.tipo] || 'text-muted-foreground';
+                  const tipoLabelResolved = esVenta ? 'Venta'
+                    : mov.tipo === 'SALIDA' ? 'Baja'
+                    : mov.tipo === 'ENTRADA' ? 'Entrada'
+                    : mov.tipo === 'TRASPASO' ? 'Traspaso'
+                    : mov.tipo;
                   return (
                     <TableRow key={mov.id}>
                       <TableCell className="text-xs whitespace-nowrap">
@@ -1007,8 +1017,8 @@ const Stock = () => {
                           hour: '2-digit', minute: '2-digit'
                         }) : '-'}
                       </TableCell>
-                      <TableCell className={cn('font-semibold text-xs', tipoColor[mov.tipo])}>
-                        {tipoLabel[mov.tipo] || mov.tipo}
+                      <TableCell className={cn('font-semibold text-xs', tipoColorResolved)}>
+                        {tipoLabelResolved}
                       </TableCell>
                       <TableCell>
                         {mov.tipo === 'ENTRADA' && mov.estado ? (

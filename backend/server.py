@@ -1569,7 +1569,7 @@ async def confirmar_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 mov = MovimientoStock(
                     producto_id=item.producto_id,
                     almacen_id=stock.almacen_id,
-                    tipo=TipoMovimientoStock.VENTA,
+                    tipo=TipoMovimientoStock.SALIDA,
                     cantidad=-a_descontar,
                     referencia_tipo='venta',
                     referencia_id=venta.id,
@@ -1803,7 +1803,7 @@ async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(ge
                 mov = MovimientoStock(
                     producto_id=item.producto_id,
                     almacen_id=stock.almacen_id,
-                    tipo=TipoMovimientoStock.VENTA,
+                    tipo=TipoMovimientoStock.SALIDA,
                     cantidad=-a_descontar,
                     referencia_tipo='venta',
                     referencia_id=venta.id,
@@ -2001,7 +2001,7 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                         MovimientoStock.referencia_tipo == 'venta',
                         MovimientoStock.referencia_id == venta_id,
                         MovimientoStock.producto_id == item.producto_id,
-                        MovimientoStock.tipo.in_([TipoMovimientoStock.SALIDA, TipoMovimientoStock.VENTA])
+                        MovimientoStock.tipo == TipoMovimientoStock.SALIDA
                     )
                 )
                 movimientos_salida = movimientos_salida_result.scalars().all()
@@ -5436,7 +5436,7 @@ async def migrate_documentos_temporales():
 @app.on_event("startup")
 async def startup():
     await init_db()
-    # Auto-migration: add cantidad_restante column and VENTA enum value if missing
+    # Auto-migration: add cantidad_restante column to movimientos_stock if missing
     try:
         async with engine.begin() as conn:
             db_url = str(engine.url)
@@ -5444,20 +5444,14 @@ async def startup():
                 await conn.execute(text(
                     "ALTER TABLE movimientos_stock ADD COLUMN IF NOT EXISTS cantidad_restante INTEGER"
                 ))
-                # Add VENTA enum value (idempotent)
-                await conn.execute(text(
-                    "DO $$ BEGIN ALTER TYPE tipomovimientostock ADD VALUE IF NOT EXISTS 'VENTA'; "
-                    "EXCEPTION WHEN duplicate_object THEN null; END $$"
-                ))
             else:
-                # SQLite: ADD COLUMN ignores if column exists via try/except
                 try:
                     await conn.execute(text(
                         "ALTER TABLE movimientos_stock ADD COLUMN cantidad_restante INTEGER"
                     ))
                 except Exception:
-                    pass  # Column already exists
-        logger.info("Stock migration check completed")
+                    pass  # Column already exists in SQLite
+        logger.info("Stock migration: cantidad_restante column ensured")
     except Exception as e:
         logger.warning(f"Stock migration warning (may be harmless): {e}")
     logger.info("Database initialized")
