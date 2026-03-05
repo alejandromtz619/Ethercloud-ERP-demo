@@ -988,24 +988,25 @@ const Stock = () => {
                   .filter(mov => {
                     if (historialFilter === 'ALL') return true;
                     if (historialFilter === 'ENTRADA') return mov.tipo === 'ENTRADA';
-                    if (historialFilter === 'VENTA') return mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta';
+                    if (historialFilter === 'VENTA') return mov.tipo === 'VENTA' || (mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta');
                     if (historialFilter === 'BAJA') return mov.tipo === 'SALIDA' && mov.referencia_tipo !== 'venta';
                     if (historialFilter === 'TRASPASO') return mov.tipo === 'TRASPASO';
                     return true;
                   })
                   .map((mov) => {
-                  const esVenta = mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta';
-                  const tipoColor = {
-                    ENTRADA: 'text-green-600 dark:text-green-400',
-                    TRASPASO: 'text-blue-600 dark:text-blue-400',
-                  };
+                  const esVenta = mov.tipo === 'VENTA' || (mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta');
+                  const esBaja = mov.tipo === 'SALIDA' && mov.referencia_tipo !== 'venta';
                   const tipoColorResolved = esVenta
+                    ? 'text-amber-500 dark:text-amber-400'
+                    : esBaja
                     ? 'text-red-600 dark:text-red-400'
-                    : mov.tipo === 'SALIDA'
-                    ? 'text-orange-500 dark:text-orange-400'
-                    : tipoColor[mov.tipo] || 'text-muted-foreground';
+                    : mov.tipo === 'ENTRADA'
+                    ? 'text-green-600 dark:text-green-400'
+                    : mov.tipo === 'TRASPASO'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-muted-foreground';
                   const tipoLabelResolved = esVenta ? 'Venta'
-                    : mov.tipo === 'SALIDA' ? 'Baja'
+                    : esBaja ? 'Baja'
                     : mov.tipo === 'ENTRADA' ? 'Entrada'
                     : mov.tipo === 'TRASPASO' ? 'Traspaso'
                     : mov.tipo;

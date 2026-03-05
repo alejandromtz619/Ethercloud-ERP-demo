@@ -1193,6 +1193,7 @@ async def _restore_entrada_fifo(db: AsyncSession, producto_id: int, almacen_id: 
         remaining -= can_restore
 
 
+@api_router.post("/stock/entrada")
 async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(StockActual).where(
