@@ -16,7 +16,7 @@ import {
 import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Package, DollarSign,
   Users, AlertTriangle, ArrowUpRight, ArrowDownRight, RefreshCw,
-  ShoppingBag, Loader2, Target, BoxesIcon, BarChart2, Lightbulb,
+  ShoppingBag, Loader2, Target, BoxesIcon, BarChart2, Lightbulb, FileSpreadsheet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -85,6 +85,7 @@ const KpiCard = ({ title, value, sub, icon: Icon, colorClass = 'text-primary', t
 const TabEstadisticas = ({ empresa, API_URL, token }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [periodo, setPeriodo] = useState('semanal');
   const [periodos, setPeriodos] = useState('8');
   const [metrica, setMetrica] = useState('ventas');
@@ -106,15 +107,42 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
     }
   }, [empresa, API_URL, token, periodo, periodos]);
 
+  const downloadExcel = useCallback(async () => {
+    if (!empresa) return;
+    setDownloading(true);
+    try {
+      const res = await window.fetch(
+        `${API_URL}/bi/estadisticas-productos/excel?empresa_id=${empresa.id}&periodo=${periodo}&periodos=${periodos}&metrica=${metrica}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error('Error al generar Excel');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bi_productos_${metrica}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setDownloading(false);
+    }
+  }, [empresa, API_URL, token, periodo, periodos, metrica]);
+
   useEffect(() => { fetch(); }, [fetch]);
 
-  const top5 = data?.productos?.slice(0, 5) || [];
-  const topBar = top5.map(p => ({
-    name: p.producto_nombre.length > 20 ? p.producto_nombre.slice(0, 18) + '…' : p.producto_nombre,
+  const TOP_N = 30;
+  const topBar = (data?.productos?.slice(0, TOP_N) || []).map(p => ({
+    name: p.producto_nombre.length > 22 ? p.producto_nombre.slice(0, 20) + '…' : p.producto_nombre,
     ventas: p.total_ventas,
     unidades: p.total_unidades,
     ganancia: p.ganancia_bruta,
   }));
+
+  const metricaLabel = { ventas: 'Ingresos (₲)', unidades: 'Unidades vendidas', ganancia: 'Ganancia bruta (₲)' }[metrica];
+  const promLabel = periodo === 'semanal' ? 'Prom. uds/sem.' : 'Prom. uds/mes.';
+  const barChartHeight = Math.max(300, topBar.length * 30);
 
   return (
     <div className="space-y-6">
@@ -144,11 +172,12 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Métrica del gráfico</Label>
+              <Label className="text-xs">Métrica</Label>
               <Select value={metrica} onValueChange={setMetrica}>
-                <SelectTrigger className="w-32 h-8 text-sm"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-36 h-8 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ventas">Ventas (₲)</SelectItem>
+                  <SelectItem value="ganancia">Ganancia (₲)</SelectItem>
                   <SelectItem value="unidades">Unidades</SelectItem>
                 </SelectContent>
               </Select>
@@ -156,6 +185,12 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
             <Button size="sm" variant="outline" onClick={fetch} disabled={loading} className="h-8 gap-1">
               <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
               Actualizar
+            </Button>
+            <Button size="sm" variant="outline" onClick={downloadExcel} disabled={downloading || !data} className="h-8 gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50">
+              {downloading
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <FileSpreadsheet className="h-3.5 w-3.5" />}
+              Exportar Excel
             </Button>
           </div>
         </CardContent>
@@ -183,8 +218,8 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
                     <Tooltip
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px', fontSize: '12px' }}
                       formatter={(value, name) => [
-                        name === 'ventas' ? formatPYG(value) : formatNum(value),
-                        name === 'ventas' ? 'Ventas' : 'Unidades',
+                        (name === 'ventas' || name === 'ganancia') ? formatPYG(value) : formatNum(value),
+                        name === 'ventas' ? 'Ventas' : name === 'ganancia' ? 'Ganancia' : 'Unidades',
                       ]}
                     />
                     <Bar dataKey={metrica} fill="#0044CC" radius={[4, 4, 0, 0]} opacity={0.85} />
@@ -195,21 +230,22 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
             </CardContent>
           </Card>
 
-          {/* Top 5 Bar */}
+          {/* Top N Bar */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold">Top 5 productos — {metrica === 'ventas' ? 'Ingresos' : 'Unidades vendidas'}</CardTitle>
+              <CardTitle className="text-sm font-semibold">Top {topBar.length} productos — {metricaLabel}</CardTitle>
+              <CardDescription className="text-xs">Ordenados por {metricaLabel.toLowerCase()} en el período seleccionado</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-48 w-full">
+              <div style={{ height: barChartHeight }} className="w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={topBar} layout="vertical">
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" horizontal={false} />
                     <XAxis type="number" tick={{ fontSize: 10 }} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={130} />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={140} />
                     <Tooltip
                       contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px', fontSize: '12px' }}
-                      formatter={(v) => [metrica === 'ventas' ? formatPYG(v) : formatNum(v)]}
+                      formatter={(v) => [metrica === 'unidades' ? formatNum(v) : formatPYG(v)]}
                     />
                     <Bar dataKey={metrica} fill="#0044CC" radius={[0, 4, 4, 0]} />
                   </BarChart>
@@ -233,10 +269,10 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
                     <tr>
                       <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">#</th>
                       <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Producto</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ventas</th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ventas (₲)</th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ganancia (₲)</th>
                       <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Unidades</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Ganancia</th>
-                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Prom./per.</th>
+                      <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">{promLabel}</th>
                       <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock</th>
                       <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Variación</th>
                     </tr>
@@ -247,9 +283,9 @@ const TabEstadisticas = ({ empresa, API_URL, token }) => {
                         <td className="px-4 py-2 text-muted-foreground">{idx + 1}</td>
                         <td className="px-4 py-2 font-medium max-w-[180px] truncate">{p.producto_nombre}</td>
                         <td className="px-4 py-2 text-right font-mono">{formatPYG(p.total_ventas)}</td>
-                        <td className="px-4 py-2 text-right font-mono">{formatNum(p.total_unidades)}</td>
                         <td className="px-4 py-2 text-right font-mono text-emerald-600">{formatPYG(p.ganancia_bruta)}</td>
-                        <td className="px-4 py-2 text-right font-mono">{p.promedio_por_periodo}</td>
+                        <td className="px-4 py-2 text-right font-mono">{formatNum(p.total_unidades)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-muted-foreground">{p.promedio_por_periodo}</td>
                         <td className="px-4 py-2 text-right font-mono">{formatNum(p.stock_actual)}</td>
                         <td className="px-4 py-2 text-center"><VariacionBadge pct={p.variacion_pct} /></td>
                       </tr>

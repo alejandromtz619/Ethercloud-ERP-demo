@@ -23,6 +23,7 @@ import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.chart import BarChart, Reference
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -5586,6 +5587,236 @@ async def bi_exceso_compras(
             ),
         }
     }
+
+
+@api_router.get("/bi/estadisticas-productos/excel")
+async def bi_estadisticas_productos_excel(
+    empresa_id: int,
+    periodo: str = "semanal",
+    periodos: int = 8,
+    metrica: str = "ventas",  # ventas | unidades | ganancia
+    db: AsyncSession = Depends(get_db)
+):
+    """Exporta ranking completo de productos B.I. a Excel con gráfico embebido."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    now = datetime.now(PARAGUAY_TZ)
+    if periodo == "semanal":
+        delta = timedelta(weeks=periodos)
+    else:
+        delta = timedelta(days=periodos * 30)
+    fecha_inicio = now - delta
+
+    if periodo == "semanal":
+        current_inicio = now - timedelta(weeks=1)
+        prev_inicio = now - timedelta(weeks=2)
+        prev_fin = current_inicio
+    else:
+        import calendar as cal_mod
+        first_this = datetime(now.year, now.month, 1, tzinfo=PARAGUAY_TZ)
+        m = now.month - 1 if now.month > 1 else 12
+        y = now.year if now.month > 1 else now.year - 1
+        first_prev = datetime(y, m, 1, tzinfo=PARAGUAY_TZ)
+        current_inicio = first_this
+        prev_inicio = first_prev
+        prev_fin = first_this
+
+    stats_q = (
+        select(
+            VentaItem.producto_id,
+            Producto.nombre.label("producto_nombre"),
+            func_sql.sum(VentaItem.cantidad).label("total_unidades"),
+            func_sql.sum(VentaItem.total).label("total_ventas"),
+            func_sql.sum(VentaItem.precio_costo * VentaItem.cantidad).label("total_costo"),
+            func_sql.count(func_sql.distinct(Venta.id)).label("num_ventas"),
+        )
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .join(Producto, VentaItem.producto_id == Producto.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= fecha_inicio,
+            VentaItem.producto_id.isnot(None),
+        )
+        .group_by(VentaItem.producto_id, Producto.nombre)
+        .order_by(func_sql.sum(VentaItem.total).desc())
+    )
+    cur_q = (
+        select(VentaItem.producto_id,
+               func_sql.sum(VentaItem.cantidad).label("unidades"),
+               func_sql.sum(VentaItem.total).label("ventas"))
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= current_inicio, VentaItem.producto_id.isnot(None))
+        .group_by(VentaItem.producto_id)
+    )
+    prev_q = (
+        select(VentaItem.producto_id,
+               func_sql.sum(VentaItem.cantidad).label("unidades"),
+               func_sql.sum(VentaItem.total).label("ventas"))
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+               Venta.creado_en >= prev_inicio, Venta.creado_en < prev_fin,
+               VentaItem.producto_id.isnot(None))
+        .group_by(VentaItem.producto_id)
+    )
+    stock_q = (
+        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_total"))
+        .join(Almacen, StockActual.almacen_id == Almacen.id)
+        .where(Almacen.empresa_id == empresa_id)
+        .group_by(StockActual.producto_id)
+    )
+
+    stats_r = await db.execute(stats_q)
+    cur_r = await db.execute(cur_q)
+    prev_r = await db.execute(prev_q)
+    stock_r = await db.execute(stock_q)
+    cur_map = {r.producto_id: r for r in cur_r.all()}
+    prev_map = {r.producto_id: r for r in prev_r.all()}
+    stock_map = {r.producto_id: int(r.stock_total) for r in stock_r.all()}
+
+    productos = []
+    for row in stats_r.all():
+        pid = row.producto_id
+        cu = cur_map.get(pid)
+        pv = prev_map.get(pid)
+        cu_uni = int(cu.unidades) if cu else 0
+        pv_uni = int(pv.unidades) if pv else 0
+        if pv_uni > 0:
+            variacion = round(((cu_uni - pv_uni) / pv_uni) * 100, 1)
+        elif cu_uni > 0:
+            variacion = 100.0
+        else:
+            variacion = 0.0
+        total_u = int(row.total_unidades)
+        total_v = float(row.total_ventas or 0)
+        total_c = float(row.total_costo or 0)
+        ganancia = round(total_v - total_c, 0)
+        prom = round(total_u / periodos, 1)
+        stock = stock_map.get(pid, 0)
+        productos.append({
+            "nombre": row.producto_nombre,
+            "ventas": total_v,
+            "ganancia": ganancia,
+            "unidades": total_u,
+            "prom": prom,
+            "stock": stock,
+            "variacion": variacion,
+        })
+
+    # Sort by chosen metric
+    sort_key = {"ventas": "ventas", "ganancia": "ganancia", "unidades": "unidades"}.get(metrica, "ventas")
+    productos.sort(key=lambda x: -x[sort_key])
+
+    metrica_label = {"ventas": "Ventas (₲)", "ganancia": "Ganancia (₲)", "unidades": "Unidades"}[metrica]
+    periodo_label = "semana" if periodo == "semanal" else "mes"
+    titulo = f"B.I. — Ranking de Productos por {metrica_label}"
+    subtitulo = f"Período: últimos {periodos} {periodo_label}s | Ordenado por: {metrica_label}"
+
+    # Build workbook manually (with chart)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ranking Productos"
+
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Title
+    ws.merge_cells("A1:H1")
+    t = ws["A1"]
+    t.value = titulo
+    t.font = Font(name="Calibri", size=14, bold=True, color="0044CC")
+    t.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 26
+
+    # Subtitle
+    ws.merge_cells("A2:H2")
+    s = ws["A2"]
+    s.value = subtitulo
+    s.font = Font(name="Calibri", size=9, color="808080")
+    s.alignment = Alignment(horizontal="center")
+
+    # Headers row 4
+    headers = ["#", "Producto", "Ventas (₲)", "Ganancia (₲)", "Unidades",
+               f"Prom. uds/{periodo_label}", "Stock actual", "Variación %"]
+    hfill = PatternFill(start_color="0044CC", end_color="0044CC", fill_type="solid")
+    hfont = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+    for ci, h in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=ci, value=h)
+        cell.fill = hfill
+        cell.font = hfont
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+    ws.row_dimensions[4].height = 20
+
+    # Data rows
+    for ri, p in enumerate(productos, 1):
+        rn = 4 + ri
+        bg = "FFFFFF" if ri % 2 == 1 else "F5F7FF"
+        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+        row_vals = [ri, p["nombre"], p["ventas"], p["ganancia"], p["unidades"],
+                    p["prom"], p["stock"], p["variacion"]]
+        for ci, val in enumerate(row_vals, 1):
+            cell = ws.cell(row=rn, column=ci, value=val)
+            cell.fill = fill
+            cell.font = Font(name="Calibri", size=9)
+            cell.border = border
+            cell.alignment = Alignment(horizontal="right" if ci > 1 else "center", vertical="center")
+        
+    # Column widths
+    ws.column_dimensions["A"].width = 5
+    ws.column_dimensions["B"].width = 35
+    for col in ["C", "D", "E", "F", "G", "H"]:
+        ws.column_dimensions[col].width = 16
+
+    # Totals row
+    tot_rn = 4 + len(productos) + 1
+    tot_fill = PatternFill(start_color="E8EDF5", end_color="E8EDF5", fill_type="solid")
+    tot_font = Font(name="Calibri", size=9, bold=True)
+    totals = [
+        "", "TOTAL",
+        sum(p["ventas"] for p in productos),
+        sum(p["ganancia"] for p in productos),
+        sum(p["unidades"] for p in productos),
+        "", "", ""
+    ]
+    for ci, val in enumerate(totals, 1):
+        cell = ws.cell(row=tot_rn, column=ci, value=val)
+        cell.fill = tot_fill
+        cell.font = tot_font
+        cell.border = border
+        cell.alignment = Alignment(horizontal="right", vertical="center")
+
+    # Embedded BarChart (top 20)
+    chart_data_count = min(20, len(productos))
+    chart_col = {"ventas": 3, "ganancia": 4, "unidades": 5}[metrica]
+    chart = BarChart()
+    chart.type = "bar"  # horizontal
+    chart.title = f"Top {chart_data_count} — {metrica_label}"
+    chart.y_axis.title = "Producto"
+    chart.x_axis.title = metrica_label
+    chart.style = 10
+    chart.width = 22
+    chart.height = 14
+
+    data_ref = Reference(ws, min_col=chart_col, min_row=4, max_row=4 + chart_data_count)
+    cats_ref = Reference(ws, min_col=2, min_row=5, max_row=4 + chart_data_count)
+    chart.add_data(data_ref, titles_from_data=True)
+    chart.set_categories(cats_ref)
+    chart.series[0].graphicalProperties.solidFill = "0044CC"
+
+    # Place chart to the right of data (column J, row 4)
+    ws.add_chart(chart, "J4")
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    today_str = now.strftime("%Y%m%d")
+    return Response(
+        content=buffer.getvalue(),
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename=bi_productos_{metrica}_{today_str}.xlsx"}
+    )
 
 
 # ==================== SEED DATA ====================
