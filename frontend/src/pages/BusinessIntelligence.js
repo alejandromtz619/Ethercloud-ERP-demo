@@ -17,7 +17,7 @@ import {
   TrendingUp, TrendingDown, Minus, ShoppingCart, Package, DollarSign,
   Users, AlertTriangle, ArrowUpRight, ArrowDownRight, RefreshCw,
   ShoppingBag, Loader2, Target, BoxesIcon, BarChart2, Lightbulb, FileSpreadsheet,
-  Search, X, MousePointerClick,
+  Search, X, MousePointerClick, Clock, ChevronDown, ChevronRight, CalendarDays,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -1016,6 +1016,233 @@ const TabExceso = ({ empresa, API_URL, token }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TAB 5 — Aging de Tandas
+// ─────────────────────────────────────────────────────────────────────────────
+const TabAging = ({ empresa, API_URL, token }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [orden, setOrden] = useState('mas_antiguo');
+  const [expandidos, setExpandidos] = useState({});
+
+  const cargar = useCallback(async () => {
+    if (!empresa?.id) return;
+    setLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/bi/aging-tandas?empresa_id=${empresa.id}&orden=${orden}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) throw new Error('Error al cargar aging de tandas');
+      const d = await r.json();
+      setData(d);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [empresa, API_URL, token, orden]);
+
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const toggleExpand = (pid) =>
+    setExpandidos(prev => ({ ...prev, [pid]: !prev[pid] }));
+
+  const agingBadge = (dias) => {
+    if (dias < 30) return 'bg-green-500/10 text-green-600 border border-green-500/20';
+    if (dias < 60) return 'bg-yellow-500/10 text-yellow-600 border border-yellow-500/20';
+    if (dias < 90) return 'bg-orange-500/10 text-orange-600 border border-orange-500/20';
+    return 'bg-red-500/10 text-red-600 border border-red-500/20';
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Controls */}
+      <Card>
+        <CardContent className="pt-4 pb-3">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Ordenar por</Label>
+              <Select value={orden} onValueChange={setOrden}>
+                <SelectTrigger className="w-52 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mas_antiguo">Más antiguos primero</SelectItem>
+                  <SelectItem value="mas_nuevo">Más nuevos primero</SelectItem>
+                  <SelectItem value="mayor_valor">Mayor valor inmovilizado</SelectItem>
+                  <SelectItem value="nombre">Nombre A → Z</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button size="sm" variant="outline" onClick={cargar} disabled={loading} className="h-8 text-xs gap-1.5">
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Actualizar
+            </Button>
+            {data && (
+              <p className="text-xs text-muted-foreground ml-auto self-center">
+                Calculado al {data.fecha_calculo} · Solo productos activos con stock &gt; 0
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* KPI cards */}
+      {data && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <KpiCard
+            title="Productos con stock activo"
+            value={data.resumen.productos_activos_con_stock}
+            icon={Package}
+            colorClass="text-blue-500"
+          />
+          <KpiCard
+            title="Tandas activas"
+            value={data.resumen.total_tandas_activas}
+            icon={Clock}
+            colorClass="text-amber-500"
+          />
+          <KpiCard
+            title="Capital inmovilizado"
+            value={formatPYG(data.resumen.valor_stock_activo)}
+            icon={DollarSign}
+            colorClass="text-red-500"
+          />
+        </div>
+      )}
+
+      {/* Color legend */}
+      {data && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground font-medium mr-1">Antigüedad:</span>
+          <span className="px-2 py-0.5 rounded bg-green-500/10 text-green-600 border border-green-500/20">&lt; 30 días</span>
+          <span className="px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-600 border border-yellow-500/20">30 – 59 días</span>
+          <span className="px-2 py-0.5 rounded bg-orange-500/10 text-orange-600 border border-orange-500/20">60 – 89 días</span>
+          <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-600 border border-red-500/20">≥ 90 días</span>
+        </div>
+      )}
+
+      {/* Loading spinner */}
+      {loading && !data && (
+        <div className="flex items-center justify-center h-40">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
+      {/* Empty state */}
+      {data && data.productos.length === 0 && (
+        <Card>
+          <CardContent className="flex items-center justify-center h-40 text-muted-foreground text-sm">
+            No hay tandas activas con stock restante.
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Main table */}
+      {data && data.productos.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              Detalle por producto
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Clic en una fila para ver el desglose de tandas individuales
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="w-8 px-4 py-2.5"></th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Producto</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tandas</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Uds. restantes</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Aging máx.</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Val. inmovilizado</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {data.productos.map(p => (
+                    <React.Fragment key={p.producto_id}>
+                      {/* Product summary row */}
+                      <tr
+                        className="hover:bg-muted/30 transition-colors cursor-pointer"
+                        onClick={() => toggleExpand(p.producto_id)}
+                      >
+                        <td className="px-4 py-2.5 text-muted-foreground">
+                          {expandidos[p.producto_id]
+                            ? <ChevronDown className="h-3.5 w-3.5" />
+                            : <ChevronRight className="h-3.5 w-3.5" />}
+                        </td>
+                        <td className="px-4 py-2.5 font-medium">{p.producto_nombre}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
+                            {p.num_tandas}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono">{formatNum(p.total_unidades_restantes)}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <span className={cn('px-2 py-0.5 rounded font-mono font-semibold', agingBadge(p.dias_aging_max))}>
+                            {p.dias_aging_max} días
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-red-500 font-semibold">
+                          {formatPYG(p.valor_total_inmovilizado)}
+                        </td>
+                      </tr>
+
+                      {/* Batch detail rows */}
+                      {expandidos[p.producto_id] && p.tandas.map(t => (
+                        <tr key={t.tanda_id} className="bg-muted/20 border-l-2 border-primary/40">
+                          <td className="px-4 py-2"></td>
+                          <td className="px-4 py-2 pl-8" colSpan={1}>
+                            <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
+                              <Clock className="h-3 w-3 shrink-0" />
+                              <span className="font-medium text-foreground">
+                                {t.fecha_entrada
+                                  ? new Date(t.fecha_entrada).toLocaleDateString('es-PY')
+                                  : '—'}
+                              </span>
+                              <span className="opacity-40">·</span>
+                              <span>{t.proveedor}</span>
+                              {t.almacen && (
+                                <><span className="opacity-40">·</span><span className="opacity-70">{t.almacen}</span></>
+                              )}
+                              {t.notas && (
+                                <><span className="opacity-40">·</span><span className="italic opacity-60">{t.notas}</span></>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-center font-mono text-muted-foreground">
+                            {t.cantidad_restante}/{t.cantidad_original}
+                            <span className="ml-1 opacity-60">({t.porcentaje_consumido}% cons.)</span>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono">{formatNum(t.cantidad_restante)}</td>
+                          <td className="px-4 py-2 text-right">
+                            <span className={cn('px-2 py-0.5 rounded font-mono', agingBadge(t.dias_aging))}>
+                              {t.dias_aging} días
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right font-mono">
+                            <div className="text-muted-foreground">{formatPYG(t.valor_inmovilizado)}</div>
+                            <div className="text-[10px] opacity-60">@ {formatPYG(t.costo_unitario)}/u</div>
+                          </td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main page
 // ─────────────────────────────────────────────────────────────────────────────
 const BusinessIntelligence = () => {
@@ -1052,6 +1279,10 @@ const BusinessIntelligence = () => {
             <AlertTriangle className="h-3.5 w-3.5" />
             Exceso de stock
           </TabsTrigger>
+          <TabsTrigger value="aging" className="gap-1.5 text-xs sm:text-sm">
+            <Clock className="h-3.5 w-3.5" />
+            Aging de tandas
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="estadisticas">
@@ -1068,6 +1299,10 @@ const BusinessIntelligence = () => {
 
         <TabsContent value="exceso">
           <TabExceso empresa={empresa} API_URL={API_URL} token={token} />
+        </TabsContent>
+
+        <TabsContent value="aging">
+          <TabAging empresa={empresa} API_URL={API_URL} token={token} />
         </TabsContent>
       </Tabs>
     </div>

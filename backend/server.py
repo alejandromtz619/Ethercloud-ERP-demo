@@ -1393,6 +1393,7 @@ async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Dep
         almacen_id=data.almacen_id,
         tipo=TipoMovimientoStock.SALIDA,
         cantidad=-data.cantidad,
+        notas=data.motivo,
         creado_en=now_paraguay()
     )
     db.add(movimiento)
@@ -6003,6 +6004,117 @@ async def bi_estadisticas_productos_excel(
         media_type=EXCEL_MIME,
         headers={"Content-Disposition": f"attachment; filename=bi_productos_{metrica}_{today_str}.xlsx"}
     )
+
+
+# ==================== BI AGING TANDAS ====================
+@api_router.get("/bi/aging-tandas")
+async def bi_aging_tandas(
+    empresa_id: int,
+    orden: str = "mas_antiguo",  # mas_antiguo | mas_nuevo | mayor_valor | nombre
+    db: AsyncSession = Depends(get_db)
+):
+    """Aging de tandas activas: cada lote ENTRADA con unidades restantes y sus días de permanencia."""
+    PARAGUAY_TZ = ZoneInfo("America/Asuncion")
+    hoy = datetime.now(PARAGUAY_TZ).date()
+
+    q = (
+        select(
+            MovimientoStock.id.label("tanda_id"),
+            MovimientoStock.producto_id,
+            Producto.nombre.label("producto_nombre"),
+            MovimientoStock.cantidad.label("cantidad_original"),
+            MovimientoStock.cantidad_restante,
+            MovimientoStock.costo_unitario,
+            MovimientoStock.almacen_id,
+            Almacen.nombre.label("almacen_nombre"),
+            MovimientoStock.proveedor_id,
+            Proveedor.nombre.label("proveedor_nombre"),
+            MovimientoStock.creado_en,
+            MovimientoStock.notas,
+        )
+        .join(Producto, MovimientoStock.producto_id == Producto.id)
+        .join(Almacen, MovimientoStock.almacen_id == Almacen.id)
+        .outerjoin(Proveedor, MovimientoStock.proveedor_id == Proveedor.id)
+        .where(
+            Almacen.empresa_id == empresa_id,
+            Producto.empresa_id == empresa_id,
+            Producto.activo == True,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0,
+        )
+        .order_by(MovimientoStock.producto_id, MovimientoStock.creado_en.asc())
+    )
+
+    result = await db.execute(q)
+    rows = result.all()
+
+    from collections import defaultdict
+    productos_map: dict = defaultdict(lambda: {"nombre": "", "producto_id": 0, "tandas": []})
+
+    for row in rows:
+        if row.creado_en:
+            entrada_date = row.creado_en.date() if hasattr(row.creado_en, "date") else row.creado_en
+            dias = (hoy - entrada_date).days
+        else:
+            dias = 0
+        costo = float(row.costo_unitario or 0)
+        restante = int(row.cantidad_restante or 0)
+        original = int(row.cantidad_original or 0)
+        valor = round(costo * restante, 0)
+        pct_consumido = round((1 - restante / original) * 100, 1) if original > 0 else 0.0
+
+        productos_map[row.producto_id]["nombre"] = row.producto_nombre
+        productos_map[row.producto_id]["producto_id"] = row.producto_id
+        productos_map[row.producto_id]["tandas"].append({
+            "tanda_id": row.tanda_id,
+            "fecha_entrada": row.creado_en.isoformat() if row.creado_en else None,
+            "dias_aging": dias,
+            "cantidad_original": original,
+            "cantidad_restante": restante,
+            "porcentaje_consumido": pct_consumido,
+            "costo_unitario": costo,
+            "valor_inmovilizado": valor,
+            "almacen": row.almacen_nombre,
+            "proveedor": row.proveedor_nombre or "Sin proveedor",
+            "notas": row.notas,
+        })
+
+    productos = []
+    for pid, pdata in productos_map.items():
+        tandas = pdata["tandas"]
+        max_aging = max(t["dias_aging"] for t in tandas)
+        min_aging = min(t["dias_aging"] for t in tandas)
+        total_valor = sum(t["valor_inmovilizado"] for t in tandas)
+        total_restante = sum(t["cantidad_restante"] for t in tandas)
+        productos.append({
+            "producto_id": pid,
+            "producto_nombre": pdata["nombre"],
+            "num_tandas": len(tandas),
+            "dias_aging_max": max_aging,
+            "dias_aging_min": min_aging,
+            "total_unidades_restantes": total_restante,
+            "valor_total_inmovilizado": total_valor,
+            "tandas": tandas,
+        })
+
+    sort_map = {
+        "mas_antiguo": lambda x: -x["dias_aging_max"],
+        "mas_nuevo": lambda x: x["dias_aging_min"],
+        "mayor_valor": lambda x: -x["valor_total_inmovilizado"],
+        "nombre": lambda x: x["producto_nombre"].lower(),
+    }
+    productos.sort(key=sort_map.get(orden, sort_map["mas_antiguo"]))
+
+    return {
+        "orden": orden,
+        "fecha_calculo": hoy.isoformat(),
+        "resumen": {
+            "productos_activos_con_stock": len(productos),
+            "total_tandas_activas": sum(p["num_tandas"] for p in productos),
+            "valor_stock_activo": sum(p["valor_total_inmovilizado"] for p in productos),
+        },
+        "productos": productos,
+    }
 
 
 # ==================== SYNC PERMISSIONS ====================
