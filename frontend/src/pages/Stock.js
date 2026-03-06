@@ -987,6 +987,7 @@ const Stock = () => {
                   <TableHead>Estado</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-right">Restante</TableHead>
                   <TableHead className="text-right">Costo Compra</TableHead>
                   <TableHead className="text-right">CPP Pond.</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
@@ -1048,6 +1049,13 @@ const Stock = () => {
                       <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
                       <TableCell className="text-right font-mono font-bold">
                         {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs">
+                        {mov.tipo === 'ENTRADA'
+                          ? mov.cantidad_restante != null
+                            ? <span className={mov.cantidad_restante === 0 ? 'text-muted-foreground line-through' : 'text-green-500 dark:text-green-400 font-semibold'}>{mov.cantidad_restante}</span>
+                            : <span className="text-muted-foreground text-[10px]">sin FIFO</span>
+                          : <span className="text-muted-foreground">-</span>}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}

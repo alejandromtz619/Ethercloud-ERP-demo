@@ -6040,7 +6040,11 @@ async def bi_aging_tandas(
             Producto.empresa_id == empresa_id,
             Producto.activo == True,
             MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
-            MovimientoStock.cantidad_restante > 0,
+            # Include batches with remaining units OR NULL (pre-FIFO batches treated as fully active)
+            or_(
+                MovimientoStock.cantidad_restante > 0,
+                MovimientoStock.cantidad_restante == None,
+            ),
         )
         .order_by(MovimientoStock.producto_id, MovimientoStock.creado_en.asc())
     )
@@ -6058,8 +6062,9 @@ async def bi_aging_tandas(
         else:
             dias = 0
         costo = float(row.costo_unitario or 0)
-        restante = int(row.cantidad_restante or 0)
         original = int(row.cantidad_original or 0)
+        # NULL cantidad_restante = pre-FIFO batch, treat as fully remaining
+        restante = int(row.cantidad_restante) if row.cantidad_restante is not None else original
         valor = round(costo * restante, 0)
         pct_consumido = round((1 - restante / original) * 100, 1) if original > 0 else 0.0
 
