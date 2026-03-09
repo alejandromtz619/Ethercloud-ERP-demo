@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFi
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, FileResponse
+from fastapi.responses import Response, FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract
 from sqlalchemy.orm import selectinload
@@ -51,6 +51,7 @@ from schemas import (
     RolCreate, RolResponse, PermisoResponse,
     ClienteCreate, ClienteResponse, CreditoClienteCreate, CreditoClienteResponse,
     ProveedorCreate, ProveedorResponse, DeudaProveedorCreate, DeudaProveedorResponse,
+    ProveedorProductoCreate, ProveedorProductoUpdate, ProveedorProductoResponse,
     CategoriaCreate, CategoriaResponse, MarcaCreate, MarcaResponse,
     GastoCreate, GastoUpdate, GastoResponse,
     ProductoCreate, ProductoResponse, ProductoConStock,
@@ -815,6 +816,244 @@ async def eliminar_deuda(deuda_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(deuda)
     await db.commit()
     return {"message": "Deuda eliminada"}
+
+# ==================== PROVEEDOR PRODUCTOS (Vinculación) ====================
+@api_router.get("/proveedores/{proveedor_id}/productos", response_model=List[ProveedorProductoResponse])
+async def listar_proveedor_productos(proveedor_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ProveedorProducto, Producto)
+        .join(Producto, ProveedorProducto.producto_id == Producto.id)
+        .where(ProveedorProducto.proveedor_id == proveedor_id)
+        .order_by(Producto.nombre)
+    )
+    rows = result.all()
+    out = []
+    for pp, prod in rows:
+        out.append(ProveedorProductoResponse(
+            id=pp.id,
+            proveedor_id=pp.proveedor_id,
+            producto_id=pp.producto_id,
+            sku=pp.sku,
+            costo=pp.costo,
+            link=pp.link,
+            producto_nombre=prod.nombre,
+            producto_codigo=prod.codigo_barra,
+        ))
+    return out
+
+@api_router.post("/proveedores/{proveedor_id}/productos", response_model=ProveedorProductoResponse)
+async def vincular_proveedor_producto(proveedor_id: int, data: ProveedorProductoCreate, db: AsyncSession = Depends(get_db)):
+    # Check if already linked
+    existing = await db.execute(
+        select(ProveedorProducto).where(
+            ProveedorProducto.proveedor_id == proveedor_id,
+            ProveedorProducto.producto_id == data.producto_id
+        )
+    )
+    existing = existing.scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Este producto ya está vinculado a este proveedor")
+
+    prod_result = await db.execute(select(Producto).where(Producto.id == data.producto_id))
+    prod = prod_result.scalar_one_or_none()
+    if not prod:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    pp = ProveedorProducto(
+        proveedor_id=proveedor_id,
+        producto_id=data.producto_id,
+        sku=data.sku,
+        costo=data.costo,
+        link=data.link,
+    )
+    db.add(pp)
+    await db.commit()
+    await db.refresh(pp)
+    return ProveedorProductoResponse(
+        id=pp.id,
+        proveedor_id=pp.proveedor_id,
+        producto_id=pp.producto_id,
+        sku=pp.sku,
+        costo=pp.costo,
+        link=pp.link,
+        producto_nombre=prod.nombre,
+        producto_codigo=prod.codigo_barra,
+    )
+
+@api_router.put("/proveedor-productos/{pp_id}", response_model=ProveedorProductoResponse)
+async def actualizar_proveedor_producto(pp_id: int, data: ProveedorProductoUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ProveedorProducto, Producto)
+        .join(Producto, ProveedorProducto.producto_id == Producto.id)
+        .where(ProveedorProducto.id == pp_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Vinculación no encontrada")
+    pp, prod = row
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(pp, key, value)
+    await db.commit()
+    await db.refresh(pp)
+    return ProveedorProductoResponse(
+        id=pp.id,
+        proveedor_id=pp.proveedor_id,
+        producto_id=pp.producto_id,
+        sku=pp.sku,
+        costo=pp.costo,
+        link=pp.link,
+        producto_nombre=prod.nombre,
+        producto_codigo=prod.codigo_barra,
+    )
+
+@api_router.delete("/proveedor-productos/{pp_id}")
+async def eliminar_proveedor_producto(pp_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ProveedorProducto).where(ProveedorProducto.id == pp_id))
+    pp = result.scalar_one_or_none()
+    if not pp:
+        raise HTTPException(status_code=404, detail="Vinculación no encontrada")
+    await db.delete(pp)
+    await db.commit()
+    return {"message": "Vinculación eliminada"}
+
+@api_router.get("/proveedores/comparacion-mercado")
+async def comparacion_mercado(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Returns pivot table: products x suppliers with cost, SKU and link per cell."""
+    # Get all active suppliers for this empresa
+    prov_result = await db.execute(
+        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
+        .order_by(Proveedor.nombre)
+    )
+    proveedores = prov_result.scalars().all()
+    prov_ids = [p.id for p in proveedores]
+
+    if not prov_ids:
+        return {"proveedores": [], "filas": []}
+
+    # Get all vinculations for this empresa's suppliers
+    pp_result = await db.execute(
+        select(ProveedorProducto, Producto)
+        .join(Producto, ProveedorProducto.producto_id == Producto.id)
+        .where(ProveedorProducto.proveedor_id.in_(prov_ids), Producto.activo == True)
+        .order_by(Producto.nombre)
+    )
+    rows = pp_result.all()
+
+    # Pivot: product_id -> {proveedor_id -> {costo, sku, link}}
+    product_map: dict = {}
+    for pp, prod in rows:
+        if prod.id not in product_map:
+            product_map[prod.id] = {"producto_id": prod.id, "producto_nombre": prod.nombre, "precios": {}}
+        product_map[prod.id]["precios"][str(pp.proveedor_id)] = {
+            "pp_id": pp.id,
+            "costo": float(pp.costo) if pp.costo is not None else None,
+            "sku": pp.sku,
+            "link": pp.link,
+        }
+
+    return {
+        "proveedores": [{"id": p.id, "nombre": p.nombre} for p in proveedores],
+        "filas": list(product_map.values()),
+    }
+
+@api_router.get("/proveedores/comparacion-mercado/excel")
+async def comparacion_mercado_excel(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Export market comparison as Excel file."""
+    prov_result = await db.execute(
+        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
+        .order_by(Proveedor.nombre)
+    )
+    proveedores = prov_result.scalars().all()
+    prov_ids = [p.id for p in proveedores]
+
+    pp_result = None
+    if prov_ids:
+        pp_result = await db.execute(
+            select(ProveedorProducto, Producto)
+            .join(Producto, ProveedorProducto.producto_id == Producto.id)
+            .where(ProveedorProducto.proveedor_id.in_(prov_ids), Producto.activo == True)
+            .order_by(Producto.nombre)
+        )
+
+    product_map: dict = {}
+    if pp_result:
+        for pp, prod in pp_result.all():
+            if prod.id not in product_map:
+                product_map[prod.id] = {"nombre": prod.nombre, "precios": {}}
+            product_map[prod.id]["precios"][pp.proveedor_id] = {
+                "costo": float(pp.costo) if pp.costo is not None else None,
+                "sku": pp.sku or "",
+            }
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Comparación de Mercado"
+
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hfill = PatternFill(start_color="0044CC", end_color="0044CC", fill_type="solid")
+    hfont = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+    # Title
+    total_cols = 1 + len(proveedores) * 2
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(total_cols, 2))
+    t = ws.cell(row=1, column=1, value="Comparación de Precios por Proveedor")
+    t.font = Font(name="Calibri", size=14, bold=True, color="0044CC")
+    t.alignment = Alignment(horizontal="center")
+    ws.row_dimensions[1].height = 26
+
+    # Headers
+    ws.cell(row=3, column=1, value="Producto").font = hfont
+    ws.cell(row=3, column=1).fill = hfill
+    ws.cell(row=3, column=1).border = border
+    ws.cell(row=3, column=1).alignment = Alignment(horizontal="center")
+    ws.column_dimensions["A"].width = 35
+
+    for ci, prov in enumerate(proveedores):
+        col_precio = 2 + ci * 2
+        col_sku = 3 + ci * 2
+        c1 = ws.cell(row=3, column=col_precio, value=f"{prov.nombre} - Costo (₲)")
+        c2 = ws.cell(row=3, column=col_sku, value=f"{prov.nombre} - SKU")
+        for c in [c1, c2]:
+            c.font = hfont
+            c.fill = hfill
+            c.border = border
+            c.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col_precio)].width = 20
+        ws.column_dimensions[get_column_letter(col_sku)].width = 18
+
+    # Data
+    for ri, (prod_id, prod_data) in enumerate(product_map.items(), 1):
+        rn = 3 + ri
+        bg = "FFFFFF" if ri % 2 == 1 else "F5F7FF"
+        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+        c = ws.cell(row=rn, column=1, value=prod_data["nombre"])
+        c.font = Font(name="Calibri", size=9)
+        c.fill = fill
+        c.border = border
+        for ci, prov in enumerate(proveedores):
+            col_precio = 2 + ci * 2
+            col_sku = 3 + ci * 2
+            precio_data = prod_data["precios"].get(prov.id)
+            costo_val = precio_data["costo"] if precio_data else None
+            sku_val = precio_data["sku"] if precio_data else ""
+            cp = ws.cell(row=rn, column=col_precio, value=costo_val)
+            cs = ws.cell(row=rn, column=col_sku, value=sku_val)
+            for cc in [cp, cs]:
+                cc.font = Font(name="Calibri", size=9)
+                cc.fill = fill
+                cc.border = border
+                cc.alignment = Alignment(horizontal="right")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    excel_bytes = buf.getvalue()
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=comparacion_mercado.xlsx"}
+    )
 
 # ==================== CATEGORIAS ====================
 @api_router.post("/categorias", response_model=CategoriaResponse)

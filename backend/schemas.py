@@ -212,6 +212,29 @@ class ProveedorResponse(ProveedorBase):
     estado: bool
     creado_en: Optional[datetime] = None
 
+# Proveedor Producto (vinculacion)
+class ProveedorProductoCreate(BaseModel):
+    producto_id: int
+    sku: Optional[str] = None
+    costo: Optional[Decimal] = None
+    link: Optional[str] = None
+
+class ProveedorProductoUpdate(BaseModel):
+    sku: Optional[str] = None
+    costo: Optional[Decimal] = None
+    link: Optional[str] = None
+
+class ProveedorProductoResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    proveedor_id: int
+    producto_id: int
+    sku: Optional[str] = None
+    costo: Optional[Decimal] = None
+    link: Optional[str] = None
+    producto_nombre: Optional[str] = None
+    producto_codigo: Optional[str] = None
+
 # Deuda Proveedor
 class DeudaProveedorBase(BaseModel):
     monto: Decimal

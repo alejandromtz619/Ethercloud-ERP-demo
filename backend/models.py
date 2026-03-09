@@ -245,7 +245,9 @@ class ProveedorProducto(Base):
     id = Column(Integer, primary_key=True, index=True)
     proveedor_id = Column(Integer, ForeignKey("proveedores.id"), nullable=False)
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
-    costo = Column(Numeric(15, 2), nullable=False)
+    sku = Column(String(100), nullable=True)
+    costo = Column(Numeric(15, 2), nullable=True)
+    link = Column(String(1000), nullable=True)
     
     proveedor = relationship("Proveedor", back_populates="productos")
     producto = relationship("Producto", back_populates="proveedores")
