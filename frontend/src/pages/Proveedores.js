@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Building2, Plus, Loader2, Search, Edit, Trash2, DollarSign, Check, Link2, BarChart2, ExternalLink, ArrowUpDown, Download } from 'lucide-react';
+import { Building2, Plus, Loader2, Search, Edit, Trash2, DollarSign, Check, Link2, BarChart2, ExternalLink, ArrowUpDown, Download, ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 
@@ -56,6 +56,14 @@ const Proveedores = () => {
   const [comparacionSearch, setComparacionSearch] = useState('');
   const [activeCell, setActiveCell] = useState(null); // {prod_id, prov_id}
   const [exportingExcel, setExportingExcel] = useState(false);
+  const [rankMode, setRankMode] = useState(false); // per-row ranked columns
+
+  // Generar Pedido
+  const [pedidoOpen, setPedidoOpen] = useState(false);
+  const [pedidoProveedor, setPedidoProveedor] = useState(null);
+  const [pedidoProductos, setPedidoProductos] = useState([]); // [{...vinculacion, selected, cantidad}]
+  const [pedidoComparacion, setPedidoComparacion] = useState(null);
+  const [pedidoLoading, setPedidoLoading] = useState(false);
   
   const [formData, setFormData] = useState({
     nombre: '',
@@ -336,6 +344,114 @@ const Proveedores = () => {
       });
     }
     return filas;
+  };
+
+  // ── Generar Pedido handlers ───────────────────────────────────────
+  const handleAbrirPedido = async (proveedor) => {
+    setPedidoProveedor(proveedor);
+    setPedidoLoading(true);
+    setPedidoOpen(true);
+    try {
+      const [vincs, comp] = await Promise.all([
+        api(`/proveedores/${proveedor.id}/productos`),
+        api(`/proveedores/comparacion-mercado?empresa_id=${empresa.id}`),
+      ]);
+      setPedidoProductos(vincs.map(v => ({ ...v, selected: false, cantidad: 1 })));
+      setPedidoComparacion(comp);
+    } catch (e) {
+      toast.error('Error al cargar productos');
+    } finally {
+      setPedidoLoading(false);
+    }
+  };
+
+  const getPedidoPrecioAlert = (vinc) => {
+    if (!pedidoComparacion || vinc.costo === null || vinc.costo === undefined) return null;
+    const fila = pedidoComparacion.filas.find(f => f.producto_id === vinc.producto_id);
+    if (!fila) return null;
+    const precios = Object.entries(fila.precios)
+      .filter(([, p]) => p.costo !== null)
+      .sort((a, b) => a[1].costo - b[1].costo);
+    if (precios.length === 0) return null;
+    const [bestProvId, bestPrecio] = precios[0];
+    const esBestProv = String(pedidoProveedor.id) === bestProvId;
+    if (esBestProv) return { tipo: 'mejor', diff: null };
+    const bestProvNombre = pedidoComparacion.proveedores.find(p => String(p.id) === bestProvId)?.nombre;
+    const diff = parseFloat(vinc.costo) - bestPrecio.costo;
+    return { tipo: 'caro', diff, bestProvNombre, bestCosto: bestPrecio.costo };
+  };
+
+  const handleGenerarPedidoPDF = () => {
+    const seleccionados = pedidoProductos.filter(p => p.selected && p.cantidad > 0);
+    if (seleccionados.length === 0) {
+      toast.error('Seleccioná al menos un producto');
+      return;
+    }
+    const fecha = new Date().toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const filas = seleccionados.map(p => {
+      const skuCell = p.sku ? `<td>${p.sku}</td>` : '<td>—</td>';
+      const linkCell = p.link
+        ? `<td style="word-break:break-all;font-size:8px;"><a href="${p.link}">${p.link}</a></td>`
+        : '<td>—</td>';
+      return `<tr><td>${p.producto_nombre}</td>${skuCell}<td style="text-align:center">${p.cantidad}</td>${linkCell}</tr>`;
+    }).join('');
+    const hasLinks = seleccionados.some(p => p.link);
+    const colWidths = hasLinks
+      ? 'style="width:35%"' : '';
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) { toast.error('Bloqueado por el navegador. Permitir popups.'); return; }
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Pedido – ${pedidoProveedor.nombre}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #111; padding: 24px; }
+  header { border-bottom: 2px solid #0044CC; padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-end; }
+  header h1 { font-size: 18px; color: #0044CC; font-weight: bold; }
+  header .meta { text-align: right; font-size: 10px; color: #555; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th { background: #0044CC; color: #fff; padding: 7px 8px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  td { padding: 6px 8px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+  tr:nth-child(even) td { background: #f5f7ff; }
+  .qty { text-align: center; font-weight: bold; }
+  footer { margin-top: 24px; font-size: 9px; color: #999; text-align: center; border-top: 1px solid #eee; padding-top: 8px; }
+  @media print {
+    body { padding: 0; }
+    a { color: #0044CC; }
+    @page { margin: 15mm 12mm; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Pedido a Proveedor</h1>
+    <div style="font-size:13px;margin-top:4px;font-weight:bold">${pedidoProveedor.nombre}</div>
+    ${pedidoProveedor.ruc ? `<div style="font-size:10px;color:#555">RUC: ${pedidoProveedor.ruc}</div>` : ''}
+    ${pedidoProveedor.email ? `<div style="font-size:10px;color:#555">${pedidoProveedor.email}</div>` : ''}
+    ${pedidoProveedor.telefono ? `<div style="font-size:10px;color:#555">Tel: ${pedidoProveedor.telefono}</div>` : ''}
+  </div>
+  <div class="meta">
+    <div>Fecha: <strong>${fecha}</strong></div>
+    <div>Productos: <strong>${seleccionados.length}</strong></div>
+  </div>
+</header>
+<table>
+  <thead><tr>
+    <th ${colWidths}>Producto</th>
+    <th style="width:15%">SKU Proveedor</th>
+    <th style="width:8%;text-align:center">Cantidad</th>
+    ${hasLinks ? '<th>Enlace</th>' : ''}
+  </tr></thead>
+  <tbody>${filas}</tbody>
+</table>
+<footer>Generado por Ethercloud ERP · ${fecha}</footer>
+</body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => { printWindow.print(); printWindow.close(); }, 400);
   };
 
   const handleExportarExcel = async () => {
@@ -764,6 +880,15 @@ const Proveedores = () => {
                     onChange={(e) => setComparacionSearch(e.target.value)}
                   />
                 </div>
+                <Button
+                  size="sm"
+                  variant={rankMode ? 'default' : 'outline'}
+                  onClick={() => { setRankMode(r => !r); setActiveCell(null); }}
+                  title="Muestra los proveedores de cada producto ordenados de menor a mayor precio"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5 mr-1" />
+                  {rankMode ? 'Ranking activo' : 'Por precio ↑'}
+                </Button>
                 <Button size="sm" variant="outline" onClick={handleExportarExcel} disabled={exportingExcel || comparacionLoading}>
                   {exportingExcel ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Download className="h-3.5 w-3.5 mr-1" />}
                   Excel
@@ -783,7 +908,103 @@ const Proveedores = () => {
                 <p>No hay productos vinculados a proveedores todavía.</p>
                 <p className="text-sm mt-1">Usá el botón <strong>Vincular</strong> en cada proveedor para asociar productos.</p>
               </div>
+            ) : rankMode ? (
+              // ── Modo ranking por precio: columnas por fila ordenadas de menor a mayor ──
+              (() => {
+                const filas = getSortedFilas();
+                const maxCols = comparacionData.proveedores.length;
+                const rankHeaders = Array.from({ length: maxCols }, (_, i) =>
+                  i === 0 ? '1° más barato' : i === 1 ? '2°' : i === 2 ? '3°' : `${i + 1}°`
+                );
+                return (
+                  <table className="w-full text-sm border-collapse">
+                    <thead className="sticky top-0 z-10">
+                      <tr>
+                        <th className="text-left px-3 py-2 bg-secondary border border-border font-semibold min-w-[200px] sticky left-0 z-20">
+                          Producto
+                        </th>
+                        {rankHeaders.map((h, i) => (
+                          <th key={i} className={`px-3 py-2 bg-secondary border border-border font-semibold min-w-[160px] text-center ${i === 0 ? 'text-green-500' : ''}`}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filas.map((fila, ri) => {
+                        // Sort this row's providers by price asc, nulls last
+                        const rankedProvs = comparacionData.proveedores
+                          .map(prov => ({ prov, precio: fila.precios[String(prov.id)] || null }))
+                          .filter(x => x.precio !== null)
+                          .sort((a, b) => {
+                            const ca = a.precio.costo ?? Infinity;
+                            const cb = b.precio.costo ?? Infinity;
+                            return ca - cb;
+                          });
+                        // Pad to maxCols with nulls
+                        const cells = [...rankedProvs, ...Array(maxCols - rankedProvs.length).fill(null)];
+                        return (
+                          <tr key={fila.producto_id} className={ri % 2 === 0 ? '' : 'bg-secondary/30'}>
+                            <td className="px-3 py-2 border border-border font-medium sticky left-0 bg-background z-10">
+                              {fila.producto_nombre}
+                            </td>
+                            {cells.map((cell, ci) => {
+                              if (!cell) {
+                                return (
+                                  <td key={ci} className="px-3 py-2 border border-border text-center text-muted-foreground text-xs">—</td>
+                                );
+                              }
+                              const { prov, precio } = cell;
+                              const isActive = activeCell?.prod_id === fila.producto_id && activeCell?.prov_id === prov.id;
+                              const isCheapest = ci === 0;
+                              return (
+                                <td
+                                  key={ci}
+                                  className={`px-3 py-2 border border-border cursor-pointer transition-colors ${
+                                    isActive ? 'bg-primary/10 ring-1 ring-inset ring-primary' : isCheapest ? 'bg-green-500/5 hover:bg-green-500/10' : 'hover:bg-muted'
+                                  }`}
+                                  onClick={() => setActiveCell(isActive ? null : { prod_id: fila.producto_id, prov_id: prov.id })}
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className={`text-xs font-semibold ${isCheapest ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                      {prov.nombre}
+                                    </div>
+                                    <div className="font-mono font-medium text-sm text-right">
+                                      {precio.costo !== null ? formatCurrency(precio.costo) : <span className="text-muted-foreground text-xs">Sin precio</span>}
+                                    </div>
+                                    {isActive && (
+                                      <div className="space-y-1 pt-1 border-t border-border/50">
+                                        {precio.sku && (
+                                          <div className="text-xs text-muted-foreground font-mono">
+                                            SKU: <span className="text-foreground">{precio.sku}</span>
+                                          </div>
+                                        )}
+                                        {precio.link && (
+                                          <a
+                                            href={precio.link}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-primary flex items-center gap-1 hover:underline"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <ExternalLink className="h-3 w-3" /> Ver en sitio
+                                          </a>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()
             ) : (
+              // ── Modo estándar: columna fija por proveedor ──
               <table className="w-full text-sm border-collapse">
                 <thead className="sticky top-0 z-10">
                   <tr>
@@ -863,10 +1084,143 @@ const Proveedores = () => {
           {comparacionData && (
             <div className="shrink-0 pt-2 border-t border-border text-xs text-muted-foreground flex items-center gap-2">
               <span>{getSortedFilas().length} producto(s)</span>
-              {sortProveedor !== null && (
+              {rankMode ? (
+                <span>• Modo ranking: columnas ordenadas de menor a mayor precio por producto</span>
+              ) : sortProveedor !== null && (
                 <span>• Ordenado por: <strong>{comparacionData.proveedores.find(p => p.id === sortProveedor)?.nombre}</strong> ({sortDirection === 'asc' ? '↑ menor precio' : '↓ mayor precio'})</span>
               )}
               <span className="ml-auto">Clic en una celda para ver SKU y enlace</span>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Generar Pedido Dialog */}
+      <Dialog open={pedidoOpen} onOpenChange={setPedidoOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogDescription className="hidden">Generar pedido a proveedor</DialogDescription>
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="h-5 w-5" />
+              Generar Pedido — {pedidoProveedor?.nombre}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto min-h-0 space-y-3 py-2">
+            {pedidoLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : pedidoProductos.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground text-sm">
+                <Link2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                <p>No hay productos vinculados a este proveedor.</p>
+                <p className="text-xs mt-1">Usá el botón <strong>Vincular</strong> para agregar productos.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {/* Select All bar */}
+                <div className="flex items-center justify-between px-1 pb-2 border-b">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded"
+                      checked={pedidoProductos.length > 0 && pedidoProductos.every(p => p.selected)}
+                      onChange={(e) => setPedidoProductos(prev => prev.map(p => ({ ...p, selected: e.target.checked })))}
+                    />
+                    <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">Seleccionar todos</span>
+                  </label>
+                  <span className="text-xs text-muted-foreground">
+                    {pedidoProductos.filter(p => p.selected).length} de {pedidoProductos.length} seleccionado(s)
+                  </span>
+                </div>
+
+                {pedidoProductos.map((p, idx) => {
+                  const alerta = getPedidoPrecioAlert(p);
+                  return (
+                    <div
+                      key={p.id}
+                      className={`rounded-lg border p-3 transition-colors ${p.selected ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/20'}`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 rounded cursor-pointer"
+                          checked={p.selected}
+                          onChange={(e) => setPedidoProductos(prev => prev.map((item, i) => i === idx ? { ...item, selected: e.target.checked } : item))}
+                        />
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-medium text-sm">{p.producto_nombre}</span>
+                            {p.sku && (
+                              <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                                SKU: {p.sku}
+                              </span>
+                            )}
+                          </div>
+
+                          {alerta && (
+                            alerta.tipo === 'mejor' ? (
+                              <div className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded px-2 py-0.5">
+                                <Check className="h-3 w-3" />
+                                Mejor precio en este proveedor
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1 flex-wrap text-xs text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded px-2 py-0.5">
+                                ⚠ Más barato en <strong>{alerta.bestProvNombre}</strong>
+                                {' · '}Gs. {Math.round(alerta.bestCosto).toLocaleString('es-PY')}
+                                {' · '}ahorrás Gs. {Math.round(alerta.diff).toLocaleString('es-PY')}
+                              </div>
+                            )
+                          )}
+
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-muted-foreground">Cantidad:</label>
+                            <Input
+                              type="number"
+                              min="1"
+                              value={p.cantidad}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 1);
+                                setPedidoProductos(prev => prev.map((item, i) => i === idx ? { ...item, cantidad: val } : item));
+                              }}
+                              className="h-7 w-20 text-sm"
+                            />
+                            {p.link && (
+                              <a
+                                href={p.link}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="ml-auto text-xs text-primary flex items-center gap-1 hover:underline"
+                              >
+                                <ExternalLink className="h-3 w-3" /> Ver producto
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {!pedidoLoading && pedidoProductos.length > 0 && (
+            <div className="shrink-0 pt-3 border-t flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                {pedidoProductos.filter(p => p.selected).length === 0
+                  ? 'Seleccioná los productos para incluir en el pedido'
+                  : `${pedidoProductos.filter(p => p.selected).length} producto(s) en el pedido`}
+              </p>
+              <Button
+                onClick={handleGenerarPedidoPDF}
+                disabled={pedidoProductos.filter(p => p.selected).length === 0}
+                className="gap-2"
+              >
+                <ClipboardList className="h-4 w-4" />
+                Generar PDF
+              </Button>
             </div>
           )}
         </DialogContent>
@@ -915,6 +1269,14 @@ const Proveedores = () => {
                   <TableCell>{proveedor.email || '-'}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Generar pedido"
+                        onClick={() => handleAbrirPedido(proveedor)}
+                      >
+                        <ClipboardList className="h-4 w-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
