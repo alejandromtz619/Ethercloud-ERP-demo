@@ -772,12 +772,12 @@ const TabSugerencias = ({ empresa, API_URL, token }) => {
                     <thead className="bg-muted/50">
                       <tr>
                         <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Producto</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Vel. semanal</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Unidades vendidas por semana en promedio, dentro del período analizado">Ventas/sem.</th>
                         <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock actual</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Cobertura</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock obj.</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Compra sugerida</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Costo est.</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Cuántas semanas dura el stock actual al ritmo de venta actual">Cobertura actual</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Stock mínimo necesario para cubrir las semanas de cobertura objetivo configuradas">Stock mínimo</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">A pedir</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Inversión est.</th>
                         <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Urgencia</th>
                       </tr>
                     </thead>
@@ -941,13 +941,13 @@ const TabExceso = ({ empresa, API_URL, token }) => {
                     <thead className="bg-muted/50">
                       <tr>
                         <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Producto</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Vel. sem.</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Vendido per.</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Comprado per.</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Exceso compra</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Sem. hasta agotar</th>
-                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Val. inmovilizado</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Stock actual</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Unidades vendidas por semana en promedio">Ventas/sem.</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">{`Vendido (${semanas} sem.)`}</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Unidades ingresadas al stock en el mismo período">{`Ingresado (${semanas} sem.)`}</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Ingresado menos vendido: cuánto se compró de más respecto a la demanda del período">Sobrecompra</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Cuántas semanas tardaría en agotarse el stock actual al ritmo de venta actual">Sem. p/ agotarse</th>
+                        <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Stock actual valorizado al precio de costo">Capital inmovilizado</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -1156,10 +1156,10 @@ const TabAging = ({ empresa, API_URL, token }) => {
                   <tr>
                     <th className="w-8 px-4 py-2.5"></th>
                     <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground">Producto</th>
-                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground">Tandas</th>
-                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Uds. restantes</th>
-                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Aging máx.</th>
-                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground">Val. inmovilizado</th>
+                    <th className="text-center px-4 py-2.5 font-semibold text-muted-foreground" title="Cantidad de lotes de entrada activos con unidades disponibles">Lotes</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Stock real según el módulo de inventario">Uds. en stock</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Días desde la entrada más antigua que aún tiene unidades">Antigüedad</th>
+                    <th className="text-right px-4 py-2.5 font-semibold text-muted-foreground" title="Valor del stock restante calculado al precio de costo de cada lote">Valor en stock</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -1181,7 +1181,19 @@ const TabAging = ({ empresa, API_URL, token }) => {
                             {p.num_tandas}
                           </span>
                         </td>
-                        <td className="px-4 py-2.5 text-right font-mono">{formatNum(p.total_unidades_restantes)}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className="font-mono">{formatNum(p.stock_real)}</span>
+                            {!p.fifo_concuerda && (
+                              <span
+                                className="text-amber-500"
+                                title={`El seguimiento FIFO contabiliza ${formatNum(p.total_unidades_restantes)} unid. pero el stock real es ${formatNum(p.stock_real)}. Ocurre cuando hay lotes sin seguimiento habilitado (\"sin FIFO\"). Los valores de este análisis usan el stock real.`}
+                              >
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-4 py-2.5 text-right">
                           <span className={cn('px-2 py-0.5 rounded font-mono font-semibold', agingBadge(p.dias_aging_max))}>
                             {p.dias_aging_max} días
@@ -1196,7 +1208,7 @@ const TabAging = ({ empresa, API_URL, token }) => {
                       {expandidos[p.producto_id] && p.tandas.map(t => (
                         <tr key={t.tanda_id} className="bg-muted/20 border-l-2 border-primary/40">
                           <td className="px-4 py-2"></td>
-                          <td className="px-4 py-2 pl-8" colSpan={1}>
+                          <td className="px-4 py-2" colSpan={1}>
                             <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
                               <Clock className="h-3 w-3 shrink-0" />
                               <span className="font-medium text-foreground">
@@ -1211,6 +1223,9 @@ const TabAging = ({ empresa, API_URL, token }) => {
                               )}
                               {t.notas && (
                                 <><span className="opacity-40">·</span><span className="italic opacity-60">{t.notas}</span></>
+                              )}
+                              {t.sin_fifo && (
+                                <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 text-[10px] font-semibold border border-amber-500/30" title="Este lote no tiene seguimiento FIFO habilitado. Las unidades restantes son estimadas (se asume el lote completo disponible).">sin seguim. FIFO</span>
                               )}
                             </div>
                           </td>

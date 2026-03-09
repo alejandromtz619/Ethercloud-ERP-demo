@@ -6072,6 +6072,16 @@ async def bi_aging_tandas(
     result = await db.execute(q)
     rows = result.all()
 
+    # Real stock per product (from StockActual) to detect FIFO vs actual discrepancies
+    stock_real_q = (
+        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_real"))
+        .join(Almacen, StockActual.almacen_id == Almacen.id)
+        .where(Almacen.empresa_id == empresa_id)
+        .group_by(StockActual.producto_id)
+    )
+    stock_real_r = await db.execute(stock_real_q)
+    stock_real_map = {r.producto_id: int(r.stock_real or 0) for r in stock_real_r.all()}
+
     from collections import defaultdict
     productos_map: dict = defaultdict(lambda: {"nombre": "", "producto_id": 0, "tandas": []})
 
@@ -6102,6 +6112,7 @@ async def bi_aging_tandas(
             "almacen": row.almacen_nombre,
             "proveedor": row.proveedor_nombre or "Sin proveedor",
             "notas": row.notas,
+            "sin_fifo": row.cantidad_restante is None,
         })
 
     productos = []
@@ -6111,6 +6122,8 @@ async def bi_aging_tandas(
         min_aging = min(t["dias_aging"] for t in tandas)
         total_valor = sum(t["valor_inmovilizado"] for t in tandas)
         total_restante = sum(t["cantidad_restante"] for t in tandas)
+        stock_real = stock_real_map.get(pid, total_restante)
+        fifo_diferencia = total_restante - stock_real
         productos.append({
             "producto_id": pid,
             "producto_nombre": pdata["nombre"],
@@ -6118,6 +6131,9 @@ async def bi_aging_tandas(
             "dias_aging_max": max_aging,
             "dias_aging_min": min_aging,
             "total_unidades_restantes": total_restante,
+            "stock_real": stock_real,
+            "fifo_concuerda": abs(fifo_diferencia) <= 1,
+            "fifo_diferencia": fifo_diferencia,
             "valor_total_inmovilizado": total_valor,
             "tandas": tandas,
         })
