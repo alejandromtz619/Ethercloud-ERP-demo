@@ -53,6 +53,8 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [logoError, setLogoError] = React.useState(false);
+  React.useEffect(() => { setLogoError(false); }, [empresa?.logo_url]);
 
   // Filter menu items based on user permissions
   const menuItems = allMenuItems.filter(item => canAccessRoute(item.path));
@@ -80,8 +82,8 @@ const Layout = ({ children }) => {
         {/* Logo */}
         <div className={cn("flex h-16 items-center justify-between px-4 border-b", primaryColor === 'ether' ? "border-[#2a2a2a]" : "border-neutral-800")}>
           <div className="flex items-center gap-2">
-            {empresa?.logo_url ? (
-              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain rounded-md" />
+            {empresa?.logo_url && !logoError ? (
+              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain rounded-md" onError={() => setLogoError(true)} />
             ) : (
               <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
                 <span className="font-bold text-primary-foreground text-xs">

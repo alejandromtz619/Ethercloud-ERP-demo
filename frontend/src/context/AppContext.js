@@ -290,6 +290,7 @@ export const AppProvider = ({ children }) => {
   const value = {
     user,
     empresa,
+    setEmpresa,
     token,
     theme,
     primaryColor,

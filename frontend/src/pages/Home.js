@@ -1,4 +1,4 @@
-﻿import React from 'react';
+﻿import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Button } from '../components/ui/button';
@@ -8,6 +8,7 @@ import { LayoutDashboard, ShoppingCart, Truck, LogOut } from 'lucide-react';
 const Home = () => {
   const { user, empresa, userPermisos, logout } = useApp();
   const navigate = useNavigate();
+  const [logoError, setLogoError] = useState(false);
 
   const mainModules = [
     {
@@ -69,8 +70,8 @@ const Home = () => {
           </Button>
           
           <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary mb-6 overflow-hidden">
-            {empresa?.logo_url ? (
-              <img src={empresa.logo_url} alt={empresa.nombre} className="w-full h-full object-contain p-1" />
+            {empresa?.logo_url && !logoError ? (
+              <img src={empresa.logo_url} alt={empresa.nombre} className="w-full h-full object-contain p-1" onError={() => setLogoError(true)} />
             ) : (
               <span className="text-primary-foreground text-3xl font-extrabold tracking-wide select-none" style={{fontFamily: 'JetBrains Mono, monospace'}}>
                 {empresa?.nombre ? (empresa.nombre.trim().split(/\s+/).length > 1 ? (empresa.nombre.trim().split(/\s+/)[0][0] + empresa.nombre.trim().split(/\s+/)[1][0]).toUpperCase() : empresa.nombre.substring(0, 2).toUpperCase()) : '?'}

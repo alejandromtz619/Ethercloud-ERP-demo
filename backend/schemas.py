@@ -62,6 +62,14 @@ class EmpresaBase(BaseModel):
 class EmpresaCreate(EmpresaBase):
     pass
 
+class EmpresaUpdate(BaseModel):
+    nombre: Optional[str] = None
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    logo_url: Optional[str] = None
+
 class EmpresaResponse(EmpresaBase):
     model_config = ConfigDict(from_attributes=True)
     id: int

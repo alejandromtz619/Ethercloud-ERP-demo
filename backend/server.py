@@ -46,7 +46,7 @@ from models import (
     Gasto,
 )
 from schemas import (
-    EmpresaCreate, EmpresaResponse,
+    EmpresaCreate, EmpresaUpdate, EmpresaResponse,
     UsuarioCreate, UsuarioResponse, UsuarioLogin, TokenResponse,
     RolCreate, RolResponse, PermisoResponse,
     ClienteCreate, ClienteResponse, CreditoClienteCreate, CreditoClienteResponse,
@@ -279,6 +279,26 @@ async def obtener_empresa(empresa_id: int, db: AsyncSession = Depends(get_db)):
     empresa = result.scalar_one_or_none()
     if not empresa:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    return empresa
+
+@api_router.put("/empresas/{empresa_id}", response_model=EmpresaResponse)
+async def actualizar_empresa(
+    empresa_id: int,
+    data: EmpresaUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(get_current_usuario)
+):
+    if current_user.empresa_id != empresa_id:
+        raise HTTPException(status_code=403, detail="Sin permisos para modificar esta empresa")
+    result = await db.execute(select(Empresa).where(Empresa.id == empresa_id))
+    empresa = result.scalar_one_or_none()
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(empresa, key, value)
+    await db.commit()
+    await db.refresh(empresa)
     return empresa
 
 # ==================== AUTH ====================
