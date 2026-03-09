@@ -728,6 +728,138 @@ async def listar_proveedores(empresa_id: int, db: AsyncSession = Depends(get_db)
     )
     return result.scalars().all()
 
+@api_router.get("/proveedores/comparacion-mercado")
+async def comparacion_mercado(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Returns pivot table: products x suppliers with cost, SKU and link per cell."""
+    prov_result = await db.execute(
+        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
+        .order_by(Proveedor.nombre)
+    )
+    proveedores = prov_result.scalars().all()
+    prov_ids = [p.id for p in proveedores]
+
+    if not prov_ids:
+        return {"proveedores": [], "filas": []}
+
+    pp_result = await db.execute(
+        select(ProveedorProducto, Producto)
+        .join(Producto, ProveedorProducto.producto_id == Producto.id)
+        .where(ProveedorProducto.proveedor_id.in_(prov_ids), Producto.activo == True)
+        .order_by(Producto.nombre)
+    )
+    rows = pp_result.all()
+
+    product_map: dict = {}
+    for pp, prod in rows:
+        if prod.id not in product_map:
+            product_map[prod.id] = {"producto_id": prod.id, "producto_nombre": prod.nombre, "precios": {}}
+        product_map[prod.id]["precios"][str(pp.proveedor_id)] = {
+            "pp_id": pp.id,
+            "costo": float(pp.costo) if pp.costo is not None else None,
+            "sku": pp.sku,
+            "link": pp.link,
+        }
+
+    return {
+        "proveedores": [{"id": p.id, "nombre": p.nombre} for p in proveedores],
+        "filas": list(product_map.values()),
+    }
+
+@api_router.get("/proveedores/comparacion-mercado/excel")
+async def comparacion_mercado_excel(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Export market comparison as Excel file."""
+    prov_result = await db.execute(
+        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
+        .order_by(Proveedor.nombre)
+    )
+    proveedores = prov_result.scalars().all()
+    prov_ids = [p.id for p in proveedores]
+
+    pp_result = None
+    if prov_ids:
+        pp_result = await db.execute(
+            select(ProveedorProducto, Producto)
+            .join(Producto, ProveedorProducto.producto_id == Producto.id)
+            .where(ProveedorProducto.proveedor_id.in_(prov_ids), Producto.activo == True)
+            .order_by(Producto.nombre)
+        )
+
+    product_map: dict = {}
+    if pp_result:
+        for pp, prod in pp_result.all():
+            if prod.id not in product_map:
+                product_map[prod.id] = {"nombre": prod.nombre, "precios": {}}
+            product_map[prod.id]["precios"][pp.proveedor_id] = {
+                "costo": float(pp.costo) if pp.costo is not None else None,
+                "sku": pp.sku or "",
+            }
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Comparación de Mercado"
+
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    hfill = PatternFill(start_color="0044CC", end_color="0044CC", fill_type="solid")
+    hfont = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
+
+    total_cols = 1 + len(proveedores) * 2
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(total_cols, 2))
+    t = ws.cell(row=1, column=1, value="Comparación de Precios por Proveedor")
+    t.font = Font(name="Calibri", size=14, bold=True, color="0044CC")
+    t.alignment = Alignment(horizontal="center")
+    ws.row_dimensions[1].height = 26
+
+    ws.cell(row=3, column=1, value="Producto").font = hfont
+    ws.cell(row=3, column=1).fill = hfill
+    ws.cell(row=3, column=1).border = border
+    ws.cell(row=3, column=1).alignment = Alignment(horizontal="center")
+    ws.column_dimensions["A"].width = 35
+
+    for ci, prov in enumerate(proveedores):
+        col_precio = 2 + ci * 2
+        col_sku = 3 + ci * 2
+        c1 = ws.cell(row=3, column=col_precio, value=f"{prov.nombre} - Costo (₲)")
+        c2 = ws.cell(row=3, column=col_sku, value=f"{prov.nombre} - SKU")
+        for c in [c1, c2]:
+            c.font = hfont
+            c.fill = hfill
+            c.border = border
+            c.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col_precio)].width = 20
+        ws.column_dimensions[get_column_letter(col_sku)].width = 18
+
+    for ri, (prod_id, prod_data) in enumerate(product_map.items(), 1):
+        rn = 3 + ri
+        bg = "FFFFFF" if ri % 2 == 1 else "F5F7FF"
+        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+        c = ws.cell(row=rn, column=1, value=prod_data["nombre"])
+        c.font = Font(name="Calibri", size=9)
+        c.fill = fill
+        c.border = border
+        for ci, prov in enumerate(proveedores):
+            col_precio = 2 + ci * 2
+            col_sku = 3 + ci * 2
+            precio_data = prod_data["precios"].get(prov.id)
+            costo_val = precio_data["costo"] if precio_data else None
+            sku_val = precio_data["sku"] if precio_data else ""
+            cp = ws.cell(row=rn, column=col_precio, value=costo_val)
+            cs = ws.cell(row=rn, column=col_sku, value=sku_val)
+            for cc in [cp, cs]:
+                cc.font = Font(name="Calibri", size=9)
+                cc.fill = fill
+                cc.border = border
+                cc.alignment = Alignment(horizontal="right")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    excel_bytes = buf.getvalue()
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=comparacion_mercado.xlsx"}
+    )
+
 @api_router.get("/proveedores/{proveedor_id}", response_model=ProveedorResponse)
 async def obtener_proveedor(proveedor_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Proveedor).where(Proveedor.id == proveedor_id))
@@ -916,144 +1048,6 @@ async def eliminar_proveedor_producto(pp_id: int, db: AsyncSession = Depends(get
     await db.delete(pp)
     await db.commit()
     return {"message": "Vinculación eliminada"}
-
-@api_router.get("/proveedores/comparacion-mercado")
-async def comparacion_mercado(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    """Returns pivot table: products x suppliers with cost, SKU and link per cell."""
-    # Get all active suppliers for this empresa
-    prov_result = await db.execute(
-        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
-        .order_by(Proveedor.nombre)
-    )
-    proveedores = prov_result.scalars().all()
-    prov_ids = [p.id for p in proveedores]
-
-    if not prov_ids:
-        return {"proveedores": [], "filas": []}
-
-    # Get all vinculations for this empresa's suppliers
-    pp_result = await db.execute(
-        select(ProveedorProducto, Producto)
-        .join(Producto, ProveedorProducto.producto_id == Producto.id)
-        .where(ProveedorProducto.proveedor_id.in_(prov_ids), Producto.activo == True)
-        .order_by(Producto.nombre)
-    )
-    rows = pp_result.all()
-
-    # Pivot: product_id -> {proveedor_id -> {costo, sku, link}}
-    product_map: dict = {}
-    for pp, prod in rows:
-        if prod.id not in product_map:
-            product_map[prod.id] = {"producto_id": prod.id, "producto_nombre": prod.nombre, "precios": {}}
-        product_map[prod.id]["precios"][str(pp.proveedor_id)] = {
-            "pp_id": pp.id,
-            "costo": float(pp.costo) if pp.costo is not None else None,
-            "sku": pp.sku,
-            "link": pp.link,
-        }
-
-    return {
-        "proveedores": [{"id": p.id, "nombre": p.nombre} for p in proveedores],
-        "filas": list(product_map.values()),
-    }
-
-@api_router.get("/proveedores/comparacion-mercado/excel")
-async def comparacion_mercado_excel(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    """Export market comparison as Excel file."""
-    prov_result = await db.execute(
-        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
-        .order_by(Proveedor.nombre)
-    )
-    proveedores = prov_result.scalars().all()
-    prov_ids = [p.id for p in proveedores]
-
-    pp_result = None
-    if prov_ids:
-        pp_result = await db.execute(
-            select(ProveedorProducto, Producto)
-            .join(Producto, ProveedorProducto.producto_id == Producto.id)
-            .where(ProveedorProducto.proveedor_id.in_(prov_ids), Producto.activo == True)
-            .order_by(Producto.nombre)
-        )
-
-    product_map: dict = {}
-    if pp_result:
-        for pp, prod in pp_result.all():
-            if prod.id not in product_map:
-                product_map[prod.id] = {"nombre": prod.nombre, "precios": {}}
-            product_map[prod.id]["precios"][pp.proveedor_id] = {
-                "costo": float(pp.costo) if pp.costo is not None else None,
-                "sku": pp.sku or "",
-            }
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Comparación de Mercado"
-
-    thin = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    hfill = PatternFill(start_color="0044CC", end_color="0044CC", fill_type="solid")
-    hfont = Font(name="Calibri", size=10, bold=True, color="FFFFFF")
-
-    # Title
-    total_cols = 1 + len(proveedores) * 2
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(total_cols, 2))
-    t = ws.cell(row=1, column=1, value="Comparación de Precios por Proveedor")
-    t.font = Font(name="Calibri", size=14, bold=True, color="0044CC")
-    t.alignment = Alignment(horizontal="center")
-    ws.row_dimensions[1].height = 26
-
-    # Headers
-    ws.cell(row=3, column=1, value="Producto").font = hfont
-    ws.cell(row=3, column=1).fill = hfill
-    ws.cell(row=3, column=1).border = border
-    ws.cell(row=3, column=1).alignment = Alignment(horizontal="center")
-    ws.column_dimensions["A"].width = 35
-
-    for ci, prov in enumerate(proveedores):
-        col_precio = 2 + ci * 2
-        col_sku = 3 + ci * 2
-        c1 = ws.cell(row=3, column=col_precio, value=f"{prov.nombre} - Costo (₲)")
-        c2 = ws.cell(row=3, column=col_sku, value=f"{prov.nombre} - SKU")
-        for c in [c1, c2]:
-            c.font = hfont
-            c.fill = hfill
-            c.border = border
-            c.alignment = Alignment(horizontal="center")
-        ws.column_dimensions[get_column_letter(col_precio)].width = 20
-        ws.column_dimensions[get_column_letter(col_sku)].width = 18
-
-    # Data
-    for ri, (prod_id, prod_data) in enumerate(product_map.items(), 1):
-        rn = 3 + ri
-        bg = "FFFFFF" if ri % 2 == 1 else "F5F7FF"
-        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-        c = ws.cell(row=rn, column=1, value=prod_data["nombre"])
-        c.font = Font(name="Calibri", size=9)
-        c.fill = fill
-        c.border = border
-        for ci, prov in enumerate(proveedores):
-            col_precio = 2 + ci * 2
-            col_sku = 3 + ci * 2
-            precio_data = prod_data["precios"].get(prov.id)
-            costo_val = precio_data["costo"] if precio_data else None
-            sku_val = precio_data["sku"] if precio_data else ""
-            cp = ws.cell(row=rn, column=col_precio, value=costo_val)
-            cs = ws.cell(row=rn, column=col_sku, value=sku_val)
-            for cc in [cp, cs]:
-                cc.font = Font(name="Calibri", size=9)
-                cc.fill = fill
-                cc.border = border
-                cc.alignment = Alignment(horizontal="right")
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    excel_bytes = buf.getvalue()
-    return Response(
-        content=excel_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=comparacion_mercado.xlsx"}
-    )
 
 # ==================== CATEGORIAS ====================
 @api_router.post("/categorias", response_model=CategoriaResponse)
