@@ -4375,7 +4375,7 @@ async def bi_cierre_financiero(
     margen_bruto_pct = (ventas['ganancia'] / ventas['total'] * 100) if ventas['total'] > 0 else 0
     
     # 7. EVOLUCIÓN MENSUAL (para gráfico de barras)
-    from sqlalchemy import extract, func as func_sql
+    from sqlalchemy import extract
     evolucion_result = await db.execute(
         select(
             extract('year', Venta.creado_en).label('anio'),
