@@ -73,6 +73,7 @@ const Stock = () => {
   const [historialProducto, setHistorialProducto] = useState(null);
   const [historialData, setHistorialData] = useState([]);
   const [historialLoading, setHistorialLoading] = useState(false);
+  const [historialFiltroTipo, setHistorialFiltroTipo] = useState('TODOS'); // Filtro por tipo de movimiento
 
   const [salidaForm, setSalidaForm] = useState({
     producto_id: '',
@@ -171,6 +172,7 @@ const Stock = () => {
     setHistorialProducto({ id: productoId, nombre: productoNombre });
     setHistorialDialogOpen(true);
     setHistorialLoading(true);
+    setHistorialFiltroTipo('TODOS'); // Reset filter when opening
     try {
       const data = await api(`/stock/historial/${productoId}`);
       setHistorialData(data);
@@ -856,8 +858,7 @@ const Stock = () => {
         </CardContent>
       </Card>
       {/* Historial Dialog */}
-      <Dialog open={historialDialogOpen} onOpenChange={setHistorialDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+      <Dialog open={historialDialogOpen}4xl max-h-[85vh] overflow-y-auto">
           <DialogDescription className="hidden">Historial de movimientos del producto</DialogDescription>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -865,18 +866,47 @@ const Stock = () => {
               Historial &mdash; {historialProducto?.nombre}
             </DialogTitle>
           </DialogHeader>
+          
+          {/* Filtro por tipo de movimiento */}
+          {!historialLoading && historialData.length > 0 && (
+            <div className="flex items-center gap-3 pb-3 border-b">
+              <Label className="text-sm font-medium">Filtrar por tipo:</Label>
+              <Select value={historialFiltroTipo} onValueChange={setHistorialFiltroTipo}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="TODOS">Todos los movimientos</SelectItem>
+                  <SelectItem value="ENTRADA">Entradas</SelectItem>
+                  <SelectItem value="SALIDA">Salidas / Bajas</SelectItem>
+                  <SelectItem value="VENTA">Ventas</SelectItem>
+                  <SelectItem value="TRASPASO">Traspasos</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground ml-auto">
+                {historialFiltroTipo === 'TODOS' 
+                  ? `${historialData.length} movimientos totales`
+                  : `${historialData.filter(m => m.tipo === historialFiltroTipo).length} de ${historialData.length}`
+                }
+              </span>
+            </div>
+          )}
+>
+          </DialogHeader>
           {historialLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin" />
-            </div>
-          ) : historialData.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <History className="h-10 w-10 mx-auto mb-3 opacity-40" />
-              No hay movimientos registrados para este producto.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
+              <Loader2 classNa
+                  .filter(mov => historialFiltroTipo === 'TODOS' || mov.tipo === historialFiltroTipo)
+                  .map((mov) => {
+                  const tipoColor = {
+                    ENTRADA: 'text-green-600 dark:text-green-400',
+                    SALIDA: 'text-red-600 dark:text-red-400',
+                    TRASPASO: 'text-blue-600 dark:text-blue-400',
+                    VENTA: 'text-purple-600 dark:text-purple-400',
+                  };
+                  const tipoLabel = {
+                    ENTRADA: 'Entrada',
+                    SALIDA: 'Salida / Baj
                 <TableRow>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Tipo</TableHead>
