@@ -41,7 +41,7 @@ from models import (
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
-    DocumentoTemporal, TipoDocumento
+    DocumentoTemporal, TipoDocumento, Gasto
 )
 from schemas import (
     EmpresaCreate, EmpresaResponse,
@@ -50,6 +50,7 @@ from schemas import (
     ClienteCreate, ClienteResponse, CreditoClienteCreate, CreditoClienteResponse,
     ProveedorCreate, ProveedorResponse, DeudaProveedorCreate, DeudaProveedorResponse,
     CategoriaCreate, CategoriaResponse, MarcaCreate, MarcaResponse,
+    GastoCreate, GastoResponse, GastoUpdate,
     ProductoCreate, ProductoResponse, ProductoConStock,
     MateriaLaboratorioCreate, MateriaLaboratorioResponse,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
@@ -791,7 +792,48 @@ async def eliminar_deuda(deuda_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Deuda no encontrada")
     await db.delete(deuda)
     await db.commit()
-    return {"message": "Deuda eliminada"}
+    return{"message": "Deuda eliminada"}
+
+@api_router.get("/proveedores/comparacion-mercado")
+async def comparacion_mercado(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Returns pivot table: products x suppliers with cost, SKU and link per cell.
+    Useful for comparing prices across suppliers.
+    """
+    # Get all suppliers
+    proveedores_result = await db.execute(
+        select(Proveedor).where(Proveedor.empresa_id == empresa_id, Proveedor.estado == True)
+    )
+    proveedores = proveedores_result.scalars().all()
+    
+    # Get all products with their supplier links
+    productos_result = await db.execute(
+        select(Producto).where(Producto.empresa_id == empresa_id, Producto.activo == True)
+    )
+    productos = productos_result.scalars().all()
+    
+    # Build product map with prices from each supplier
+    product_map = {}
+    for prod in productos:
+        if prod.id not in product_map:
+            product_map[prod.id] = {"producto_id": prod.id, "producto_nombre": prod.nombre, "precios": {}}
+        
+        # Get all supplier-product links for this product
+        pp_result = await db.execute(
+            select(ProveedorProducto).where(ProveedorProducto.producto_id == prod.id)
+        )
+        pp_links = pp_result.scalars().all()
+        
+        for pp in pp_links:
+            product_map[prod.id]["precios"][str(pp.proveedor_id)] = {
+                "pp_id": pp.id,
+                "costo": float(pp.costo) if pp.costo is not None else None,
+            }
+    
+    return {
+        "proveedores": [{"id": p.id, "nombre": p.nombre} for p in proveedores],
+        "filas": list(product_map.values()),
+    }
 
 # ==================== CATEGORIAS ====================
 @api_router.post("/categorias", response_model=CategoriaResponse)
@@ -864,6 +906,63 @@ async def actualizar_marca(marca_id: int, data: dict, db: AsyncSession = Depends
     await db.commit()
     await db.refresh(marca)
     return marca
+
+# ==================== GASTOS ====================
+@api_router.post("/gastos", response_model=GastoResponse)
+async def crear_gasto(data: GastoCreate, db: AsyncSession = Depends(get_db)):
+    """Crear un nuevo gasto operativo"""
+    gasto = Gasto(**data.model_dump())
+    db.add(gasto)
+    await db.commit()
+    await db.refresh(gasto)
+    return gasto
+
+@api_router.get("/gastos", response_model=List[GastoResponse])
+async def listar_gastos(
+    empresa_id: int,
+    fecha_inicio: Optional[date] = None,
+    fecha_fin: Optional[date] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Listar gastos operativos de la empresa con filtros opcionales"""
+    query = select(Gasto).where(Gasto.empresa_id == empresa_id)
+    
+    if fecha_inicio:
+        query = query.where(Gasto.fecha >= fecha_inicio)
+    if fecha_fin:
+        query = query.where(Gasto.fecha <= fecha_fin)
+    
+    query = query.order_by(Gasto.fecha.desc())
+    
+    result = await db.execute(query)
+    return result.scalars().all()
+
+@api_router.put("/gastos/{gasto_id}", response_model=GastoResponse)
+async def actualizar_gasto(gasto_id: int, data: GastoUpdate, db: AsyncSession = Depends(get_db)):
+    """Actualizar un gasto operativo existente"""
+    result = await db.execute(select(Gasto).where(Gasto.id == gasto_id))
+    gasto = result.scalar_one_or_none()
+    if not gasto:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(gasto, field, value)
+    
+    await db.commit()
+    await db.refresh(gasto)
+    return gasto
+
+@api_router.delete("/gastos/{gasto_id}")
+async def eliminar_gasto(gasto_id: int, db: AsyncSession = Depends(get_db)):
+    """Eliminar un gasto operativo"""
+    result = await db.execute(select(Gasto).where(Gasto.id == gasto_id))
+    gasto = result.scalar_one_or_none()
+    if not gasto:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    
+    await db.delete(gasto)
+    await db.commit()
+    return {"message": "Gasto eliminado correctamente"}
 
 # ==================== PRODUCTOS ====================
 @api_router.post("/productos", response_model=ProductoResponse)
@@ -1103,6 +1202,77 @@ async def listar_almacenes(empresa_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Almacen).where(Almacen.empresa_id == empresa_id))
     return result.scalars().all()
 
+# ==================== STOCK FIFO HELPERS ====================
+async def _consume_entrada_fifo(db: AsyncSession, producto_id: int, almacen_id: int, cantidad: int):
+    """
+    Consume entradas FIFO (First In, First Out) restando de cantidad_restante.
+    Used when selling or manually removing stock.
+    """
+    # Get all ENTRADA movements with cantidad_restante > 0, ordered by date (FIFO)
+    result = await db.execute(
+        select(MovimientoStock)
+        .where(
+            MovimientoStock.producto_id == producto_id,
+            MovimientoStock.almacen_id == almacen_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0
+        )
+        .order_by(MovimientoStock.creado_en.asc())
+    )
+    entradas = result.scalars().all()
+    
+    cantidad_a_consumir = cantidad
+    for entrada in entradas:
+        if cantidad_a_consumir <= 0:
+            break
+        
+        if entrada.cantidad_restante >= cantidad_a_consumir:
+            # Esta entrada tiene suficiente
+            entrada.cantidad_restante -= cantidad_a_consumir
+            cantidad_a_consumir = 0
+        else:
+            # Esta entrada se agota parcialmente
+            cantidad_a_consumir -= entrada.cantidad_restante
+            entrada.cantidad_restante = 0
+
+
+async def _recalculate_precio_costo_fifo(db: AsyncSession, producto_id: int):
+    """
+    Recalcula precio_costo del producto basado en entradas FIFO activas.
+    Uses weighted average of remaining batches.
+    """
+    # Get all ENTRADA movements with cantidad_restante > 0
+    result = await db.execute(
+        select(MovimientoStock)
+        .where(
+            MovimientoStock.producto_id == producto_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0,
+            MovimientoStock.costo_unitario.isnot(None)
+        )
+    )
+    entradas = result.scalars().all()
+    
+    if not entradas:
+        # No hay entradas restantes, no actualizamos
+        return
+    
+    # Calculate weighted average
+    total_costo = Decimal(0)
+    total_cant = 0
+    for entrada in entradas:
+        total_costo += Decimal(str(entrada.costo_unitario)) * Decimal(str(entrada.cantidad_restante))
+        total_cant += entrada.cantidad_restante
+    
+    if total_cant > 0:
+        nuevo_costo = total_costo / Decimal(str(total_cant))
+        
+        # Update product precio_costo
+        prod_result = await db.execute(select(Producto).where(Producto.id == producto_id))
+        producto = prod_result.scalar_one_or_none()
+        if producto:
+            producto.precio_costo = nuevo_costo
+
 # ==================== STOCK ====================
 @api_router.post("/stock", response_model=StockActualResponse)
 async def crear_actualizar_stock(data: StockActualCreate, db: AsyncSession = Depends(get_db)):
@@ -1169,14 +1339,18 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         db.add(stock)
     
     # Actualizar precio_costo y/o proveedor del producto si se proporcionan
-    if data.costo_unitario is not None or data.proveedor_id is not None:
+    if data.costo_unitario is not None or data.costo_ponderado is not None or data.proveedor_id is not None or data.precio_venta is not None:
         prod_result = await db.execute(select(Producto).where(Producto.id == data.producto_id))
         producto_obj = prod_result.scalar_one_or_none()
         if producto_obj:
-            if data.costo_unitario is not None:
-                producto_obj.precio_costo = data.costo_unitario
+            # Use CPP if provided, otherwise fall back to real unit cost
+            costo_para_producto = data.costo_ponderado if data.costo_ponderado is not None else data.costo_unitario
+            if costo_para_producto is not None:
+                producto_obj.precio_costo = costo_para_producto
             if data.proveedor_id is not None:
                 producto_obj.proveedor_id = data.proveedor_id
+            if data.precio_venta is not None:
+                producto_obj.precio_venta = data.precio_venta
 
     movimiento = MovimientoStock(
         producto_id=data.producto_id,
@@ -1187,9 +1361,11 @@ async def entrada_stock(data: MovimientoStockCreate, db: AsyncSession = Depends(
         referencia_id=data.referencia_id,
         proveedor_id=data.proveedor_id,
         costo_unitario=data.costo_unitario,
+        costo_ponderado=data.costo_ponderado,
         condicion_pago=data.condicion_pago,
         fecha_limite_pago=data.fecha_limite_pago,
         notas=data.notas,
+        cantidad_restante=data.cantidad,  # Initialize FIFO tracking
         creado_en=now_paraguay()
     )
     db.add(movimiento)
@@ -1269,7 +1445,7 @@ async def traspasar_stock(data: TraspasoStockCreate, db: AsyncSession = Depends(
 
 @api_router.post("/stock/salida")
 async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Depends(get_db)):
-    """Registra una salida/eliminación de stock"""
+    """Registra unasalida/eliminación de stock (rotura, robo, etc.)"""
     
     result = await db.execute(
         select(StockActual).where(
@@ -1288,7 +1464,14 @@ async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Dep
             detail=f"Stock insuficiente. Disponible: {stock.cantidad}, solicitado: {data.cantidad}"
         )
     
+    # Consume from FIFO batches
+    await _consume_entrada_fifo(db, data.producto_id, data.almacen_id, data.cantidad)
+    
+    # Update stock quantity
     stock.cantidad -= data.cantidad
+    
+    # Recalculate average cost
+    await _recalculate_precio_costo_fifo(db, data.producto_id)
     
     # Register movement
     movimiento = MovimientoStock(
@@ -1351,6 +1534,7 @@ async def historial_stock_producto(producto_id: int, db: AsyncSession = Depends(
             tipo=mov.tipo,
             cantidad=mov.cantidad,
             costo_unitario=mov.costo_unitario,
+            costo_ponderado=mov.costo_ponderado,
             total_compra=total_compra,
             condicion_pago=mov.condicion_pago,
             fecha_limite_pago=mov.fecha_limite_pago,
@@ -1360,7 +1544,13 @@ async def historial_stock_producto(producto_id: int, db: AsyncSession = Depends(
             almacen_nombre=almacen_nombre,
             referencia_tipo=mov.referencia_tipo,
             referencia_id=mov.referencia_id,
-            creado_en=mov.creado_en
+            creado_en=mov.creado_en,
+            cantidad_restante=mov.cantidad_restante,
+            estado=(
+                "Activo" if (mov.cantidad_restante or 0) > 0
+                else "Agotado" if mov.cantidad_restante == 0
+                else "Activo"  # old records without tracking
+            ) if mov.tipo == TipoMovimientoStock.ENTRADA else None
         ))
 
     return response

@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Building2, Plus, Loader2, Search, Edit, Trash2, DollarSign, Check } from 'lucide-react';
+import { Building2, Plus, Loader2, Search, Edit, Trash2, DollarSign, Check, BarChart2, ExternalLink, ArrowUpDown, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 
@@ -36,6 +36,17 @@ const Proveedores = () => {
   const [deudas, setDeudas] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
+  
+  // Comparación de Mercado
+  const [comparacionOpen, setComparacionOpen] = useState(false);
+  const [comparacionData, setComparacionData] = useState(null);
+  const [comparacionLoading, setComparacionLoading] = useState(false);
+  const [sortProveedor, setSortProveedor] = useState(null); // proveedor id to sort by
+  const [sortDirection, setSortDirection] = useState('asc');
+  const [comparacionSearch, setComparacionSearch] = useState('');
+  const [activeCell, setActiveCell] = useState(null); // {prod_id, prov_id}
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [rankMode, setRankMode] = useState(false); // per-row ranked columns
   
   const [formData, setFormData] = useState({
     nombre: '',
@@ -188,6 +199,67 @@ const Proveedores = () => {
     }
   };
 
+  // ── Comparación de Mercado handlers ──────────────────────────────
+  const handleAbrirComparacion = async () => {
+    setComparacionOpen(true);
+    setComparacionLoading(true);
+    try {
+      const data = await api(`/proveedores/comparacion-mercado?empresa_id=${empresa.id}`);
+      setComparacionData(data);
+    } catch (e) {
+      toast.error('Error al cargar comparación');
+    } finally {
+      setComparacionLoading(false);
+    }
+  };
+
+  const handleSortByProveedor = (provId) => {
+    if (sortProveedor === provId) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortProveedor(provId);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortedFilas = () => {
+    if (!comparacionData) return [];
+    let filas = [...comparacionData.filas];
+    if (comparacionSearch) {
+      filas = filas.filter(f => f.producto_nombre.toLowerCase().includes(comparacionSearch.toLowerCase()));
+    }
+    if (sortProveedor !== null) {
+      filas.sort((a, b) => {
+        const pa = a.precios[String(sortProveedor)]?.costo ?? Infinity;
+        const pb = b.precios[String(sortProveedor)]?.costo ?? Infinity;
+        return sortDirection === 'asc' ? pa - pb : pb - pa;
+      });
+    }
+    return filas;
+  };
+
+  const handleExportarExcel = async () => {
+    setExportingExcel(true);
+    try {
+      const response = await fetch(
+        `${process.env.REACT_APP_BACKEND_URL}/api/proveedores/comparacion-mercado/excel?empresa_id=${empresa.id}`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+      );
+      if (!response.ok) throw new Error('Error al exportar');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'comparacion_mercado.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error('Error al exportar Excel');
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('es-PY', {
       style: 'currency',
@@ -195,6 +267,8 @@ const Proveedores = () => {
       minimumFractionDigits: 0
     }).format(value);
   };
+
+  const formatPYG = (v) => '₲ ' + Math.round(v).toLocaleString('es-PY');
 
   const filteredProveedores = proveedores.filter(p =>
     p.nombre.toLowerCase().includes(search.toLowerCase()) ||
@@ -216,7 +290,12 @@ const Proveedores = () => {
           <h1 className="text-2xl font-bold">Proveedores</h1>
           <p className="text-muted-foreground">Gestión de proveedores y deudas</p>
         </div>
-        {userPermisos.includes('proveedores.crear') && (
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={handleAbrirComparacion}>
+            <BarChart2 className="mr-2 h-4 w-4" />
+            Comparación de Mercado
+          </Button>
+          {userPermisos.includes('proveedores.crear') && (
           <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
               <Button data-testid="crear-proveedor-btn">
@@ -279,10 +358,9 @@ const Proveedores = () => {
             </form>
           </DialogContent>
         </Dialog>
-        )}
+          )}
+        </div>
       </div>
-
-      {/* Deudas Dialog */}
       <Dialog open={deudaDialogOpen} onOpenChange={setDeudaDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -452,6 +530,241 @@ const Proveedores = () => {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Comparación de Mercado Dialog */}
+      <Dialog open={comparacionOpen} onOpenChange={setComparacionOpen}>
+        <DialogContent className="max-w-[95vw] w-full max-h-[92vh] flex flex-col">
+          <DialogDescription className="hidden">Comparación de precios por proveedor</DialogDescription>
+          <DialogHeader className="shrink-0">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <DialogTitle className="flex items-center gap-2">
+                <BarChart2 className="h-5 w-5" />
+                Comparación de Mercado
+              </DialogTitle>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Filtrar producto..."
+                    className="pl-8 h-8 text-sm w-52"
+                    value={comparacionSearch}
+                    onChange={(e) => setComparacionSearch(e.target.value)}
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant={rankMode ? 'default' : 'outline'}
+                  onClick={() => { setRankMode(r => !r); setActiveCell(null); }}
+                  title="Muestra los proveedores de cada producto ordenados de menor a mayor precio"
+                >
+                  <ArrowUpDown className="h-3.5 w-3.5 mr-1" />
+                  {rankMode ? 'Ranking activo' : 'Por precio ↑'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleExportarExcel} disabled={exportingExcel || comparacionLoading}>
+                  {exportingExcel ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                  Excel
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-auto min-h-0">
+            {comparacionLoading ? (
+              <div className="flex items-center justify-center h-40">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : !comparacionData || comparacionData.filas.length === 0 ? (
+              <div className="text-center text-muted-foreground py-12">
+                <BarChart2 className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                <p>No hay productos vinculados a proveedores todavía.</p>
+                <p className="text-sm mt-1">Usá el botón <strong>Vincular</strong> en cada proveedor para asociar productos.</p>
+              </div>
+            ) : rankMode ? (
+              // ── Modo ranking por precio: columnas por fila ordenadas de menor a mayor ──
+              (() => {
+                const filas = getSortedFilas();
+                const maxCols = comparacionData.proveedores.length;
+                const rankHeaders = Array.from({ length: maxCols }, (_, i) =>
+                  i === 0 ? '1° más barato' : i === 1 ? '2°' : i === 2 ? '3°' : `${i + 1}°`
+                );
+                return (
+                  <table className="w-full text-sm border-collapse">
+                    <thead className="sticky top-0 z-10">
+                      <tr>
+                        <th className="text-left px-3 py-2 bg-secondary border border-border font-semibold min-w-[200px] sticky left-0 z-20">
+                          Producto
+                        </th>
+                        {rankHeaders.map((h, i) => (
+                          <th key={i} className={`px-3 py-2 bg-secondary border border-border font-semibold min-w-[160px] text-center ${i === 0 ? 'text-green-500' : ''}`}>
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filas.map((fila, ri) => {
+                        // Sort this row's providers by price asc, nulls last
+                        const rankedProvs = comparacionData.proveedores
+                          .map(prov => ({ prov, precio: fila.precios[String(prov.id)] || null }))
+                          .filter(x => x.precio !== null)
+                          .sort((a, b) => {
+                            const ca = a.precio.costo ?? Infinity;
+                            const cb = b.precio.costo ?? Infinity;
+                            return ca - cb;
+                          });
+                        // Pad to maxCols with nulls
+                        const cells = [...rankedProvs, ...Array(maxCols - rankedProvs.length).fill(null)];
+                        return (
+                          <tr key={fila.producto_id} className={ri % 2 === 0 ? '' : 'bg-secondary/30'}>
+                            <td className="px-3 py-2 border border-border font-medium sticky left-0 bg-background z-10">
+                              {fila.producto_nombre}
+                            </td>
+                            {cells.map((cell, ci) => {
+                              if (!cell) {
+                                return (
+                                  <td key={ci} className="px-3 py-2 border border-border text-center text-muted-foreground text-xs">—</td>
+                                );
+                              }
+                              const { prov, precio } = cell;
+                              const isActive = activeCell?.prod_id === fila.producto_id && activeCell?.prov_id === prov.id;
+                              const isCheapest = ci === 0;
+                              return (
+                                <td
+                                  key={ci}
+                                  className={`px-3 py-2 border border-border cursor-pointer transition-colors ${
+                                    isActive ? 'bg-primary/10 ring-1 ring-inset ring-primary' : isCheapest ? 'bg-green-500/5 hover:bg-green-500/10' : 'hover:bg-muted'
+                                  }`}
+                                  onClick={() => setActiveCell(isActive ? null : { prod_id: fila.producto_id, prov_id: prov.id })}
+                                >
+                                  <div className="space-y-0.5">
+                                    <div className={`text-xs font-semibold ${isCheapest ? 'text-green-500' : 'text-muted-foreground'}`}>
+                                      {prov.nombre}
+                                    </div>
+                                    <div className="font-mono font-medium text-sm text-right">
+                                      {precio.costo !== null ? formatPYG(precio.costo) : <span className="text-muted-foreground text-xs">Sin precio</span>}
+                                    </div>
+                                    {isActive && (
+                                      <div className="space-y-1 pt-1 border-t border-border/50">
+                                        {precio.sku && (
+                                          <div className="text-xs text-muted-foreground font-mono">
+                                            SKU: <span className="text-foreground">{precio.sku}</span>
+                                          </div>
+                                        )}
+                                        {precio.link && (
+                                          <a
+                                            href={precio.link}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-primary flex items-center gap-1 hover:underline"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <ExternalLink className="h-3 w-3" /> Ver en sitio
+                                          </a>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()
+            ) : (
+              // ── Modo estándar: columna fija por proveedor ──
+              <table className="w-full text-sm border-collapse">
+                <thead className="sticky top-0 z-10">
+                  <tr>
+                    <th className="text-left px-3 py-2 bg-secondary border border-border font-semibold min-w-[200px] sticky left-0 z-20">
+                      Producto
+                    </th>
+                    {comparacionData.proveedores.map(prov => (
+                      <th
+                        key={prov.id}
+                        className="px-3 py-2 bg-secondary border border-border font-semibold min-w-[140px] cursor-pointer hover:bg-muted select-none"
+                        onClick={() => handleSortByProveedor(prov.id)}
+                      >
+                        <div className="flex items-center justify-center gap-1">
+                          <span>{prov.nombre}</span>
+                          <ArrowUpDown className={`h-3.5 w-3.5 shrink-0 ${sortProveedor === prov.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {getSortedFilas().map((fila, ri) => (
+                    <tr key={fila.producto_id} className={ri % 2 === 0 ? '' : 'bg-secondary/30'}>
+                      <td className="px-3 py-2 border border-border font-medium sticky left-0 bg-background z-10">
+                        {fila.producto_nombre}
+                      </td>
+                      {comparacionData.proveedores.map(prov => {
+                        const precio = fila.precios[String(prov.id)];
+                        const isActive = activeCell?.prod_id === fila.producto_id && activeCell?.prov_id === prov.id;
+                        if (!precio) {
+                          return (
+                            <td key={prov.id} className="px-3 py-2 border border-border text-center text-muted-foreground text-xs">
+                              —
+                            </td>
+                          );
+                        }
+                        return (
+                          <td
+                            key={prov.id}
+                            className={`px-3 py-2 border border-border text-right cursor-pointer transition-colors ${isActive ? 'bg-primary/10 ring-1 ring-inset ring-primary' : 'hover:bg-muted'}`}
+                            onClick={() => setActiveCell(isActive ? null : { prod_id: fila.producto_id, prov_id: prov.id })}
+                          >
+                            <div className="space-y-0.5">
+                              <div className="font-mono font-medium text-sm">
+                                {precio.costo !== null ? formatPYG(precio.costo) : <span className="text-muted-foreground text-xs">Sin precio</span>}
+                              </div>
+                              {isActive && (
+                                <div className="text-left space-y-1 pt-1 border-t border-border/50">
+                                  {precio.sku && (
+                                    <div className="text-xs text-muted-foreground font-mono">
+                                      SKU: <span className="text-foreground">{precio.sku}</span>
+                                    </div>
+                                  )}
+                                  {precio.link && (
+                                    <a
+                                      href={precio.link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-primary flex items-center gap-1 hover:underline"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <ExternalLink className="h-3 w-3" /> Ver en sitio
+                                    </a>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {comparacionData && (
+            <div className="shrink-0 pt-2 border-t border-border text-xs text-muted-foreground flex items-center gap-2">
+              <span>{getSortedFilas().length} producto(s)</span>
+              {rankMode ? (
+                <span>• Modo ranking: columnas ordenadas de menor a mayor precio por producto</span>
+              ) : sortProveedor !== null && (
+                <span>• Ordenado por: <strong>{comparacionData.proveedores.find(p => p.id === sortProveedor)?.nombre}</strong> ({sortDirection === 'asc' ? '↑ menor precio' : '↓ mayor precio'})</span>
+              )}
+              <span className="ml-auto">Clic en una celda para ver SKU y enlace</span>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

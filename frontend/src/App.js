@@ -25,6 +25,8 @@ import Categorias from './pages/Categorias';
 import Permisos from './pages/Permisos';
 import HistorialVentas from './pages/HistorialVentas';
 import Reportes from './pages/Reportes';
+import Gastos from './pages/Gastos';
+import BusinessIntelligence from './pages/BusinessIntelligence';
 
 import './App.css';
 
@@ -267,6 +269,28 @@ const AppRoutes = () => {
           <ProtectedRoute permission="reportes.ver">
             <Layout>
               <Reportes />
+            </Layout>
+          </ProtectedRoute>
+        } 
+      />
+      
+      <Route 
+        path="/gastos" 
+        element={
+          <ProtectedRoute permission="gastos.ver">
+            <Layout>
+              <Gastos />
+            </Layout>
+          </ProtectedRoute>
+        } 
+      />
+      
+      <Route 
+        path="/business-intelligence" 
+        element={
+          <ProtectedRoute permission="reportes.business_intelligence">
+            <Layout>
+              <BusinessIntelligence />
             </Layout>
           </ProtectedRoute>
         } 

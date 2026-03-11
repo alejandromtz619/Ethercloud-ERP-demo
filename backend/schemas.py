@@ -22,6 +22,7 @@ class TipoMovimientoStock(str, Enum):
     SALIDA = "SALIDA"
     AJUSTE = "AJUSTE"
     TRASPASO = "TRASPASO"
+    VENTA = "VENTA"
 
 class EstadoEntrega(str, Enum):
     PENDIENTE = "PENDIENTE"
@@ -245,6 +246,25 @@ class MarcaResponse(MarcaBase):
     id: int
     empresa_id: int
 
+# Gasto
+class GastoBase(BaseModel):
+    monto: Decimal
+    responsable_nombre: str
+    fecha: date
+    motivo: str
+
+class GastoCreate(GastoBase):
+    empresa_id: int
+
+class GastoUpdate(GastoBase):
+    pass
+
+class GastoResponse(GastoBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empresa_id: int
+    creado_en: Optional[datetime] = None
+
 # Producto
 class ProductoBase(BaseModel):
     nombre: str
@@ -333,7 +353,9 @@ class MovimientoStockBase(BaseModel):
 
 class MovimientoStockCreate(MovimientoStockBase):
     proveedor_id: Optional[int] = None
-    costo_unitario: Optional[Decimal] = None
+    costo_unitario: Optional[Decimal] = None       # Real purchase cost per unit
+    costo_ponderado: Optional[Decimal] = None      # CPP (Costo Promedio Ponderado)
+    precio_venta: Optional[Decimal] = None
     condicion_pago: Optional[str] = None  # 'contado' o 'credito'
     fecha_limite_pago: Optional[date] = None
     notas: Optional[str] = None
@@ -343,6 +365,7 @@ class MovimientoStockResponse(MovimientoStockBase):
     id: int
     proveedor_id: Optional[int] = None
     costo_unitario: Optional[Decimal] = None
+    costo_ponderado: Optional[Decimal] = None
     condicion_pago: Optional[str] = None
     fecha_limite_pago: Optional[date] = None
     notas: Optional[str] = None
@@ -356,6 +379,7 @@ class EntradaStockHistorialResponse(BaseModel):
     tipo: TipoMovimientoStock
     cantidad: int
     costo_unitario: Optional[Decimal] = None
+    costo_ponderado: Optional[Decimal] = None
     total_compra: Optional[Decimal] = None
     condicion_pago: Optional[str] = None
     fecha_limite_pago: Optional[date] = None
@@ -366,6 +390,8 @@ class EntradaStockHistorialResponse(BaseModel):
     referencia_tipo: Optional[str] = None
     referencia_id: Optional[int] = None
     creado_en: Optional[datetime] = None
+    cantidad_restante: Optional[int] = None
+    estado: Optional[str] = None  # "Activo" | "Agotado" — only for ENTRADA movements
 
 # Traspaso Stock
 class TraspasoStockCreate(BaseModel):

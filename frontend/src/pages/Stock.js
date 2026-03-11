@@ -882,8 +882,11 @@ const Stock = () => {
                   <TableHead>Tipo</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-right">Cant. Restante</TableHead>
                   <TableHead className="text-right">Costo Unit.</TableHead>
+                  <TableHead className="text-right">CPP</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
+                  <TableHead>Estado</TableHead>
                   <TableHead>Condición</TableHead>
                   <TableHead>Proveedor</TableHead>
                   <TableHead>Notas</TableHead>
@@ -895,14 +898,22 @@ const Stock = () => {
                     ENTRADA: 'text-green-600 dark:text-green-400',
                     SALIDA: 'text-red-600 dark:text-red-400',
                     TRASPASO: 'text-blue-600 dark:text-blue-400',
+                    VENTA: 'text-purple-600 dark:text-purple-400',
                   };
                   const tipoLabel = {
                     ENTRADA: 'Entrada',
                     SALIDA: 'Salida',
                     TRASPASO: 'Traspaso',
+                    VENTA: 'Venta',
                   };
+                  
+                  // Determinar estado FIFO
+                  const cantidadRestante = mov.cantidad_restante ?? null;
+                  const isAgotado = cantidadRestante !== null && cantidadRestante === 0;
+                  const isActivo = cantidadRestante !== null && cantidadRestante > 0;
+                  
                   return (
-                    <TableRow key={mov.id}>
+                    <TableRow key={mov.id} className={isAgotado ? 'opacity-60' : ''}>
                       <TableCell className="text-xs whitespace-nowrap">
                         {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
                           day: '2-digit', month: '2-digit', year: 'numeric',
@@ -916,11 +927,28 @@ const Stock = () => {
                       <TableCell className="text-right font-mono font-bold">
                         {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
                       </TableCell>
+                      <TableCell className="text-right font-mono font-semibold">
+                        {cantidadRestante !== null ? (
+                          <span className={isActivo ? 'text-green-600' : 'text-muted-foreground'}>
+                            {cantidadRestante}
+                          </span>
+                        ) : '-'}
+                      </TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
                       </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-semibold text-blue-600">
+                        {mov.costo_ponderado != null ? formatCurrency(mov.costo_ponderado) : '-'}
+                      </TableCell>
                       <TableCell className="text-right font-mono text-xs font-semibold">
                         {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {cantidadRestante !== null && mov.tipo === 'ENTRADA' ? (
+                          <Badge variant={isActivo ? 'default' : 'secondary'} className="text-xs">
+                            {isActivo ? 'Activo' : 'Agotado'}
+                          </Badge>
+                        ) : '-'}
                       </TableCell>
                       <TableCell>
                         {mov.condicion_pago ? (
