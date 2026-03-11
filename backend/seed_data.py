@@ -165,6 +165,7 @@ async def seed_database():
             # Reportes
             ("reportes.ver", "Ver reportes"),
             ("reportes.exportar", "Exportar reportes"),
+            ("reportes.business_intelligence", "Acceso a Business Intelligence"),
             # Facturas
             ("facturas.ver", "Ver facturas"),
         ]

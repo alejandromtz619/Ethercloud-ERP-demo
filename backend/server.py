@@ -835,6 +835,95 @@ async def comparacion_mercado(empresa_id: int, db: AsyncSession = Depends(get_db
         "filas": list(product_map.values()),
     }
 
+@api_router.get("/proveedores/comparacion-mercado/excel")
+async def comparacion_mercado_excel(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Export market comparison as Excel file with pivot table format."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+        from openpyxl.utils import get_column_letter
+        from io import BytesIO
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl no está instalado")
+    
+    # Obtener datos del endpoint JSON
+    data = await comparacion_mercado(empresa_id, db)
+    proveedores = data["proveedores"]
+    filas = data["filas"]
+    
+    if not proveedores:
+        raise HTTPException(status_code=404, detail="No hay proveedores activos para exportar")
+    
+    # Crear workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comparación de Mercado"
+    
+    # Estilos
+    header_fill = PatternFill(start_color="0044CC", end_color="0044CC", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    center_align = Alignment(horizontal='center', vertical='center')
+    
+    # Escribir encabezados
+    ws.cell(1, 1, "Producto").fill = header_fill
+    ws.cell(1, 1).font = header_font
+    ws.cell(1, 1).border = border
+    ws.cell(1, 1).alignment = center_align
+    
+    for idx, prov in enumerate(proveedores, start=2):
+        cell = ws.cell(1, idx, prov["nombre"])
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = border
+        cell.alignment = center_align
+    
+    # Escribir datos de productos
+    row_num = 2
+    for fila in filas:
+        # Nombre del producto
+        ws.cell(row_num, 1, fila["producto_nombre"]).border = border
+        
+        # Precios de cada proveedor
+        for idx, prov in enumerate(proveedores, start=2):
+            prov_id = str(prov["id"])
+            precio_info = fila["precios"].get(prov_id)
+            
+            if precio_info and precio_info.get("costo") is not None:
+                costo = precio_info["costo"]
+                cell = ws.cell(row_num, idx, costo)
+                cell.number_format = '#,##0'
+            else:
+                cell = ws.cell(row_num, idx, "-")
+            
+            cell.border = border
+            cell.alignment = center_align
+        
+        row_num += 1
+    
+    # Ajustar anchos de columna
+    ws.column_dimensions['A'].width = 35
+    for idx in range(2, len(proveedores) + 2):
+        col_letter = get_column_letter(idx)
+        ws.column_dimensions[col_letter].width = 15
+    
+    # Guardar a BytesIO
+    excel_file = BytesIO()
+    wb.save(excel_file)
+    excel_file.seek(0)
+    
+    filename = f"comparacion_mercado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=excel_file.read(),
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 # ==================== CATEGORIAS ====================
 @api_router.post("/categorias", response_model=CategoriaResponse)
 async def crear_categoria(data: CategoriaCreate, db: AsyncSession = Depends(get_db)):
@@ -3892,6 +3981,724 @@ async def obtener_ventas_por_periodo(
         ]
     
     return []
+
+# ==================== BUSINESS INTELLIGENCE ====================
+@api_router.get("/bi/estadisticas-productos")
+async def bi_estadisticas_productos(
+    empresa_id: int,
+    periodo: str = "semanal",  # semanal | mensual
+    periodos: int = 8,  # cantidad de periodos a analizar
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Estadísticas de ventas por producto con comparación de periodos.
+    Retorna top productos ordenados por ventas con datos agregados por periodo.
+    """
+    now = now_paraguay()
+    today = now.date()
+    
+    # Calcular fecha de inicio según el periodo
+    if periodo == "semanal":
+        fecha_inicio = today - timedelta(weeks=periodos)
+        periodo_delta = timedelta(weeks=1)
+        periodo_label = "semana"
+    else:  # mensual
+        # Aproximar meses como 30 días
+        fecha_inicio = today - timedelta(days=periodos * 30)
+        periodo_delta = timedelta(days=30)
+        periodo_label = "mes"
+    
+    fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    
+    # Obtener ventas por producto con datos agregados
+    query = (
+        select(
+            Producto.id.label('producto_id'),
+            Producto.nombre.label('producto_nombre'),
+            func_sql.coalesce(func_sql.sum(VentaItem.total), 0).label('total_ventas'),
+            func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('total_unidades'),
+            func_sql.coalesce(func_sql.sum(
+                (VentaItem.precio_unitario - Producto.precio_costo) * VentaItem.cantidad
+            ), 0).label('ganancia_bruta')
+        )
+        .select_from(VentaItem)
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .join(Producto, VentaItem.producto_id == Producto.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= fecha_inicio_dt,
+            VentaItem.producto_id.isnot(None)
+        )
+        .group_by(Producto.id, Producto.nombre)
+        .order_by(func_sql.sum(VentaItem.total).desc())
+    )
+    
+    result = await db.execute(query)
+    productos = result.all()
+    
+    # Calcular totales generales
+    total_ventas = sum(float(p.total_ventas) for p in productos)
+    total_unidades = sum(int(p.total_unidades) for p in productos)
+    total_ganancia = sum(float(p.ganancia_bruta) for p in productos)
+    
+    # Obtener datos por periodo para cada producto (para gráficos de evolución)
+    productos_detalle = []
+    for prod in productos[:50]:  # Top 50 productos para detalle
+        # Obtener ventas agrupadas por periodo
+        if periodo == "semanal":
+            periodo_group = func_sql.extract('week', Venta.creado_en)
+        else:
+            periodo_group = func_sql.extract('month', Venta.creado_en)
+        
+        periodos_query = (
+            select(
+                periodo_group.label('periodo'),
+                func_sql.coalesce(func_sql.sum(VentaItem.total), 0).label('ventas'),
+                func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades'),
+                func_sql.coalesce(func_sql.sum(
+                    (VentaItem.precio_unitario - Producto.precio_costo) * VentaItem.cantidad
+                ), 0).label('ganancia')
+            )
+            .select_from(VentaItem)
+            .join(Venta, VentaItem.venta_id == Venta.id)
+            .join(Producto, VentaItem.producto_id == Producto.id)
+            .where(
+                Venta.empresa_id == empresa_id,
+                Venta.estado == EstadoVenta.CONFIRMADA,
+                Venta.creado_en >= fecha_inicio_dt,
+                VentaItem.producto_id == prod.producto_id
+            )
+            .group_by(periodo_group)
+            .order_by(periodo_group)
+        )
+        
+        periodos_result = await db.execute(periodos_query)
+        periodos_data = periodos_result.all()
+        
+        # Calcular promedio y comparar último periodo vs anterior
+        if len(periodos_data) >= 2:
+            ultimo = periodos_data[-1]
+            anterior = periodos_data[-2]
+            diferencia = float(ultimo.ventas) - float(anterior.ventas)
+            variacion_pct = (diferencia / float(anterior.ventas) * 100) if float(anterior.ventas) > 0 else 0
+        else:
+            variacion_pct = 0
+        
+        promedio_ventas = float(prod.total_ventas) / periodos if periodos > 0 else 0
+        promedio_unidades = int(prod.total_unidades) / periodos if periodos > 0 else 0
+        
+        productos_detalle.append({
+            "producto_id": prod.producto_id,
+            "producto_nombre": prod.producto_nombre,
+            "total_ventas": float(prod.total_ventas),
+            "total_unidades": int(prod.total_unidades),
+            "ganancia_bruta": float(prod.ganancia_bruta),
+            "promedio_ventas": promedio_ventas,
+            "promedio_unidades": promedio_unidades,
+            "variacion_pct": round(variacion_pct, 1),
+            "periodos": [
+                {
+                    "periodo": int(p.periodo),
+                    "ventas": float(p.ventas),
+                    "unidades": int(p.unidades),
+                    "ganancia": float(p.ganancia)
+                }
+                for p in periodos_data
+            ]
+        })
+    
+    return {
+        "productos": productos_detalle,
+        "resumen": {
+            "total_ventas": total_ventas,
+            "total_unidades": total_unidades,
+            "total_ganancia": total_ganancia,
+            "cantidad_productos": len(productos),
+            "periodo": periodo,
+            "periodos_analizados": periodos
+        }
+    }
+
+@api_router.get("/bi/estadisticas-productos/excel")
+async def bi_estadisticas_productos_excel(
+    empresa_id: int,
+    periodo: str = "semanal",
+    periodos: int = 8,
+    metrica: str = "ventas",
+    db: AsyncSession = Depends(get_db)
+):
+    """Exportar estadísticas de productos a Excel"""
+    # Obtener datos usando el endpoint principal
+    data = await bi_estadisticas_productos(empresa_id, periodo, periodos, db)
+    
+    # Preparar datos para Excel
+    columnas = ['#', 'Producto', 'Ventas Totales (₲)', 'Unidades Vendidas', 'Ganancia (₲)', 'Variación %']
+    datos = []
+    
+    for idx, prod in enumerate(data['productos'], 1):
+        datos.append([
+            idx,
+            prod['producto_nombre'],
+            float(prod['total_ventas']),
+            int(prod['total_unidades']),
+            float(prod['ganancia_bruta']),
+            f"{prod['variacion_pct']:.1f}%"
+        ])
+    
+    # Agregar fila de totales
+    totales = [
+        '',
+        'TOTAL',
+        data['resumen']['total_ventas'],
+        data['resumen']['total_unidades'],
+        data['resumen']['total_ganancia'],
+        ''
+    ]
+    
+    subtitle = f"Período: {periodo} | {periodos} {periodo}s | Métrica: {metrica}"
+    excel_bytes = crear_excel_reporte(
+        "Estadísticas de Productos - Business Intelligence",
+        subtitle,
+        columnas,
+        datos,
+        totales
+    )
+    
+    filename = f"bi_productos_{metrica}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@api_router.get("/bi/producto-evolucion")
+async def bi_producto_evolucion(
+    empresa_id: int,
+    producto_id: int,
+    periodo: str = "semanal",
+    periodos: int = 8,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Evolución temporal de un producto específico.
+    Muestra ventas, unidades y ganancia por periodo.
+    """
+    now = now_paraguay()
+    today = now.date()
+    
+    # Calcular fecha de inicio
+    if periodo == "semanal":
+        fecha_inicio = today - timedelta(weeks=periodos)
+        periodo_group = func_sql.extract('week', Venta.creado_en)
+    else:  # mensual
+        fecha_inicio = today - timedelta(days=periodos * 30)
+        periodo_group = func_sql.extract('month', Venta.creado_en)
+    
+    fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    
+    # Obtener nombre del producto
+    prod_result = await db.execute(
+        select(Producto.nombre).where(Producto.id == producto_id)
+    )
+    producto_nombre = prod_result.scalar_one_or_none()
+    
+    if not producto_nombre:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    
+    # Obtener datos por periodo
+    query = (
+        select(
+            periodo_group.label('periodo'),
+            func_sql.coalesce(func_sql.sum(VentaItem.total), 0).label('ventas'),
+            func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0).label('unidades'),
+            func_sql.coalesce(func_sql.sum(
+                (VentaItem.precio_unitario - Producto.precio_costo) * VentaItem.cantidad
+            ), 0).label('ganancia')
+        )
+        .select_from(VentaItem)
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .join(Producto, VentaItem.producto_id == Producto.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= fecha_inicio_dt,
+            VentaItem.producto_id == producto_id
+        )
+        .group_by(periodo_group)
+        .order_by(periodo_group)
+    )
+    
+    result = await db.execute(query)
+    periodos_data = result.all()
+    
+    return {
+        "producto_id": producto_id,
+        "producto_nombre": producto_nombre,
+        "periodos": [
+            {
+                "periodo": int(p.periodo),
+                "ventas": float(p.ventas),
+                "unidades": int(p.unidades),
+                "ganancia": float(p.ganancia)
+            }
+            for p in periodos_data
+        ]
+    }
+
+@api_router.get("/bi/cierre")
+async def bi_cierre_financiero(
+    empresa_id: int,
+    fecha_desde: str,
+    fecha_hasta: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Cierre financiero del negocio en un periodo.
+    Incluye: ventas, compras, salarios, gastos, balance neto.
+    """
+    try:
+        fecha_ini = datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ)
+        fecha_fin = datetime.fromisoformat(fecha_hasta).replace(hour=23, minute=59, second=59, tzinfo=PARAGUAY_TZ)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
+    
+    # 1. VENTAS
+    ventas_result = await db.execute(
+        select(
+            func_sql.coalesce(func_sql.sum(Venta.total), 0).label('total'),
+            func_sql.count(Venta.id).label('cantidad'),
+            func_sql.coalesce(func_sql.sum(Venta.ganancia), 0).label('ganancia')
+        )
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= fecha_ini,
+            Venta.creado_en <= fecha_fin
+        )
+    )
+    ventas_row = ventas_result.first()
+    ventas = {
+        "total": float(ventas_row.total or 0),
+        "cantidad": int(ventas_row.cantidad or 0),
+        "ganancia": float(ventas_row.ganancia or 0)
+    }
+    
+    # 2. COMPRAS DE MERCADERÍA (entradas con condición de pago)
+    compras_result = await db.execute(
+        select(
+            func_sql.coalesce(func_sql.sum(
+                MovimientoStock.costo_unitario * MovimientoStock.cantidad
+            ), 0).label('total'),
+            func_sql.count(MovimientoStock.id).label('num_entradas')
+        )
+        .join(Producto, MovimientoStock.producto_id == Producto.id)
+        .where(
+            Producto.empresa_id == empresa_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.condicion_pago.isnot(None),
+            MovimientoStock.creado_en >= fecha_ini,
+            MovimientoStock.creado_en <= fecha_fin
+        )
+    )
+    compras_row = compras_result.first()
+    compras_mercaderia = {
+        "total": float(compras_row.total or 0),
+        "num_entradas": int(compras_row.num_entradas or 0)
+    }
+    
+    # 3. SALARIOS PAGADOS
+    salarios_result = await db.execute(
+        select(
+            func_sql.coalesce(func_sql.sum(PagoSalario.monto), 0).label('total'),
+            func_sql.count(PagoSalario.id).label('num_pagos')
+        )
+        .join(Funcionario, PagoSalario.funcionario_id == Funcionario.id)
+        .where(
+            Funcionario.empresa_id == empresa_id,
+            PagoSalario.fecha >= fecha_ini.date(),
+            PagoSalario.fecha <= fecha_fin.date()
+        )
+    )
+    salarios_row = salarios_result.first()
+    salarios = {
+        "total": float(salarios_row.total or 0),
+        "num_pagos": int(salarios_row.num_pagos or 0)
+    }
+    
+    # 4. GASTOS OPERACIONALES
+    gastos_result = await db.execute(
+        select(
+            func_sql.coalesce(func_sql.sum(Gasto.monto), 0).label('total'),
+            func_sql.count(Gasto.id).label('num_gastos')
+        )
+        .where(
+            Gasto.empresa_id == empresa_id,
+            Gasto.fecha >= fecha_ini.date(),
+            Gasto.fecha <= fecha_fin.date()
+        )
+    )
+    gastos_row = gastos_result.first()
+    gastos = {
+        "total": float(gastos_row.total or 0),
+        "num_gastos": int(gastos_row.num_gastos or 0)
+    }
+    
+    # 5. DEUDAS PENDIENTES (snapshot actual, no del periodo)
+    creditos_result = await db.execute(
+        select(func_sql.coalesce(func_sql.sum(CreditoCliente.monto_pendiente), 0))
+        .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
+        .where(
+            Cliente.empresa_id == empresa_id,
+            CreditoCliente.pagado == False
+        )
+    )
+    creditos_pendientes = float(creditos_result.scalar() or 0)
+    
+    deudas_result = await db.execute(
+        select(func_sql.coalesce(func_sql.sum(DeudaProveedor.monto), 0))
+        .join(Proveedor, DeudaProveedor.proveedor_id == Proveedor.id)
+        .where(
+            Proveedor.empresa_id == empresa_id,
+            DeudaProveedor.pagado == False
+        )
+    )
+    deudas_pendientes = float(deudas_result.scalar() or 0)
+    
+    # 6. CALCULAR BALANCE
+    ingresos_totales = ventas['total']
+    egresos_totales = compras_mercaderia['total'] + salarios['total'] + gastos['total']
+    balance_neto = ingresos_totales - egresos_totales
+    
+    # Margen bruto (ganancia sobre ventas)
+    margen_bruto_pct = (ventas['ganancia'] / ventas['total'] * 100) if ventas['total'] > 0 else 0
+    
+    return {
+        "ventas": ventas,
+        "compras_mercaderia": compras_mercaderia,
+        "salarios": salarios,
+        "gastos": gastos,
+        "resumen": {
+            "ingresos_totales": ingresos_totales,
+            "egresos_totales": egresos_totales,
+            "balance_neto": balance_neto,
+            "margen_bruto_pct": round(margen_bruto_pct, 2)
+        },
+        "deudas_pendientes": {
+            "clientes": creditos_pendientes,
+            "proveedores": deudas_pendientes,
+            "total": creditos_pendientes + deudas_pendientes
+        }
+    }
+
+@api_router.get("/bi/sugerencias-compra")
+async def bi_sugerencias_compra(
+    empresa_id: int,
+    semanas_analisis: int = 4,
+    semanas_cobertura: int = 4,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Sugerencias de reposición de stock basadas en velocidad de venta.
+    Analiza las últimas N semanas y sugiere compra para cubrir M semanas.
+    """
+    now = now_paraguay()
+    today = now.date()
+    fecha_inicio = today - timedelta(weeks=semanas_analisis)
+    fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    
+    # Obtener todos los productos activos
+    productos_result = await db.execute(
+        select(Producto.id, Producto.nombre, Producto.precio_costo)
+        .where(Producto.empresa_id == empresa_id, Producto.activo == True)
+    )
+    productos = productos_result.all()
+    
+    sugerencias = []
+    
+    for prod in productos:
+        # Calcular velocidad de venta (unidades vendidas / semanas)
+        ventas_result = await db.execute(
+            select(func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0))
+            .join(Venta, VentaItem.venta_id == Venta.id)
+            .where(
+                Venta.empresa_id == empresa_id,
+                Venta.estado == EstadoVenta.CONFIRMADA,
+                Venta.creado_en >= fecha_inicio_dt,
+                VentaItem.producto_id == prod.id
+            )
+        )
+        unidades_vendidas = int(ventas_result.scalar() or 0)
+        velocidad_semanal = unidades_vendidas / semanas_analisis if semanas_analisis > 0 else 0
+        
+        # Obtener stock actual
+        stock_result = await db.execute(
+            select(func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0))
+            .where(StockActual.producto_id == prod.id)
+        )
+        stock_actual = int(stock_result.scalar() or 0)
+        
+        # Calcular cobertura actual (cuántas semanas dura el stock)
+        cobertura_actual_semanas = (stock_actual / velocidad_semanal) if velocidad_semanal > 0 else None
+        
+        # Calcular stock recomendado y compra sugerida
+        stock_recomendado = int(velocidad_semanal * semanas_cobertura)
+        compra_sugerida = max(0, stock_recomendado - stock_actual)
+        
+        # Calcular costo estimado
+        precio_costo = float(prod.precio_costo or 0)
+        costo_estimado = compra_sugerida * precio_costo
+        
+        # Determinar urgencia
+        if compra_sugerida > 0:
+            if cobertura_actual_semanas is None or cobertura_actual_semanas < 1:
+                urgencia = "ALTA"
+            elif cobertura_actual_semanas < 2:
+                urgencia = "MEDIA"
+            else:
+                urgencia = "BAJA"
+            
+            sugerencias.append({
+                "producto_id": prod.id,
+                "producto_nombre": prod.nombre,
+                "velocidad_semanal": round(velocidad_semanal, 2),
+                "stock_actual": stock_actual,
+                "cobertura_actual_semanas": round(cobertura_actual_semanas, 1) if cobertura_actual_semanas else None,
+                "stock_recomendado": stock_recomendado,
+                "compra_sugerida": compra_sugerida,
+                "costo_estimado": costo_estimado,
+                "urgencia": urgencia
+            })
+    
+    # Ordenar por urgencia y cantidad sugerida
+    urgencia_order = {"ALTA": 0, "MEDIA": 1, "BAJA": 2}
+    sugerencias.sort(key=lambda x: (urgencia_order[x["urgencia"]], -x["compra_sugerida"]))
+    
+    # Calcular resumen
+    productos_con_necesidad = len(sugerencias)
+    urgentes = len([s for s in sugerencias if s["urgencia"] == "ALTA"])
+    media_urgencia = len([s for s in sugerencias if s["urgencia"] == "MEDIA"])
+    costo_total_estimado = sum(s["costo_estimado"] for s in sugerencias)
+    
+    return {
+        "sugerencias": sugerencias,
+        "resumen": {
+            "productos_con_necesidad": productos_con_necesidad,
+            "urgentes": urgentes,
+            "media_urgencia": media_urgencia,
+            "costo_total_estimado": costo_total_estimado
+        }
+    }
+
+@api_router.get("/bi/exceso-compras")
+async def bi_exceso_compras(
+    empresa_id: int,
+    semanas_referencia: int = 4,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Identifica productos con exceso de stock.
+    Stock que tardará más del doble del periodo de referencia en agotarse.
+    """
+    now = now_paraguay()
+    today = now.date()
+    fecha_inicio = today - timedelta(weeks=semanas_referencia)
+    fecha_inicio_dt = datetime.combine(fecha_inicio, datetime.min.time()).replace(tzinfo=PARAGUAY_TZ)
+    
+    # Obtener todos los productos con stock
+    productos_result = await db.execute(
+        select(
+            Producto.id,
+            Producto.nombre,
+            Producto.precio_costo,
+            func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0).label('stock_actual')
+        )
+        .outerjoin(StockActual, Producto.id == StockActual.producto_id)
+        .where(Producto.empresa_id == empresa_id, Producto.activo == True)
+        .group_by(Producto.id, Producto.nombre, Producto.precio_costo)
+        .having(func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0) > 0)
+    )
+    productos = productos_result.all()
+    
+    exceso_stock = []
+    sin_ventas_recientes = []
+    
+    for prod in productos:
+        # Calcular velocidad de venta
+        ventas_result = await db.execute(
+            select(func_sql.coalesce(func_sql.sum(VentaItem.cantidad), 0))
+            .join(Venta, VentaItem.venta_id == Venta.id)
+            .where(
+                Venta.empresa_id == empresa_id,
+                Venta.estado == EstadoVenta.CONFIRMADA,
+                Venta.creado_en >= fecha_inicio_dt,
+                VentaItem.producto_id == prod.id
+            )
+        )
+        unidades_vendidas = int(ventas_result.scalar() or 0)
+        velocidad_semanal = unidades_vendidas / semanas_referencia if semanas_referencia > 0 else 0
+        
+        stock_actual = int(prod.stock_actual)
+        
+        # Calcular cuántas semanas para agotar
+        if velocidad_semanal > 0:
+            semanas_para_agotar = stock_actual / velocidad_semanal
+        else:
+            semanas_para_agotar = None
+        
+        # Calcular compras y ventas en el periodo
+        compras_result = await db.execute(
+            select(func_sql.coalesce(func_sql.sum(MovimientoStock.cantidad), 0))
+            .join(Producto, MovimientoStock.producto_id == Producto.id)
+            .where(
+                Producto.empresa_id == empresa_id,
+                MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+                MovimientoStock.producto_id == prod.id,
+                MovimientoStock.creado_en >= fecha_inicio_dt
+            )
+        )
+        unidades_compradas = int(compras_result.scalar() or 0)
+        
+        # Calcular valor inmovilizado
+        precio_costo = float(prod.precio_costo or 0)
+        valor_inmovilizado = stock_actual * precio_costo
+        
+        # Clasificar como exceso si:
+        # 1. Tarda más del doble del periodo de referencia en agotarse
+        # 2. O no tiene ventas en el periodo
+        if velocidad_semanal == 0:
+            # Sin ventas recientes
+            sin_ventas_recientes.append({
+                "producto_id": prod.id,
+                "producto_nombre": prod.nombre,
+                "stock_actual": stock_actual,
+                "velocidad_semanal": 0,
+                "vendido_periodo": 0,
+                "comprado_periodo": unidades_compradas,
+                "valor_inmovilizado": valor_inmovilizado
+            })
+        elif semanas_para_agotar > (semanas_referencia * 2):
+            # Exceso de stock
+            exceso_vs_venta = unidades_compradas - unidades_vendidas
+            exceso_stock.append({
+                "producto_id": prod.id,
+                "producto_nombre": prod.nombre,
+                "stock_actual": stock_actual,
+                "velocidad_semanal": round(velocidad_semanal, 2),
+                "semanas_para_agotar": round(semanas_para_agotar, 1),
+                "vendido_periodo": unidades_vendidas,
+                "comprado_periodo": unidades_compradas,
+                "exceso_vs_venta": exceso_vs_venta,
+                "valor_inmovilizado": valor_inmovilizado
+            })
+    
+    # Ordenar por semanas para agotar (más críticos primero)
+    exceso_stock.sort(key=lambda x: x["semanas_para_agotar"], reverse=True)
+    
+    # Calcular resumen
+    productos_exceso = len(exceso_stock)
+    productos_sin_ventas = len(sin_ventas_recientes)
+    valor_total_inmovilizado = sum(e["valor_inmovilizado"] for e in exceso_stock) + sum(s["valor_inmovilizado"] for s in sin_ventas_recientes)
+    
+    return {
+        "exceso_stock": exceso_stock,
+        "sin_ventas_recientes": sin_ventas_recientes,
+        "resumen": {
+            "productos_exceso": productos_exceso,
+            "productos_sin_ventas": productos_sin_ventas,
+            "valor_total_inmovilizado": valor_total_inmovilizado
+        }
+    }
+
+@api_router.get("/bi/aging-tandas")
+async def bi_aging_tandas(
+    empresa_id: int,
+    orden: str = "mas_antiguo",  # mas_antiguo | mas_nuevo | mayor_valor | nombre
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Análisis de aging de tandas FIFO.
+    Muestra antigüedad de cada batch de entrada que aún tiene stock.
+    """
+    now = now_paraguay()
+    today = now.date()
+    
+    # Obtener todas las entradas con cantidad restante > 0 (batches activos FIFO)
+    tandas_result = await db.execute(
+        select(
+            MovimientoStock.id.label('entrada_id'),
+            MovimientoStock.producto_id,
+            Producto.nombre.label('producto_nombre'),
+            MovimientoStock.cantidad_restante,
+            MovimientoStock.costo_unitario,
+            MovimientoStock.creado_en
+        )
+        .join(Producto, MovimientoStock.producto_id == Producto.id)
+        .where(
+            Producto.empresa_id == empresa_id,
+            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+            MovimientoStock.cantidad_restante > 0
+        )
+        .order_by(MovimientoStock.creado_en)
+    )
+    tandas = tandas_result.all()
+    
+    # Agrupar por producto
+    productos_aging = {}
+    for tanda in tandas:
+        if tanda.producto_id not in productos_aging:
+            productos_aging[tanda.producto_id] = {
+                "producto_id": tanda.producto_id,
+                "producto_nombre": tanda.producto_nombre,
+                "tandas": []
+            }
+        
+        # Calcular días de aging
+        dias_aging = (now.date() - tanda.creado_en.date()).days
+        
+        # Calcular valor inmovilizado
+        costo_unitario = float(tanda.costo_unitario or 0)
+        cantidad = int(tanda.cantidad_restante)
+        valor_inmovilizado = cantidad * costo_unitario
+        
+        productos_aging[tanda.producto_id]["tandas"].append({
+            "entrada_id": tanda.entrada_id,
+            "fecha_entrada": tanda.creado_en.date().isoformat(),
+            "cantidad": cantidad,
+            "dias_aging": dias_aging,
+            "costo_unitario": costo_unitario,
+            "valor_inmovilizado": valor_inmovilizado
+        })
+    
+    # Calcular métricas por producto
+    resultado = []
+    for prod_id, data in productos_aging.items():
+        num_tandas = len(data["tandas"])
+        stock_total = sum(t["cantidad"] for t in data["tandas"])
+        dias_promedio = sum(t["dias_aging"] * t["cantidad"] for t in data["tandas"]) / stock_total if stock_total > 0 else 0
+        valor_total = sum(t["valor_inmovilizado"] for t in data["tandas"])
+        
+        resultado.append({
+            "producto_id": prod_id,
+            "producto_nombre": data["producto_nombre"],
+            "num_tandas": num_tandas,
+            "stock_total": stock_total,
+            "dias_promedio": round(dias_promedio, 1),
+            "valor_total_inmovilizado": valor_total,
+            "tandas": data["tandas"]
+        })
+    
+    # Ordenar según parámetro
+    if orden == "mas_antiguo":
+        resultado.sort(key=lambda x: x["dias_promedio"], reverse=True)
+    elif orden == "mas_nuevo":
+        resultado.sort(key=lambda x: x["dias_promedio"])
+    elif orden == "mayor_valor":
+        resultado.sort(key=lambda x: x["valor_total_inmovilizado"], reverse=True)
+    else:  # nombre
+        resultado.sort(key=lambda x: x["producto_nombre"])
+    
+    return resultado
 
 # ==================== ALERTAS ====================
 @api_router.get("/alertas", response_model=List[Alerta])
