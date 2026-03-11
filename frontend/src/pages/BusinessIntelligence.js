@@ -617,11 +617,11 @@ const TabCierre = ({ empresa, API_URL, token }) => {
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <p className="text-xs text-muted-foreground">Créditos clientes pendientes</p>
-                  <p className="text-sm font-bold font-mono text-green-600">{formatPYG(data.creditos_pendientes.total)}</p>
+                  <p className="text-sm font-bold font-mono text-green-600">{formatPYG(data.deudas_pendientes?.clientes || 0)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Deudas prov. pendientes</p>
-                  <p className="text-sm font-bold font-mono text-amber-600">{formatPYG(data.deudas_pendientes.total)}</p>
+                  <p className="text-sm font-bold font-mono text-amber-600">{formatPYG(data.deudas_pendientes?.proveedores || 0)}</p>
                 </div>
               </div>
             </CardContent>
