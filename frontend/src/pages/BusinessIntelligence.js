@@ -436,9 +436,9 @@ const TabCierre = ({ empresa, API_URL, token }) => {
   useEffect(() => { fetch(); }, [fetch]);
 
   const pieData = data ? [
-    { name: 'Ganancia neta', value: Math.max(0, data.resumen.balance_neto) },
-    { name: 'Costo mercadería', value: data.ventas.costo },
-    { name: 'Salarios', value: data.salarios.total_pagado },
+    { name: 'Ganancia neta', value: Math.max(0, data.resumen?.balance_neto || 0) },
+    { name: 'Costo mercadería', value: data.ventas?.costo || 0 },
+    { name: 'Salarios', value: data.salarios?.total_pagado || 0 },
     { name: 'Gastos operativos', value: data.gastos_operativos?.total || 0 },
   ].filter(d => d.value > 0) : [];
 
@@ -587,19 +587,19 @@ const TabCierre = ({ empresa, API_URL, token }) => {
           </div>
 
           {/* Balance final */}
-          <Card className={cn('border-2', data.resumen.balance_neto >= 0 ? 'border-emerald-500/30' : 'border-red-500/30')}>
+          <Card className={cn('border-2', (data.resumen?.balance_neto || 0) >= 0 ? 'border-emerald-500/30' : 'border-red-500/30')}>
             <CardContent className="pt-5">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground font-medium">Balance neto del período</p>
-                  <p className={cn('text-3xl font-bold font-mono mt-2', data.resumen.balance_neto >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                    {formatPYG(data.resumen.balance_neto)}
+                  <p className={cn('text-3xl font-bold font-mono mt-2', (data.resumen?.balance_neto || 0) >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                    {formatPYG(data.resumen?.balance_neto || 0)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-2">
                     Ingresos - Costos - Salarios - Gastos = Balance neto
                   </p>
                 </div>
-                {data.resumen.balance_neto >= 0 ? (
+                {(data.resumen?.balance_neto || 0) >= 0 ? (
                   <TrendingUp className="h-12 w-12 text-emerald-500" />
                 ) : (
                   <TrendingDown className="h-12 w-12 text-red-500" />

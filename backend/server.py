@@ -4342,7 +4342,7 @@ async def bi_cierre_financiero(
     gastos_row = gastos_result.first()
     gastos = {
         "total": float(gastos_row.total or 0),
-        "num_gastos": int(gastos_row.num_gastos or 0)
+        "cantidad": int(gastos_row.num_gastos or 0)
     }
     
     # 5. DEUDAS PENDIENTES (snapshot actual, no del periodo)
@@ -4368,17 +4368,50 @@ async def bi_cierre_financiero(
     
     # 6. CALCULAR BALANCE
     ingresos_totales = ventas['total']
-    egresos_totales = compras_mercaderia['total'] + salarios['total'] + gastos['total']
+    egresos_totales = compras_mercaderia['total'] + salarios['total_pagado'] + gastos['total']
     balance_neto = ingresos_totales - egresos_totales
     
     # Margen bruto (ganancia sobre ventas)
     margen_bruto_pct = (ventas['ganancia'] / ventas['total'] * 100) if ventas['total'] > 0 else 0
     
+    # 7. EVOLUCIÓN MENSUAL (para gráfico de barras)
+    from sqlalchemy import extract, func as func_sql
+    evolucion_result = await db.execute(
+        select(
+            extract('year', Venta.creado_en).label('anio'),
+            extract('month', Venta.creado_en).label('mes'),
+            func_sql.coalesce(func_sql.sum(Venta.total), 0).label('ventas'),
+            func_sql.coalesce(func_sql.sum(Venta.ganancia), 0).label('ganancia')
+        )
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.creado_en >= fecha_ini,
+            Venta.creado_en <= fecha_fin
+        )
+        .group_by(extract('year', Venta.creado_en), extract('month', Venta.creado_en))
+        .order_by(extract('year', Venta.creado_en), extract('month', Venta.creado_en))
+    )
+    evolucion_mensual = []
+    for row in evolucion_result.all():
+        ventas_mes = float(row.ventas or 0)
+        ganancia_mes = float(row.ganancia or 0)
+        costo_mes = ventas_mes - ganancia_mes
+        evolucion_mensual.append({
+            "mes": f"{int(row.anio)}-{int(row.mes):02d}",
+            "ventas": ventas_mes,
+            "ganancia": ganancia_mes,
+            "costo": costo_mes
+        })
+    
+    # Calcular costo total de ventas
+    ventas['costo'] = ventas['total'] - ventas['ganancia']
+    
     return {
         "ventas": ventas,
         "compras_mercaderia": compras_mercaderia,
         "salarios": salarios,
-        "gastos": gastos,
+        "gastos_operativos": gastos,
         "resumen": {
             "ingresos_totales": ingresos_totales,
             "egresos_totales": egresos_totales,
@@ -4389,7 +4422,8 @@ async def bi_cierre_financiero(
             "clientes": creditos_pendientes,
             "proveedores": deudas_pendientes,
             "total": creditos_pendientes + deudas_pendientes
-        }
+        },
+        "evolucion_mensual": evolucion_mensual
     }
 
 @api_router.get("/bi/sugerencias-compra")
@@ -4630,6 +4664,7 @@ async def bi_aging_tandas(
             MovimientoStock.id.label('entrada_id'),
             MovimientoStock.producto_id,
             Producto.nombre.label('producto_nombre'),
+            MovimientoStock.cantidad.label('cantidad_original'),
             MovimientoStock.cantidad_restante,
             MovimientoStock.costo_unitario,
             MovimientoStock.creado_en
@@ -4659,24 +4694,34 @@ async def bi_aging_tandas(
         
         # Calcular valor inmovilizado
         costo_unitario = float(tanda.costo_unitario or 0)
-        cantidad = int(tanda.cantidad_restante)
-        valor_inmovilizado = cantidad * costo_unitario
+        cantidad_original = int(tanda.cantidad_original or 0)
+        cantidad_restante = int(tanda.cantidad_restante)
+        valor_inmovilizado = cantidad_restante * costo_unitario
+        
+        # Calcular porcentaje consumido
+        porcentaje_consumido = int(((cantidad_original - cantidad_restante) / cantidad_original * 100)) if cantidad_original > 0 else 0
         
         productos_aging[tanda.producto_id]["tandas"].append({
-            "entrada_id": tanda.entrada_id,
+            "tanda_id": tanda.entrada_id,
+            "entrada_id": tanda.entrada_id,  # Mantener compatibilidad
             "fecha_entrada": tanda.creado_en.date().isoformat(),
-            "cantidad": cantidad,
+            "cantidad_original": cantidad_original,
+            "cantidad_restante": cantidad_restante,
+            "cantidad": cantidad_restante,  # Alias para compatibilidad
             "dias_aging": dias_aging,
             "costo_unitario": costo_unitario,
-            "valor_inmovilizado": valor_inmovilizado
+            "valor_inmovilizado": valor_inmovilizado,
+            "porcentaje_consumido": porcentaje_consumido,
+            "tiene_seguimiento_fifo": True  # Todas las entradas con cantidad_restante > 0 tienen seguimiento
         })
     
     # Calcular métricas por producto
     resultado = []
     for prod_id, data in productos_aging.items():
         num_tandas = len(data["tandas"])
-        stock_total = sum(t["cantidad"] for t in data["tandas"])
-        dias_promedio = sum(t["dias_aging"] * t["cantidad"] for t in data["tandas"]) / stock_total if stock_total > 0 else 0
+        stock_total = sum(t["cantidad_restante"] for t in data["tandas"])
+        dias_promedio = sum(t["dias_aging"] * t["cantidad_restante"] for t in data["tandas"]) / stock_total if stock_total > 0 else 0
+        dias_max = max(t["dias_aging"] for t in data["tandas"]) if data["tandas"] else 0
         valor_total = sum(t["valor_inmovilizado"] for t in data["tandas"])
         
         resultado.append({
@@ -4684,8 +4729,11 @@ async def bi_aging_tandas(
             "producto_nombre": data["producto_nombre"],
             "num_tandas": num_tandas,
             "stock_total": stock_total,
+            "total_cantidad_restante": stock_total,  # Alias para compatibilidad
             "dias_promedio": round(dias_promedio, 1),
+            "dias_aging_max": dias_max,  # Campo adicional para el frontend
             "valor_total_inmovilizado": valor_total,
+            "todas_tandas_con_fifo": True,  # Todas tienen seguimiento (filtrado por cantidad_restante > 0)
             "tandas": data["tandas"]
         })
     
@@ -4699,7 +4747,20 @@ async def bi_aging_tandas(
     else:  # nombre
         resultado.sort(key=lambda x: x["producto_nombre"])
     
-    return resultado
+    # Calcular resumen
+    num_productos = len(resultado)
+    total_tandas = sum(p["num_tandas"] for p in resultado)
+    valor_total = sum(p["valor_total_inmovilizado"] for p in resultado)
+    
+    return {
+        "fecha_calculo": now.isoformat(),
+        "resumen": {
+            "productos_activos_con_stock": num_productos,
+            "total_tandas_activas": total_tandas,
+            "valor_stock_activo": valor_total
+        },
+        "productos": resultado
+    }
 
 # ==================== ALERTAS ====================
 @api_router.get("/alertas", response_model=List[Alerta])
