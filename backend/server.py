@@ -4310,20 +4310,21 @@ async def bi_cierre_financiero(
     # 3. SALARIOS PAGADOS
     salarios_result = await db.execute(
         select(
-            func_sql.coalesce(func_sql.sum(PagoSalario.monto), 0).label('total'),
-            func_sql.count(PagoSalario.id).label('num_pagos')
+            func_sql.coalesce(func_sql.sum(CicloSalario.salario_neto), 0).label('total'),
+            func_sql.count(CicloSalario.id).label('num_ciclos')
         )
-        .join(Funcionario, PagoSalario.funcionario_id == Funcionario.id)
+        .join(Funcionario, CicloSalario.funcionario_id == Funcionario.id)
         .where(
             Funcionario.empresa_id == empresa_id,
-            PagoSalario.fecha >= fecha_ini.date(),
-            PagoSalario.fecha <= fecha_fin.date()
+            CicloSalario.pagado == True,
+            CicloSalario.fecha_pago >= fecha_ini,
+            CicloSalario.fecha_pago <= fecha_fin
         )
     )
     salarios_row = salarios_result.first()
     salarios = {
-        "total": float(salarios_row.total or 0),
-        "num_pagos": int(salarios_row.num_pagos or 0)
+        "total_pagado": float(salarios_row.total or 0),
+        "num_ciclos": int(salarios_row.num_ciclos or 0)
     }
     
     # 4. GASTOS OPERACIONALES

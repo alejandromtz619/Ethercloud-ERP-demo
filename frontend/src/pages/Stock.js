@@ -858,7 +858,8 @@ const Stock = () => {
         </CardContent>
       </Card>
       {/* Historial Dialog */}
-      <Dialog open={historialDialogOpen}4xl max-h-[85vh] overflow-y-auto">
+      <Dialog open={historialDialogOpen} onOpenChange={setHistorialDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogDescription className="hidden">Historial de movimientos del producto</DialogDescription>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -891,22 +892,18 @@ const Stock = () => {
               </span>
             </div>
           )}
->
-          </DialogHeader>
+
           {historialLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 classNa
-                  .filter(mov => historialFiltroTipo === 'TODOS' || mov.tipo === historialFiltroTipo)
-                  .map((mov) => {
-                  const tipoColor = {
-                    ENTRADA: 'text-green-600 dark:text-green-400',
-                    SALIDA: 'text-red-600 dark:text-red-400',
-                    TRASPASO: 'text-blue-600 dark:text-blue-400',
-                    VENTA: 'text-purple-600 dark:text-purple-400',
-                  };
-                  const tipoLabel = {
-                    ENTRADA: 'Entrada',
-                    SALIDA: 'Salida / Baj
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : historialData.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">
+              No hay movimientos registrados para este producto
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Tipo</TableHead>
@@ -916,95 +913,97 @@ const Stock = () => {
                   <TableHead className="text-right">Costo Unit.</TableHead>
                   <TableHead className="text-right">CPP</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
-                  <TableHead>Estado</TableHead>
                   <TableHead>Condición</TableHead>
                   <TableHead>Proveedor</TableHead>
+                  <TableHead>Estado</TableHead>
                   <TableHead>Notas</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {historialData.map((mov) => {
-                  const tipoColor = {
-                    ENTRADA: 'text-green-600 dark:text-green-400',
-                    SALIDA: 'text-red-600 dark:text-red-400',
-                    TRASPASO: 'text-blue-600 dark:text-blue-400',
-                    VENTA: 'text-purple-600 dark:text-purple-400',
-                  };
-                  const tipoLabel = {
-                    ENTRADA: 'Entrada',
-                    SALIDA: 'Salida',
-                    TRASPASO: 'Traspaso',
-                    VENTA: 'Venta',
-                  };
-                  
-                  // Determinar estado FIFO
-                  const cantidadRestante = mov.cantidad_restante ?? null;
-                  const isAgotado = cantidadRestante !== null && cantidadRestante === 0;
-                  const isActivo = cantidadRestante !== null && cantidadRestante > 0;
-                  
-                  return (
-                    <TableRow key={mov.id} className={isAgotado ? 'opacity-60' : ''}>
-                      <TableCell className="text-xs whitespace-nowrap">
-                        {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
-                          day: '2-digit', month: '2-digit', year: 'numeric',
-                          hour: '2-digit', minute: '2-digit'
-                        }) : '-'}
-                      </TableCell>
-                      <TableCell className={cn('font-semibold text-xs', tipoColor[mov.tipo])}>
-                        {tipoLabel[mov.tipo] || mov.tipo}
-                      </TableCell>
-                      <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
-                      <TableCell className="text-right font-mono font-bold">
-                        {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold">
-                        {cantidadRestante !== null ? (
-                          <span className={isActivo ? 'text-green-600' : 'text-muted-foreground'}>
-                            {cantidadRestante}
-                          </span>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs font-semibold text-blue-600">
-                        {mov.costo_ponderado != null ? formatCurrency(mov.costo_ponderado) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs font-semibold">
-                        {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {cantidadRestante !== null && mov.tipo === 'ENTRADA' ? (
-                          <Badge variant={isActivo ? 'default' : 'secondary'} className="text-xs">
-                            {isActivo ? 'Activo' : 'Agotado'}
-                          </Badge>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {mov.condicion_pago ? (
-                          <Badge variant={mov.condicion_pago === 'credito' ? 'outline' : 'secondary'} className="text-xs capitalize">
-                            {mov.condicion_pago === 'credito' ? (
-                              <><CreditCard className="h-3 w-3 mr-1" />Crédito</>
-                            ) : (
-                              <><ShoppingCart className="h-3 w-3 mr-1" />Contado</>
-                            )}
-                          </Badge>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {mov.proveedor_nombre ? (
-                          <span className="flex items-center gap-1">
-                            <Building2 className="h-3 w-3 opacity-60" />
-                            {mov.proveedor_nombre}
-                          </span>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
-                        {mov.notas || '-'}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {historialData
+                  .filter(mov => historialFiltroTipo === 'TODOS' || mov.tipo === historialFiltroTipo)
+                  .map((mov) => {
+                    const tipoColor = {
+                      ENTRADA: 'text-green-600 dark:text-green-400',
+                      SALIDA: 'text-red-600 dark:text-red-400',
+                      TRASPASO: 'text-blue-600 dark:text-blue-400',
+                      VENTA: 'text-purple-600 dark:text-purple-400',
+                    };
+                    const tipoLabel = {
+                      ENTRADA: 'Entrada',
+                      SALIDA: 'Salida',
+                      TRASPASO: 'Traspaso',
+                      VENTA: 'Venta',
+                    };
+                    
+                    // Determinar estado FIFO
+                    const cantidadRestante = mov.cantidad_restante ?? null;
+                    const isAgotado = cantidadRestante !== null && cantidadRestante === 0;
+                    const isActivo = cantidadRestante !== null && cantidadRestante > 0;
+                    
+                    return (
+                      <TableRow key={mov.id} className={isAgotado ? 'opacity-60' : ''}>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
+                            day: '2-digit', month: '2-digit', year: 'numeric',
+                            hour: '2-digit', minute: '2-digit'
+                          }) : '-'}
+                        </TableCell>
+                        <TableCell className={cn('font-semibold text-xs', tipoColor[mov.tipo])}>
+                          {tipoLabel[mov.tipo] || mov.tipo}
+                        </TableCell>
+                        <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
+                        <TableCell className="text-right font-mono font-bold">
+                          {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold">
+                          {cantidadRestante !== null ? (
+                            <span className={isActivo ? 'text-green-600' : 'text-muted-foreground'}>
+                              {cantidadRestante}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs font-semibold text-blue-600">
+                          {mov.costo_ponderado != null ? formatCurrency(mov.costo_ponderado) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs font-semibold">
+                          {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {mov.condicion_pago ? (
+                            <Badge variant={mov.condicion_pago === 'credito' ? 'outline' : 'secondary'} className="text-xs capitalize">
+                              {mov.condicion_pago === 'credito' ? (
+                                <><CreditCard className="h-3 w-3 mr-1" />Crédito</>
+                              ) : (
+                                <><ShoppingCart className="h-3 w-3 mr-1" />Contado</>
+                              )}
+                            </Badge>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {mov.proveedor_nombre ? (
+                            <span className="flex items-center gap-1">
+                              <Building2 className="h-3 w-3 opacity-60" />
+                              {mov.proveedor_nombre}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {cantidadRestante !== null && mov.tipo === 'ENTRADA' ? (
+                            <Badge variant={isActivo ? 'default' : 'secondary'} className="text-xs">
+                              {isActivo ? 'Activo' : 'Agotado'}
+                            </Badge>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
+                          {mov.notas || '-'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
           )}
