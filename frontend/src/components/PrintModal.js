@@ -18,7 +18,7 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
   
   return (
     <div ref={ref} className="print-document boleta-print" style={{ 
-      fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
+      fontFamily: 'Arial, sans-serif',
       fontSize: '12px',
       width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
       maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
@@ -31,38 +31,38 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       boxSizing: 'border-box'
     }}>
       <div style={{ textAlign: 'center', marginBottom: '8px', paddingTop: '2mm' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LuzBrill</h1>
-        <p style={{ margin: '3px 0', fontSize: '11px', fontWeight: 'bold' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
-        <p style={{ margin: '2px 0', fontSize: '11px', fontWeight: 'bold' }}>0983 628249 0973 598415</p>
+        <h1 style={{ fontSize: '22px', fontFamily: 'Arial Black, Arial, sans-serif', fontWeight: 'normal', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LUZBRILL PINTURAS</h1>
+        <p style={{ margin: '3px 0', fontSize: '11px' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
+        <p style={{ margin: '2px 0', fontSize: '11px' }}>0983 628249 0973 598415</p>
       </div>
       
       <div style={{ textAlign: 'right', marginBottom: '8px', fontSize: '13px' }}>
-        <span style={{ fontWeight: 'bold' }}>NOTA NRO: </span>
-        <span style={{ fontWeight: 'bold' }}>{data.numero}</span>
+        <span>NOTA NRO: </span>
+        <span>{data.numero}</span>
       </div>
       
       <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '4px 0', marginBottom: '8px', fontSize: '11px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
-          <span><b>Razon Social:</b> {data.cliente?.nombre || 'OCACIONAL'}</span>
-          <span><b>Direccion:</b> {data.cliente?.direccion || '-'}</span>
-          <span><b>Cliente Tel:</b> {data.cliente?.telefono || '-'}</span>
+          <span>Razon Social: {data.cliente?.nombre || 'OCACIONAL'}</span>
+          <span>Direccion: {data.cliente?.direccion || '-'}</span>
+          <span>Cliente Tel: {data.cliente?.telefono || '-'}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
-          <span><b>RUC:</b> {data.cliente?.ruc || '-'}</span>
-          <span><b>Fecha:</b> {data.fecha}</span>
-          <span><b>Tipo Comprob:</b> {data.tipo_pago}</span>
+          <span>RUC: {data.cliente?.ruc || '-'}</span>
+          <span>Fecha: {data.fecha}</span>
+          <span>Tipo Comprob: {data.tipo_pago}</span>
         </div>
       </div>
       
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
         <thead>
           <tr style={{ borderBottom: '2px solid black', borderTop: '2px solid black' }}>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cod</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cant</th>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Descripción</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>IVA</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Precio</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Total</th>
+            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Cod</th>
+            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Cant</th>
+            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Descripción</th>
+            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>IVA</th>
+            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Precio</th>
+            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Total</th>
           </tr>
         </thead>
         <tbody>
@@ -72,8 +72,8 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
               <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.cantidad?.toFixed(2)}</td>
               <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.descripcion}</td>
               <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.iva}</td>
-              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.precio?.toLocaleString('es-PY')}</td>
-              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.total?.toLocaleString('es-PY')}</td>
+              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px' }}>{item.precio?.toLocaleString('es-PY')}</td>
+              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px' }}>{item.total?.toLocaleString('es-PY')}</td>
             </tr>
           ))}
         </tbody>
@@ -81,20 +81,20 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       
       <div style={{ borderTop: '2px solid black', paddingTop: '6px', marginTop: '5px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-          <span style={{ fontWeight: 'bold' }}>Subtotal:</span>
-          <span style={{ fontWeight: 'bold' }}>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
+          <span>Subtotal:</span>
+          <span>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
         </div>
         {data.descuento > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-            <span style={{ fontWeight: 'bold' }}>Descuento ({data.descuento_porcentaje}%):</span>
-            <span style={{ fontWeight: 'bold' }}>-{data.descuento?.toLocaleString('es-PY')}</span>
+            <span>Descuento ({data.descuento_porcentaje}%):</span>
+            <span>-{data.descuento?.toLocaleString('es-PY')}</span>
           </div>
         )}
         <div style={{ marginBottom: '6px', fontSize: '10px', borderTop: '1px solid black', paddingTop: '4px' }}>
-          <span style={{ fontWeight: 'bold' }}>En Letras: </span>
-          <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{data.total_letras}</span>
+          <span>En Letras: </span>
+          <span style={{ textTransform: 'uppercase' }}>{data.total_letras}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px', marginTop: '5px', borderTop: '3px double black', paddingTop: '6px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', marginTop: '5px', borderTop: '3px double black', paddingTop: '6px' }}>
           <span>TOTAL A PAGAR:</span>
           <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
         </div>
@@ -102,8 +102,8 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       
       <div style={{ marginTop: '12px', textAlign: 'center' }}>
         <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>________________________________</p>
-        <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Cliente</p>
-        <p style={{ margin: '10px 0 0 0', fontSize: '9px', fontStyle: 'italic', fontWeight: 'bold' }}>
+        <p style={{ margin: '0', fontSize: '11px' }}>Firma Cliente</p>
+        <p style={{ margin: '10px 0 0 0', fontSize: '9px' }}>
         </p>
       </div>
     </div>

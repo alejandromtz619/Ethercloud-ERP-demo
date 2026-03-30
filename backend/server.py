@@ -6153,6 +6153,10 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         ("sistema.configurar", "Configurar sistema"),
         ("reportes.ver", "Ver reportes"),
         ("reportes.exportar", "Exportar reportes"),
+        # Gastos
+        ("gastos.ver", "Ver gastos operativos"),
+        ("gastos.gestionar", "Crear y editar gastos operativos"),
+        ("gastos.eliminar", "Eliminar gastos operativos"),
         # Additional view permissions
         ("productos.ver", "Ver productos"),
         ("proveedores.ver", "Ver proveedores"),
@@ -6431,7 +6435,24 @@ async def migrate_documentos_temporales():
 @app.on_event("startup")
 async def startup():
     await init_db()
+    await ensure_permisos()
     logger.info("Database initialized")
+
+async def ensure_permisos():
+    """Ensure all required permissions exist in the DB (handles migrations for existing installs)"""
+    permisos_required = [
+        ("gastos.ver", "Ver gastos operativos"),
+        ("gastos.gestionar", "Crear y editar gastos operativos"),
+        ("gastos.eliminar", "Eliminar gastos operativos"),
+        ("delivery.eliminar", "Eliminar entregas"),
+    ]
+    async with AsyncSessionLocal() as db:
+        for clave, descripcion in permisos_required:
+            existing = await db.execute(select(Permiso).where(Permiso.clave == clave))
+            if not existing.scalar_one_or_none():
+                db.add(Permiso(clave=clave, descripcion=descripcion))
+                logger.info(f"Created missing permission: {clave}")
+        await db.commit()
 
 @app.on_event("shutdown")
 async def shutdown():
