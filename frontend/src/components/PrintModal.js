@@ -12,99 +12,93 @@ import { Label } from '../components/ui/label';
 import { Loader2, Printer, Receipt, FileText, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Boleta Print Template
+// Boleta Print Template - Impresora matricial Epson (papel ~190mm x 170mm)
 const BoletaPrint = React.forwardRef(({ data }, ref) => {
   if (!data) return null;
-  
+
   return (
-    <div ref={ref} className="print-document boleta-print" style={{ 
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '12px',
-      width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
-      maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
-      minHeight: '140mm', // Altura mínima papel boleta
-      padding: '2mm 5mm 5mm 5mm', // Márgenes internos del contenido
-      margin: '0 auto', // Centrado horizontal
+    <div ref={ref} className="print-document boleta-print" style={{
+      fontFamily: "'Courier New', Courier, monospace",
+      fontSize: '11px',
+      width: '100%',
+      padding: '0',
+      margin: '0',
       backgroundColor: 'white',
       color: 'black',
-      lineHeight: '1.4',
+      lineHeight: '1.2',
       boxSizing: 'border-box'
     }}>
-      <div style={{ textAlign: 'center', marginBottom: '8px', paddingTop: '2mm' }}>
-        <h1 style={{ fontSize: '22px', fontFamily: 'Arial Black, Arial, sans-serif', fontWeight: 'normal', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LUZBRILL PINTURAS</h1>
-        <p style={{ margin: '3px 0', fontSize: '11px' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
-        <p style={{ margin: '2px 0', fontSize: '11px' }}>0983 628249 0973 598415</p>
+      {/* Encabezado */}
+      <div style={{ textAlign: 'center', marginBottom: '3px' }}>
+        <div style={{ fontSize: '15px', fontWeight: 'bold', letterSpacing: '3px' }}>LUZBRILL PINTURAS</div>
+        <div>{data.empresa?.telefono || '061 572516 573408'}</div>
+        <div>0983 628249  0973 598415</div>
       </div>
-      
-      <div style={{ textAlign: 'right', marginBottom: '8px', fontSize: '13px' }}>
-        <span>NOTA NRO: </span>
-        <span>{data.numero}</span>
+
+      <div style={{ borderTop: '1px solid black', margin: '3px 0' }} />
+
+      {/* Datos de la nota y cliente */}
+      <div style={{ textAlign: 'right', marginBottom: '1px' }}>NOTA NRO: {data.numero}</div>
+      <div>Razon Social: {data.cliente?.nombre || 'OCACIONAL'}</div>
+      <div>Direccion: {data.cliente?.direccion || '-'}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>Ruc: {data.cliente?.ruc || '-'}</span>
+        <span>Telefono: {data.cliente?.telefono || '-'}</span>
       </div>
-      
-      <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '4px 0', marginBottom: '8px', fontSize: '11px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
-          <span>Razon Social: {data.cliente?.nombre || 'OCACIONAL'}</span>
-          <span>Direccion: {data.cliente?.direccion || '-'}</span>
-          <span>Cliente Tel: {data.cliente?.telefono || '-'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
-          <span>RUC: {data.cliente?.ruc || '-'}</span>
-          <span>Fecha: {data.fecha}</span>
-          <span>Tipo Comprob: {data.tipo_pago}</span>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>Fecha: {data.fecha}</span>
+        <span>Tipo Comprob: {data.tipo_pago}</span>
       </div>
-      
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
-        <thead>
-          <tr style={{ borderBottom: '2px solid black', borderTop: '2px solid black' }}>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Cod</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Cant</th>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Descripción</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>IVA</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Precio</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontFamily: 'Arial Black, Arial, sans-serif' }}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.items?.map((item, idx) => (
-            <tr key={idx} style={{ borderBottom: '1px solid #ccc' }}>
-              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.codigo}</td>
-              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.cantidad?.toFixed(2)}</td>
-              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.descripcion}</td>
-              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.iva}</td>
-              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px' }}>{item.precio?.toLocaleString('es-PY')}</td>
-              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px' }}>{item.total?.toLocaleString('es-PY')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      
-      <div style={{ borderTop: '2px solid black', paddingTop: '6px', marginTop: '5px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-          <span>Subtotal:</span>
-          <span>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
-        </div>
-        {data.descuento > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-            <span>Descuento ({data.descuento_porcentaje}%):</span>
-            <span>-{data.descuento?.toLocaleString('es-PY')}</span>
-          </div>
-        )}
-        <div style={{ marginBottom: '6px', fontSize: '10px', borderTop: '1px solid black', paddingTop: '4px' }}>
-          <span>En Letras: </span>
-          <span style={{ textTransform: 'uppercase' }}>{data.total_letras}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: 'Arial Black, Arial, sans-serif', fontSize: '14px', marginTop: '5px', borderTop: '3px double black', paddingTop: '6px' }}>
-          <span>TOTAL A PAGAR:</span>
-          <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
-        </div>
+
+      <div style={{ borderTop: '1px dashed black', margin: '3px 0' }} />
+
+      {/* Encabezado de columnas */}
+      <div style={{ display: 'flex', fontWeight: 'bold' }}>
+        <span style={{ width: '7ch', textAlign: 'right', paddingRight: '1ch' }}>Cant</span>
+        <span style={{ flex: 1 }}>Descripcion</span>
+        <span style={{ width: '4ch', textAlign: 'center' }}>IVA</span>
+        <span style={{ width: '10ch', textAlign: 'right' }}>Precio</span>
+        <span style={{ width: '11ch', textAlign: 'right' }}>Total</span>
       </div>
-      
-      <div style={{ marginTop: '12px', textAlign: 'center' }}>
-        <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>________________________________</p>
-        <p style={{ margin: '0', fontSize: '11px' }}>Firma Cliente</p>
-        <p style={{ margin: '10px 0 0 0', fontSize: '9px' }}>
-        </p>
+
+      <div style={{ borderTop: '1px dashed black', margin: '2px 0' }} />
+
+      {/* Filas de productos */}
+      {data.items?.map((item, idx) => (
+        <div key={idx} style={{ display: 'flex' }}>
+          <span style={{ width: '7ch', textAlign: 'right', paddingRight: '1ch' }}>{item.cantidad?.toFixed(2)}</span>
+          <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' }}>{item.descripcion}</span>
+          <span style={{ width: '4ch', textAlign: 'center' }}>{item.iva}</span>
+          <span style={{ width: '10ch', textAlign: 'right' }}>{item.precio?.toLocaleString('es-PY')}</span>
+          <span style={{ width: '11ch', textAlign: 'right' }}>{item.total?.toLocaleString('es-PY')}</span>
+        </div>
+      ))}
+
+      <div style={{ borderTop: '1px dashed black', margin: '3px 0' }} />
+
+      {/* Descuento (si aplica) */}
+      {data.descuento > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>Descuento ({data.descuento_porcentaje}%):</span>
+          <span>-{data.descuento?.toLocaleString('es-PY')}</span>
+        </div>
+      )}
+
+      {/* En Letras y Total */}
+      <div style={{ marginBottom: '2px' }}>En Letras: {data.total_letras}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+        <span>Total a Pagar:</span>
+        <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
+      </div>
+
+      <div style={{ borderTop: '1px solid black', margin: '5px 0 4px 0' }} />
+
+      {/* Firma */}
+      <div style={{ marginTop: '8px' }}>
+        <div style={{ marginBottom: '2px' }}>________________________________</div>
+        <div>Firma Cliente</div>
+        <div style={{ marginTop: '5px', fontSize: '9px' }}>Favor Confirmar Su Mercaderia al recibirla.</div>
+        <div style={{ fontSize: '9px' }}>No Aceptamos Reclamos Posteriores.</div>
       </div>
     </div>
   );
@@ -390,56 +384,48 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   }
                   
                   @media print {
-                    /* Página por defecto (boletas, A4) */
                     @page {
                       size: auto;
-                      margin: 15mm 8mm 10mm 8mm;
+                      margin: 5mm;
                     }
-                    
-                    /* Página para factura pre-impresa 240mm × 200mm */
+
+                    /* Boleta: papel continuo ~190mm x 170mm */
+                    @page boleta {
+                      size: 190mm 170mm;
+                      margin: 5mm 5mm;
+                    }
+
+                    /* Factura pre-impresa 240mm x 200mm */
                     @page factura {
                       size: 240mm 200mm;
                       margin: 0;
                     }
-                    
+
                     body {
                       margin: 0;
                       padding: 0;
                       -webkit-print-color-adjust: exact;
                       print-color-adjust: exact;
                     }
-                    
-                    .page-break { 
+
+                    .page-break {
                       page-break-after: always;
                       break-after: page;
                     }
-                    
-                    /* Boletas - se adapta al papel A4/Carta */
+
                     .boleta-print {
-                      width: 100% !important;
-                      max-width: 100% !important;
-                      min-height: auto;
-                      margin: 0 auto;
+                      page: boleta;
+                      width: 180mm !important;
+                      margin: 0 !important;
                       page-break-after: always;
                     }
-                    
-                    /* Facturas - tamaño exacto papel pre-impreso */
+
                     .factura-print {
                       width: 240mm !important;
                       height: 200mm !important;
                       margin: 0 !important;
                       padding: 0 !important;
                       page-break-after: always;
-                    }
-                    
-                    /* Evitar cortes de página indeseados */
-                    table, tr, td, th {
-                      page-break-inside: avoid;
-                    }
-                    
-                    /* Mejor contraste para matriz de puntos */
-                    strong, b, .bold {
-                      font-weight: 900 !important;
                     }
                   }
                 </style>
