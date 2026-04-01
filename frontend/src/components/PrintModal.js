@@ -31,8 +31,8 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       {/* Encabezado */}
       <div style={{ textAlign: 'center', marginBottom: '3px' }}>
         <div style={{ fontSize: '15px', fontWeight: 'bold', letterSpacing: '3px' }}>LUZBRILL PINTURAS</div>
-        <div>{data.empresa?.telefono || '061 572516 573408'}</div>
-        <div>0983 628249  0973 598415</div>
+        <div>{data.empresa?.ruc}</div>
+        <div>{data.empresa?.telefono}</div>
       </div>
 
       <div style={{ borderTop: '1px solid black', margin: '3px 0' }} />
