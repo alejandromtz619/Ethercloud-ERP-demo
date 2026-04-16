@@ -202,7 +202,7 @@ const Ventas = () => {
     } catch (e) {
       toast.error('Error al buscar producto');
     }
-  }, [productos, materias, selectedCliente]);
+  }, [productos, materias, selectedCliente, addToCart]);
 
   // Handle barcode input (USB scanner sends Enter key)
   useEffect(() => {
@@ -216,7 +216,7 @@ const Ventas = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [barcodeInput, handleBarcodeSearch]);
 
-  const addToCart = (item, type) => {
+  const addToCart = useCallback((item, type) => {
     if (!selectedCliente) {
       toast.error('Primero seleccione un cliente');
       return;
@@ -295,7 +295,7 @@ const Ventas = () => {
     }
     
     toast.success(`${item.nombre} agregado al carrito`);
-  };
+  }, [cart, selectedCliente, hasPermission]);
 
   const updateCartItem = (index, field, value) => {
     const newCart = [...cart];
