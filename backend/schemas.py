@@ -304,6 +304,11 @@ class MateriaLaboratorioBase(BaseModel):
 class MateriaLaboratorioCreate(MateriaLaboratorioBase):
     empresa_id: int
 
+class MateriaLaboratorioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    precio: Optional[Decimal] = None
+
 class MateriaLaboratorioResponse(MateriaLaboratorioBase):
     model_config = ConfigDict(from_attributes=True)
     id: int

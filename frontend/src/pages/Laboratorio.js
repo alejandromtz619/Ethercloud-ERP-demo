@@ -22,7 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { FlaskConical, Plus, Loader2, Printer } from 'lucide-react';
+import { FlaskConical, Plus, Loader2, Printer, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import JsBarcode from 'jsbarcode';
@@ -35,6 +35,10 @@ const Laboratorio = () => {
   const [submitting, setSubmitting] = useState(false);
   const [printMateria, setPrintMateria] = useState(null);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editMateria, setEditMateria] = useState(null);
+  const [editFormData, setEditFormData] = useState({ nombre: '', descripcion: '', precio: '' });
+  const [editSubmitting, setEditSubmitting] = useState(false);
   const barcodeRef = useRef(null);
   
   const [formData, setFormData] = useState({
@@ -125,6 +129,38 @@ const Laboratorio = () => {
     setPrintMateria(materia);
     setPrintDialogOpen(true);
   }, []);
+
+  const handleEditOpen = (materia) => {
+    setEditMateria(materia);
+    setEditFormData({ nombre: materia.nombre, descripcion: materia.descripcion || '', precio: String(materia.precio) });
+    setEditDialogOpen(true);
+  };
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    if (!editFormData.nombre || !editFormData.precio) {
+      toast.error('Complete todos los campos requeridos');
+      return;
+    }
+    setEditSubmitting(true);
+    try {
+      await api(`/materias-laboratorio/${editMateria.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          nombre: editFormData.nombre,
+          descripcion: editFormData.descripcion || null,
+          precio: parseFloat(editFormData.precio)
+        })
+      });
+      toast.success('Materia actualizada');
+      setEditDialogOpen(false);
+      fetchMaterias();
+    } catch (e) {
+      toast.error(e.message || 'Error al actualizar materia');
+    } finally {
+      setEditSubmitting(false);
+    }
+  };
 
   const executePrint = useCallback(() => {
     if (!printMateria || !barcodeRef.current) return;
@@ -346,6 +382,16 @@ const Laboratorio = () => {
                       {new Date(materia.creado_en).toLocaleDateString('es-PY')}
                     </TableCell>
                     <TableCell className="text-right">
+                      {materia.estado === 'DISPONIBLE' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEditOpen(materia)}
+                          title="Editar materia"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"
@@ -362,6 +408,57 @@ const Laboratorio = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent>
+          <DialogDescription className="hidden">
+            Formulario para editar una materia de laboratorio
+          </DialogDescription>
+          <DialogHeader>
+            <DialogTitle>Editar Materia</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="edit-nombre">Nombre *</Label>
+              <Input
+                id="edit-nombre"
+                value={editFormData.nombre}
+                onChange={(e) => setEditFormData({...editFormData, nombre: e.target.value})}
+                placeholder="Nombre de la materia"
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-descripcion">Descripción</Label>
+              <Textarea
+                id="edit-descripcion"
+                value={editFormData.descripcion}
+                onChange={(e) => setEditFormData({...editFormData, descripcion: e.target.value})}
+                placeholder="Descripción detallada..."
+              />
+            </div>
+            <div>
+              <Label htmlFor="edit-precio">Precio de Venta (Gs.) *</Label>
+              <Input
+                id="edit-precio"
+                type="number"
+                value={editFormData.precio}
+                onChange={(e) => setEditFormData({...editFormData, precio: e.target.value})}
+                placeholder="0"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={editSubmitting}>
+                {editSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                Guardar cambios
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Barcode Print Dialog */}
       <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>

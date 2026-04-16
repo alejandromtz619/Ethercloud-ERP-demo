@@ -52,7 +52,7 @@ from schemas import (
     CategoriaCreate, CategoriaResponse, MarcaCreate, MarcaResponse,
     GastoCreate, GastoResponse, GastoUpdate,
     ProductoCreate, ProductoResponse, ProductoConStock,
-    MateriaLaboratorioCreate, MateriaLaboratorioResponse,
+    MateriaLaboratorioCreate, MateriaLaboratorioUpdate, MateriaLaboratorioResponse,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
     EntradaStockHistorialResponse,
@@ -1276,6 +1276,21 @@ async def listar_materias_disponibles(empresa_id: int, db: AsyncSession = Depend
         )
     )
     return result.scalars().all()
+
+@api_router.put("/materias-laboratorio/{materia_id}", response_model=MateriaLaboratorioResponse)
+async def actualizar_materia_laboratorio(materia_id: int, data: MateriaLaboratorioUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if materia.estado != EstadoMateria.DISPONIBLE:
+        raise HTTPException(status_code=400, detail="Solo se pueden editar materias con estado DISPONIBLE")
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(materia, field, value)
+    await db.commit()
+    await db.refresh(materia)
+    return materia
 
 # ==================== ALMACENES ====================
 @api_router.post("/almacenes", response_model=AlmacenResponse)
