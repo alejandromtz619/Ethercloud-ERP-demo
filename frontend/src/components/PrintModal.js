@@ -396,8 +396,9 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     }
 
                     /* Factura pre-impresa 240mm x 200mm */
+                    /* size:auto deja que el driver de la Epson LX350 controle el tamaño del papel */
                     @page factura {
-                      size: 240mm 200mm;
+                      size: auto;
                       margin: 0;
                     }
 
@@ -421,6 +422,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     }
 
                     .factura-print {
+                      page: factura !important;
                       width: 240mm !important;
                       height: 200mm !important;
                       margin: 0 !important;
