@@ -367,7 +367,6 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   .factura-print {
                     margin: 0;
                     padding: 0;
-                    page: factura;
                     page-break-after: always;
                   }
                   
@@ -386,7 +385,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   @media print {
                     @page {
                       size: auto;
-                      margin: 5mm;
+                      margin: 15mm 8mm 10mm 8mm;
                     }
 
                     /* Boleta: papel continuo ~190mm x 170mm */
@@ -396,9 +395,8 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     }
 
                     /* Factura pre-impresa 240mm x 200mm */
-                    /* size:auto deja que el driver de la Epson LX350 controle el tamaño del papel */
                     @page factura {
-                      size: auto;
+                      size: 240mm 200mm;
                       margin: 0;
                     }
 
@@ -422,7 +420,6 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     }
 
                     .factura-print {
-                      page: factura !important;
                       width: 240mm !important;
                       height: 200mm !important;
                       margin: 0 !important;
