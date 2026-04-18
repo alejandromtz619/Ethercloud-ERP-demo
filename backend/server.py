@@ -6161,6 +6161,7 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         # Laboratorio
         ("laboratorio.crear", "Crear materias de laboratorio"),
         ("laboratorio.ver", "Ver materias de laboratorio"),
+        ("laboratorio.editar", "Editar materias de laboratorio"),
         # Sistema
         ("usuarios.ver", "Ver usuarios"),
         ("usuarios.gestionar", "Gestionar usuarios"),
@@ -6211,7 +6212,7 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "proveedores.ver", "proveedores.gestionar_deudas",
         "funcionarios.ver", "funcionarios.ver_salarios", "funcionarios.adelantos",
         "delivery.ver", "delivery.crear", "delivery.actualizar_estado",
-        "flota.ver", "laboratorio.ver", "laboratorio.crear",
+        "flota.ver", "laboratorio.ver", "laboratorio.crear", "laboratorio.editar",
         "reportes.ver", "reportes.exportar"
     ]
     if gerente_rol:
@@ -6460,6 +6461,7 @@ async def ensure_permisos():
         ("gastos.gestionar", "Crear y editar gastos operativos"),
         ("gastos.eliminar", "Eliminar gastos operativos"),
         ("delivery.eliminar", "Eliminar entregas"),
+        ("laboratorio.editar", "Editar materias de laboratorio"),
     ]
     async with AsyncSessionLocal() as db:
         for clave, descripcion in permisos_required:
