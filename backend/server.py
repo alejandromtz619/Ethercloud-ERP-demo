@@ -31,7 +31,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
-from database import get_db, init_db, engine, Base
+from database import get_db, init_db, engine, Base, async_session_maker
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
     Cliente, CreditoCliente, PagoCredito, Proveedor, ProveedorProducto, DeudaProveedor,
@@ -6464,7 +6464,7 @@ async def ensure_permisos():
         ("laboratorio.editar", "Editar materias de laboratorio"),
         ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
     ]
-    async with AsyncSessionLocal() as db:
+    async with async_session_maker() as db:
         for clave, descripcion in permisos_required:
             existing = await db.execute(select(Permiso).where(Permiso.clave == clave))
             if not existing.scalar_one_or_none():
