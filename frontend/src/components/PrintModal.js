@@ -150,7 +150,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
   return (
     <div ref={ref} className="print-document factura-print" style={{
       fontFamily: 'Courier New, monospace',
-      fontSize: '12px',
+      fontSize: '14px',
       fontWeight: 'bold',
       width: '240mm',
       height: '200mm',
@@ -168,68 +168,68 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       {/* Campos: Ciudad+día | mes | año | X Contado | X Crédito */}
       <div style={{ position: 'absolute', top: '38mm', left: '0', width: '240mm' }}>
         {/* Ciudad y día */}
-        <span style={{ position: 'absolute', left: '17mm', fontSize: '12px' }}>Ciudad del Este, {dia}</span>
+        <span style={{ position: 'absolute', left: '17mm', fontSize: '14px' }}>Ciudad del Este, {dia}</span>
         {/* Mes */}
-        <span style={{ position: 'absolute', left: '80mm', fontSize: '12px' }}>{mes}</span>
+        <span style={{ position: 'absolute', left: '80mm', fontSize: '14px' }}>{mes}</span>
         {/* Año */}
-        <span style={{ position: 'absolute', left: '120mm', fontSize: '12px' }}>{anio}</span>
+        <span style={{ position: 'absolute', left: '120mm', fontSize: '14px' }}>{anio}</span>
         {/* Marca X en Contado o Crédito */}
-        <span style={{ position: 'absolute', left: '183mm', fontSize: '14px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
-        <span style={{ position: 'absolute', left: '211mm', fontSize: '14px', fontWeight: '900' }}>{esCredito ? 'X' : ''}</span>
+        <span style={{ position: 'absolute', left: '183mm', fontSize: '16px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
+        <span style={{ position: 'absolute', left: '211mm', fontSize: '16px', fontWeight: '900' }}>{esCredito ? 'X' : ''}</span>
       </div>
 
       {/* ═══ NOMBRE DEL CLIENTE + CI/RUC ═══ */}
-      <div style={{ position: 'absolute', top: '46mm', left: '0', width: '240mm' }}>
-        <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
+      <div style={{ position: 'absolute', top: '45mm', left: '0', width: '240mm' }}>
+        <span style={{ position: 'absolute', left: '30mm', fontSize: '14px' }}>
           {data.cliente?.nombre || 'OCACIONAL'}
         </span>
-        <span style={{ position: 'absolute', left: '170mm', fontSize: '12px' }}>
+        <span style={{ position: 'absolute', left: '170mm', fontSize: '14px' }}>
           {data.cliente?.ruc || ''}
         </span>
       </div>
 
       {/* ═══ DIRECCIÓN + TELÉFONO ═══ */}
-      <div style={{ position: 'absolute', top: '50mm', left: '0', width: '240mm' }}>
-        <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
+      <div style={{ position: 'absolute', top: '51mm', left: '0', width: '240mm' }}>
+        <span style={{ position: 'absolute', left: '30mm', fontSize: '14px' }}>
           {data.cliente?.direccion || ''}
         </span>
-        <span style={{ position: 'absolute', left: '180mm', fontSize: '12px' }}>
+        <span style={{ position: 'absolute', left: '180mm', fontSize: '14px' }}>
           {data.cliente?.telefono || ''}
         </span>
       </div>
 
       {/* ═══ TABLA DE PRODUCTOS (solo datos, sin encabezados) ═══ */}
       {/* Columnas: Cantidad | Descripción | P.Unitario | Exentas | 5% | 10% */}
-      <div style={{ position: 'absolute', top: '82mm', left: '15mm', width: '212mm' }}>
+      <div style={{ position: 'absolute', top: '82mm', left: '0', width: '227mm' }}>
         {data.items?.map((item, idx) => (
           <div key={idx} style={{
             position: 'relative',
-            height: '5.3mm',
-            fontSize: '11px',
-            lineHeight: '5.3mm'
+            height: '5.6mm',
+            fontSize: '13px',
+            lineHeight: '5.6mm'
           }}>
             {/* Cantidad */}
-            <span style={{ position: 'absolute', left: '-15mm', width: '14mm', textAlign: 'center' }}>
+            <span style={{ position: 'absolute', left: '0mm', width: '14mm', textAlign: 'center' }}>
               {item.cantidad}
             </span>
             {/* Descripción */}
-            <span style={{ position: 'absolute', left: '16mm', width: '80mm', textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+            <span style={{ position: 'absolute', left: '31mm', width: '80mm', textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
               {item.descripcion}
             </span>
             {/* Precio Unitario */}
-            <span style={{ position: 'absolute', left: '87mm', width: '28mm', textAlign: 'right' }}>
+            <span style={{ position: 'absolute', left: '102mm', width: '28mm', textAlign: 'right' }}>
               {fmt(item.precio_unitario)}
             </span>
             {/* Exentas */}
-            <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
+            <span style={{ position: 'absolute', left: '142mm', width: '24mm', textAlign: 'right' }}>
               {item.exenta || 0}
             </span>
             {/* 5% */}
-            <span style={{ position: 'absolute', left: '153mm', width: '24mm', textAlign: 'right' }}>
+            <span style={{ position: 'absolute', left: '168mm', width: '24mm', textAlign: 'right' }}>
               {item.iva_5 || 0}
             </span>
             {/* 10% */}
-            <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+            <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
               {fmt(item.iva_10)}
             </span>
           </div>
@@ -238,47 +238,47 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
       {/* ═══ SUB-TOTALES ═══ */}
       {/* Valores en las 3 últimas columnas: Exentas | 5% | 10% */}
-      <div style={{ position: 'absolute', top: '150mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
-        <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
+      <div style={{ position: 'absolute', top: '150mm', left: '0', width: '227mm', fontSize: '13px' }}>
+        <span style={{ position: 'absolute', left: '142mm', width: '24mm', textAlign: 'right' }}>
           {data.subtotal_exenta || 0}
         </span>
-        <span style={{ position: 'absolute', left: '153mm', width: '24mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '168mm', width: '24mm', textAlign: 'right' }}>
           {data.subtotal_iva_5 || 0}
         </span>
-        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
           {fmt(data.subtotal_iva_10 || data.total)}
         </span>
       </div>
 
       {/* ═══ TOTAL A PAGAR (letras a la izquierda, número a la derecha) ═══ */}
-      <div style={{ position: 'absolute', top: '161mm', left: '15mm', width: '212mm' }}>
+      <div style={{ position: 'absolute', top: '160mm', left: '0', width: '227mm' }}>
         {/* Total en letras */}
         <span style={{
-          position: 'absolute', left: '8mm', fontSize: '10px',
+          position: 'absolute', left: '25mm', fontSize: '12px',
           textTransform: 'lowercase', maxWidth: '130mm',
           overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis'
         }}>
           {data.total_letras}--
         </span>
         {/* Total numérico */}
-        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right', fontSize: '11px' }}>
+        <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right', fontSize: '13px' }}>
           {fmt(data.total)}
         </span>
       </div>
 
       {/* ═══ LIQUIDACIÓN DEL IVA ═══ */}
       {/* Campos: IVA 5% | IVA 10% | Total IVA */}
-      <div style={{ position: 'absolute', top: '168mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
+      <div style={{ position: 'absolute', top: '168mm', left: '0', width: '227mm', fontSize: '13px' }}>
         {/* Valor IVA 5% */}
-        <span style={{ position: 'absolute', left: '30mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '45mm', width: '28mm', textAlign: 'right' }}>
           {data.liquidacion_iva?.iva_5 || 0}
         </span>
         {/* Valor IVA 10% */}
-        <span style={{ position: 'absolute', left: '95mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '110mm', width: '28mm', textAlign: 'right' }}>
           {fmt(data.liquidacion_iva?.iva_10)}
         </span>
         {/* Total IVA */}
-        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
           {fmt(data.liquidacion_iva?.total_iva)}
         </span>
       </div>
@@ -367,7 +367,6 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   .factura-print {
                     margin: 0;
                     padding: 0;
-                    page: factura;
                     page-break-after: always;
                   }
                   
@@ -386,7 +385,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   @media print {
                     @page {
                       size: auto;
-                      margin: 5mm;
+                      margin: 15mm 8mm 10mm 8mm;
                     }
 
                     /* Boleta: papel continuo ~190mm x 170mm */
@@ -396,9 +395,8 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     }
 
                     /* Factura pre-impresa 240mm x 200mm */
-                    /* size:auto deja que el driver de la Epson LX350 controle el tamaño del papel */
                     @page factura {
-                      size: auto;
+                      size: 240mm 200mm;
                       margin: 0;
                     }
 
@@ -422,7 +420,6 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                     }
 
                     .factura-print {
-                      page: factura !important;
                       width: 240mm !important;
                       height: 200mm !important;
                       margin: 0 !important;

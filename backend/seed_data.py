@@ -158,6 +158,7 @@ async def seed_database():
             ("laboratorio.crear", "Crear materias de laboratorio"),
             ("laboratorio.ver", "Ver materias de laboratorio"),
             ("laboratorio.editar", "Editar materias de laboratorio"),
+            ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
             # Sistema
             ("usuarios.ver", "Ver usuarios"),
             ("usuarios.gestionar", "Gestionar usuarios"),

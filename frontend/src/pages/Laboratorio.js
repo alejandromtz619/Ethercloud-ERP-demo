@@ -28,7 +28,7 @@ import { cn } from '../lib/utils';
 import JsBarcode from 'jsbarcode';
 
 const Laboratorio = () => {
-  const { api, empresa, userPermisos } = useApp();
+  const { api, empresa, hasPermission } = useApp();
   const [materias, setMaterias] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -382,7 +382,7 @@ const Laboratorio = () => {
                       {new Date(materia.creado_en).toLocaleDateString('es-PY')}
                     </TableCell>
                     <TableCell className="text-right">
-                      {userPermisos.includes('laboratorio.editar') && materia.estado === 'DISPONIBLE' && (
+                      {materia.estado === 'DISPONIBLE' && hasPermission('laboratorio.editar') && (
                         <Button
                           variant="ghost"
                           size="sm"
