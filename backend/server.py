@@ -6462,6 +6462,7 @@ async def ensure_permisos():
         ("gastos.eliminar", "Eliminar gastos operativos"),
         ("delivery.eliminar", "Eliminar entregas"),
         ("laboratorio.editar", "Editar materias de laboratorio"),
+        ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
     ]
     async with AsyncSessionLocal() as db:
         for clave, descripcion in permisos_required:
