@@ -209,7 +209,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
             lineHeight: '5.6mm'
           }}>
             {/* Cantidad */}
-            <span style={{ position: 'absolute', left: '0mm', width: '14mm', textAlign: 'center' }}>
+            <span style={{ position: 'absolute', left: '17mm', width: '14mm', textAlign: 'center' }}>
               {item.cantidad}
             </span>
             {/* Descripción */}
