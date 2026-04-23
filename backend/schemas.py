@@ -345,6 +345,7 @@ class StockActualResponse(StockActualBase):
 
 class StockConDetalles(StockActualResponse):
     producto_nombre: Optional[str] = None
+    producto_codigo_barra: Optional[str] = None
     almacen_nombre: Optional[str] = None
 
 # Movimiento Stock

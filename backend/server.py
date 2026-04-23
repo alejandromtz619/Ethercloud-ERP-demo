@@ -1419,6 +1419,7 @@ async def listar_stock(empresa_id: int, almacen_id: Optional[int] = None, db: As
         stock, producto, almacen = row
         stock_dict = StockActualResponse.model_validate(stock).model_dump()
         stock_dict['producto_nombre'] = producto.nombre
+        stock_dict['producto_codigo_barra'] = producto.codigo_barra
         stock_dict['almacen_nombre'] = almacen.nombre
         stocks.append(StockConDetalles(**stock_dict))
     

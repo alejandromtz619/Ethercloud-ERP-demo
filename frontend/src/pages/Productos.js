@@ -49,6 +49,8 @@ const Productos = () => {
   const [editingId, setEditingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
+  const [searchId, setSearchId] = useState('');
+  const [searchCodigo, setSearchCodigo] = useState('');
   const [filterMarca, setFilterMarca] = useState('');
   const [filterCategoria, setFilterCategoria] = useState('');
   const [marcaOpen, setMarcaOpen] = useState(false);
@@ -195,14 +197,17 @@ const Productos = () => {
   };
 
   const filteredProductos = productos.filter(p => {
-    const matchesSearch =
-      p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-      p.codigo_barra?.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search ||
+      p.nombre.toLowerCase().includes(search.toLowerCase());
+    const matchesId = !searchId ||
+      p.id.toString() === searchId.trim();
+    const matchesCodigo = !searchCodigo ||
+      (p.codigo_barra?.toLowerCase().includes(searchCodigo.toLowerCase()));
     const matchesMarca = !filterMarca ||
       (p.marca_nombre || '').toLowerCase().includes(filterMarca.toLowerCase());
     const matchesCategoria = !filterCategoria ||
       (p.categoria_nombre || '').toLowerCase().includes(filterCategoria.toLowerCase());
-    return matchesSearch && matchesMarca && matchesCategoria;
+    return matchesSearch && matchesId && matchesCodigo && matchesMarca && matchesCategoria;
   });
 
   if (loading) {
@@ -450,7 +455,7 @@ const Productos = () => {
               <div className="relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar..."
+                  placeholder="Buscar por nombre..."
                   className="pl-9"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -460,6 +465,39 @@ const Productos = () => {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground font-medium">Filtros:</span>
+              <div className="relative">
+                <Input
+                  placeholder="ID..."
+                  className="pl-3 pr-7 h-8 w-24 text-sm font-mono"
+                  type="number"
+                  value={searchId}
+                  onChange={(e) => setSearchId(e.target.value)}
+                />
+                {searchId && (
+                  <button
+                    onClick={() => setSearchId('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  placeholder="Cód. barra..."
+                  className="pl-3 pr-7 h-8 w-40 text-sm font-mono"
+                  value={searchCodigo}
+                  onChange={(e) => setSearchCodigo(e.target.value)}
+                />
+                {searchCodigo && (
+                  <button
+                    onClick={() => setSearchCodigo('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <Input
                   placeholder="Marca..."
@@ -492,9 +530,9 @@ const Productos = () => {
                   </button>
                 )}
               </div>
-              {(filterMarca || filterCategoria) && (
+              {(filterMarca || filterCategoria || searchId || searchCodigo) && (
                 <button
-                  onClick={() => { setFilterMarca(''); setFilterCategoria(''); }}
+                  onClick={() => { setFilterMarca(''); setFilterCategoria(''); setSearchId(''); setSearchCodigo(''); }}
                   className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
                 >
                   <X className="h-3 w-3" /> Limpiar filtros

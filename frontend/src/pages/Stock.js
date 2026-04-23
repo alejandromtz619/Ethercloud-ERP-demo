@@ -40,7 +40,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../components/ui/popover';
-import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2 } from 'lucide-react';
+import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { DatePickerInput } from '../components/ui/date-picker-input';
@@ -57,6 +57,8 @@ const Stock = () => {
   const [almacenDialogOpen, setAlmacenDialogOpen] = useState(false);
   const [selectedAlmacen, setSelectedAlmacen] = useState('');
   const [search, setSearch] = useState('');
+  const [searchId, setSearchId] = useState('');
+  const [searchCodigo, setSearchCodigo] = useState('');
   
   const [entradaForm, setEntradaForm] = useState({
     producto_id: '',
@@ -278,9 +280,12 @@ const Stock = () => {
     }
   };
 
-  const filteredStock = stock.filter(s =>
-    s.producto_nombre?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredStock = stock.filter(s => {
+    const matchesName = !search || s.producto_nombre?.toLowerCase().includes(search.toLowerCase());
+    const matchesId = !searchId || s.producto_id?.toString() === searchId.trim();
+    const matchesCodigo = !searchCodigo || s.producto_codigo_barra?.toLowerCase().includes(searchCodigo.toLowerCase());
+    return matchesName && matchesId && matchesCodigo;
+  });
 
   if (loading) {
     return (
@@ -773,19 +778,65 @@ const Stock = () => {
       {/* Stock Table */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Inventario {selectedAlmacen && `- ${almacenes.find(a => a.id.toString() === selectedAlmacen)?.nombre}`}
-            </CardTitle>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar producto..."
-                className="pl-9"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                Inventario {selectedAlmacen && `- ${almacenes.find(a => a.id.toString() === selectedAlmacen)?.nombre}`}
+              </CardTitle>
+              <div className="relative w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nombre..."
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground font-medium">Filtros:</span>
+              <div className="relative">
+                <Input
+                  placeholder="ID..."
+                  className="pl-3 pr-7 h-8 w-24 text-sm font-mono"
+                  type="number"
+                  value={searchId}
+                  onChange={(e) => setSearchId(e.target.value)}
+                />
+                {searchId && (
+                  <button
+                    onClick={() => setSearchId('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  placeholder="Cód. barra..."
+                  className="pl-3 pr-7 h-8 w-44 text-sm font-mono"
+                  value={searchCodigo}
+                  onChange={(e) => setSearchCodigo(e.target.value)}
+                />
+                {searchCodigo && (
+                  <button
+                    onClick={() => setSearchCodigo('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              {(search || searchId || searchCodigo) && (
+                <button
+                  onClick={() => { setSearch(''); setSearchId(''); setSearchCodigo(''); }}
+                  className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
+                >
+                  <X className="h-3 w-3" /> Limpiar
+                </button>
+              )}
             </div>
           </div>
         </CardHeader>
