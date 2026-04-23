@@ -51,8 +51,6 @@ const Reportes = () => {
   const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
   
   // Filters for Stock report
-  const [stockFechaDesde, setStockFechaDesde] = useState('');
-  const [stockFechaHasta, setStockFechaHasta] = useState('');
   const [stockSoloAlertas, setStockSoloAlertas] = useState('NO');
   
   // Filters for Deudas Proveedores
@@ -159,15 +157,17 @@ const Reportes = () => {
     }
     
     const loadingKey = format === 'excel' ? `${tipo}_excel` : tipo;
-    setLoading({ ...loading, [loadingKey]: true });
+    setLoading(prev => ({ ...prev, [loadingKey]: true }));
     
     try {
       const endpoint = format === 'excel' ? `${tipo}/excel` : tipo;
       let url = `${API_URL}/reportes/${endpoint}?empresa_id=${empresa.id}`;
       
-      // Add extra params
+      // Add extra params (skip null/undefined/empty)
       Object.entries(params).forEach(([key, value]) => {
-        if (value) url += `&${key}=${value}`;
+        if (value !== undefined && value !== null && value !== '') {
+          url += `&${key}=${encodeURIComponent(value)}`;
+        }
       });
       
       const response = await fetch(url, {
@@ -181,7 +181,7 @@ const Reportes = () => {
           errorMessage = errorData.detail || errorData.message || errorMessage;
         } catch (e) {
           if (response.status === 404) {
-            errorMessage = 'No se encontraron datos para este reporte';
+            errorMessage = 'No se encontraron datos con los filtros seleccionados';
           } else if (response.status === 403) {
             errorMessage = 'No tiene permisos para generar este reporte';
           } else if (response.status === 500) {
@@ -218,7 +218,7 @@ const Reportes = () => {
       console.error('Error downloading report:', e);
       toast.error(e.message || 'Error al descargar reporte. Verifique su conexión e inténtelo nuevamente.');
     } finally {
-      setLoading({ ...loading, [loadingKey]: false });
+      setLoading(prev => ({ ...prev, [loadingKey]: false }));
     }
   };
 
@@ -245,7 +245,7 @@ const Reportes = () => {
           setter: setVentasTipoPago,
           options: [
             { value: 'TODOS', label: 'Todas las ventas' },
-            { value: 'CONTADO', label: 'Contado (Efectivo/Tarjeta/Transferencia/Cheque)' },
+            { value: 'CONTADO', label: 'Contado (Efectivo / Tarjeta / Cheque)' },
             { value: 'CREDITO', label: 'Crédito' }
           ]
         },
@@ -284,15 +284,6 @@ const Reportes = () => {
       bgColor: 'bg-blue-50 dark:bg-blue-950',
       filters: [
         {
-          type: 'dateRange',
-          label: 'Movimientos desde',
-          fromState: stockFechaDesde,
-          toState: stockFechaHasta,
-          fromSetter: setStockFechaDesde,
-          toSetter: setStockFechaHasta,
-          optional: true
-        },
-        {
           type: 'select',
           label: 'Filtrar por',
           state: stockSoloAlertas,
@@ -304,8 +295,6 @@ const Reportes = () => {
         }
       ],
       getParams: () => ({
-        fecha_desde: stockFechaDesde || undefined,
-        fecha_hasta: stockFechaHasta || undefined,
         solo_alertas: stockSoloAlertas === 'SI' ? 'true' : undefined
       })
     },
@@ -423,13 +412,13 @@ const Reportes = () => {
           return (
             <Card key={reporte.id} className="overflow-hidden">
               <CardHeader className={`${reporte.bgColor}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg bg-background ${reporte.color}`}>
+                <div className="flex items-start gap-3">
+                  <div className={`p-2 rounded-lg bg-background ${reporte.color} shrink-0`}>
                     <Icon className="h-6 w-6" />
                   </div>
-                  <div>
-                    <CardTitle className="text-lg">{reporte.titulo}</CardTitle>
-                    <CardDescription>{reporte.descripcion}</CardDescription>
+                  <div className="min-w-0">
+                    <CardTitle className="text-lg leading-tight">{reporte.titulo}</CardTitle>
+                    <CardDescription className="mt-0.5 line-clamp-2">{reporte.descripcion}</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -445,7 +434,7 @@ const Reportes = () => {
                                 {filter.label} {filter.optional && '(Opcional)'}
                               </Label>
                             )}
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-2">
                               <div>
                                 <Label className="text-xs mb-1 block">Desde</Label>
                                 <DatePicker
@@ -527,7 +516,7 @@ const Reportes = () => {
                                     Buscar por ID o nombre...
                                   </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[300px] p-0" align="start">
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
                                   <Command>
                                     <CommandInput
                                       placeholder="ID, nombre o RUC..."
@@ -617,7 +606,7 @@ const Reportes = () => {
                                     Buscar por nombre...
                                   </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[300px] p-0" align="start">
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
                                   <Command>
                                     <CommandInput placeholder="Nombre o código..." value={itemsProductoSearch} onValueChange={setItemsProductoSearch} />
                                     <CommandEmpty>No se encontraron productos</CommandEmpty>
@@ -662,7 +651,7 @@ const Reportes = () => {
                                     Buscar por ID o nombre...
                                   </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[300px] p-0" align="start">
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
                                   <Command>
                                     <CommandInput placeholder="ID, nombre o RUC..." value={itemsClienteSearch} onValueChange={setItemsClienteSearch} />
                                     <CommandEmpty>{clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}</CommandEmpty>
@@ -690,7 +679,7 @@ const Reportes = () => {
                   </div>
                 )}
                 
-                <div className="flex gap-2">
+                <div className="flex flex-col min-[360px]:flex-row gap-2">
                   <Button
                     variant="outline"
                     className="flex-1"

@@ -5213,12 +5213,13 @@ async def reporte_ventas(
     tipo_pago: str = None,
     estado: str = None,
     cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de ventas por rango de fechas con filtros"""
     try:
-        fecha_ini = datetime.fromisoformat(fecha_desde)
-        fecha_fin = datetime.fromisoformat(fecha_hasta) + timedelta(days=1)
+        fecha_ini = datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ)
+        fecha_fin = (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ)
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
     
@@ -5236,14 +5237,12 @@ async def reporte_ventas(
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     
-    # Apply estado filter (default: CONFIRMADA)
-    if estado:
+    # Apply estado filter - None or 'TODOS' means all states; specific value filters by that state
+    if estado and estado != 'TODOS':
         try:
             query = query.where(Venta.estado == EstadoVenta[estado])
         except KeyError:
             raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
-    else:
-        query = query.where(Venta.estado == EstadoVenta.CONFIRMADA)
     
     # Apply tipo_pago filter - support CONTADO (all non-credit) and CREDITO
     if tipo_pago:
@@ -5325,12 +5324,13 @@ async def reporte_ventas_excel(
     tipo_pago: str = None,
     estado: str = None,
     cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de ventas por rango de fechas con filtros"""
     try:
-        fecha_ini = datetime.fromisoformat(fecha_desde)
-        fecha_fin = datetime.fromisoformat(fecha_hasta) + timedelta(days=1)
+        fecha_ini = datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ)
+        fecha_fin = (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ)
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
 
@@ -5345,13 +5345,11 @@ async def reporte_ventas_excel(
     )
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
-    if estado:
+    if estado and estado != 'TODOS':
         try:
             query = query.where(Venta.estado == EstadoVenta[estado])
         except KeyError:
             raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
-    else:
-        query = query.where(Venta.estado == EstadoVenta.CONFIRMADA)
     if tipo_pago:
         if tipo_pago == 'CONTADO':
             query = query.where(Venta.tipo_pago.in_([TipoPago.EFECTIVO, TipoPago.TARJETA, TipoPago.TRANSFERENCIA, TipoPago.CHEQUE]))
@@ -5601,6 +5599,7 @@ async def reporte_stock(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     solo_alertas: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de stock actual con filtros"""
@@ -5647,14 +5646,14 @@ async def reporte_stock(
                 f"{float(producto.precio_costo or 0):,.0f}"
             ])
         
+        if not datos:
+            raise HTTPException(status_code=404, detail="No se encontraron productos con los filtros seleccionados")
+
         # Build subtitle
         subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
         if solo_alertas == 'true':
             subtitle += " | Solo stock bajo"
-        if not datos:
-            subtitle += " | Sin registros"
-        else:
-            subtitle += f" | Total productos: {len(datos)}"
+        subtitle += f" | Total productos: {len(datos)}"
         
         pdf_bytes = crear_pdf_reporte(
             "Reporte de Stock Actual",
@@ -5680,6 +5679,7 @@ async def reporte_stock_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     solo_alertas: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de stock actual con filtros"""
@@ -5717,6 +5717,9 @@ async def reporte_stock_excel(
                 'Stock bajo' if es_alerta else 'OK'
             ])
 
+        if not datos:
+            raise HTTPException(status_code=404, detail="No se encontraron productos con los filtros seleccionados")
+
         subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
         if solo_alertas == 'true':
             subtitle += " | Solo stock bajo"
@@ -5740,6 +5743,7 @@ async def reporte_deudas_proveedores(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de deudas a proveedores con filtros"""
@@ -5783,32 +5787,8 @@ async def reporte_deudas_proveedores(
         result = await db.execute(query)
         deudas = result.all()
         
-        # If no data, return empty report instead of error
         if not deudas:
-            # Create empty report
-            columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
-            datos = []
-            totales = ['', '', '0', '', '']
-            
-            subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
-            if fecha_desde and fecha_hasta:
-                subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
-            if estado:
-                subtitle += f" | Estado: {estado}"
-            subtitle += " | Sin registros"
-            
-            pdf_bytes = crear_pdf_reporte(
-                "Reporte de Deudas a Proveedores",
-                subtitle,
-                columnas,
-                datos,
-                totales
-            )
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename=reporte_deudas_proveedores_{today_paraguay().isoformat()}.pdf"}
-            )
+            raise HTTPException(status_code=404, detail="No se encontraron deudas con los filtros seleccionados")
         
         columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
         datos = []
@@ -5859,6 +5839,7 @@ async def reporte_deudas_proveedores_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de deudas a proveedores con filtros"""
@@ -5892,6 +5873,9 @@ async def reporte_deudas_proveedores_excel(
         query = query.order_by(DeudaProveedor.fecha_limite)
         result = await db.execute(query)
         deudas = result.all()
+
+        if not deudas:
+            raise HTTPException(status_code=404, detail="No se encontraron deudas con los filtros seleccionados")
 
         columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento', 'Estado']
         datos = []
@@ -5934,6 +5918,7 @@ async def reporte_creditos_clientes(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de créditos de clientes con filtros"""
@@ -5977,32 +5962,8 @@ async def reporte_creditos_clientes(
         result = await db.execute(query)
         creditos = result.all()
         
-        # If no data, return empty report instead of error
         if not creditos:
-            # Create empty report
-            columnas = ['Cliente', 'Venta #', 'Original', 'Pagado', 'Pendiente', 'Fecha']
-            datos = []
-            totales = ['', 'TOTAL:', '0', '0', '0', '']
-            
-            subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
-            if fecha_desde and fecha_hasta:
-                subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
-            if estado:
-                subtitle += f" | Estado: {estado}"
-            subtitle += " | Sin registros"
-            
-            pdf_bytes = crear_pdf_reporte(
-                "Reporte de Créditos de Clientes",
-                subtitle,
-                columnas,
-                datos,
-                totales
-            )
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.pdf"}
-            )
+            raise HTTPException(status_code=404, detail="No se encontraron créditos con los filtros seleccionados")
         
         columnas = ['Cliente', 'Venta #', 'Original', 'Pagado', 'Pendiente', 'Fecha']
         datos = []
@@ -6058,6 +6019,7 @@ async def reporte_creditos_clientes_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de créditos de clientes con filtros"""
@@ -6091,6 +6053,9 @@ async def reporte_creditos_clientes_excel(
         query = query.order_by(CreditoCliente.fecha_venta)
         result = await db.execute(query)
         creditos = result.all()
+
+        if not creditos:
+            raise HTTPException(status_code=404, detail="No se encontraron créditos con los filtros seleccionados")
 
         columnas = ['Cliente', 'Venta #', 'Monto Original', 'Pagado', 'Pendiente', 'Fecha']
         datos = []
@@ -6139,6 +6104,7 @@ async def reporte_venta_items(
     categoria_id: int = None,
     producto_id: int = None,
     cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de ventas de items agrupadas por producto/materia de laboratorio"""
@@ -6156,12 +6122,12 @@ async def reporte_venta_items(
     )
     if fecha_desde:
         try:
-            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
+            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
         except ValueError:
             raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
     if fecha_hasta:
         try:
-            query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+            query = query.where(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
         except ValueError:
             raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
     if categoria_id:
@@ -6233,6 +6199,7 @@ async def reporte_venta_items_excel(
     categoria_id: int = None,
     producto_id: int = None,
     cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de ventas de items agrupadas por producto/materia de laboratorio"""
@@ -6250,12 +6217,12 @@ async def reporte_venta_items_excel(
     )
     if fecha_desde:
         try:
-            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
+            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
         except ValueError:
             raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
     if fecha_hasta:
         try:
-            query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+            query = query.where(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
         except ValueError:
             raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
     if categoria_id:
