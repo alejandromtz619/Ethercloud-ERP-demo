@@ -13,6 +13,19 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '../components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from '../components/ui/command';
+import { cn } from '../lib/utils';
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,7 +42,7 @@ import {
 } from '../components/ui/dialog';
 import { 
   History, Search, Filter, Printer, FileText, Receipt, Eye, 
-  Loader2, Calendar, DollarSign, User, XCircle, Edit, FileSpreadsheet
+  Loader2, Calendar, DollarSign, User, XCircle, Edit, FileSpreadsheet, Check, ChevronsUpDown, X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import PrintModal from '../components/PrintModal';
@@ -69,6 +82,10 @@ const HistorialVentas = () => {
     monto_max: '',
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [clienteSearch, setClienteSearch] = useState('');
+  const [usuarioSearch, setUsuarioSearch] = useState('');
+  const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
+  const [usuarioPopoverOpen, setUsuarioPopoverOpen] = useState(false);
 
   const fetchVentas = async () => {
     if (!empresa?.id) return;
@@ -126,6 +143,8 @@ const HistorialVentas = () => {
       monto_min: '',
       monto_max: '',
     });
+    setClienteSearch('');
+    setUsuarioSearch('');
     setTimeout(fetchVentas, 100);
   };
 
@@ -295,41 +314,119 @@ const HistorialVentas = () => {
               </div>
               <div>
                 <Label>Cliente</Label>
-                <Select 
-                  value={filters.cliente_id || 'all'} 
-                  onValueChange={(v) => setFilters({...filters, cliente_id: v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Todos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {clientes.map((c) => (
-                      <SelectItem key={c.id} value={c.id.toString()}>
-                        {c.nombre} {c.apellido || ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {filters.cliente_id && filters.cliente_id !== 'all' ? (
+                  <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30 h-10">
+                    <span className="text-sm flex-1 truncate">
+                      {(() => { const c = clientes.find(x => x.id.toString() === filters.cliente_id); return c ? `${c.nombre} ${c.apellido || ''}`.trim() : filters.cliente_id; })()}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => { setFilters({...filters, cliente_id: ''}); setClienteSearch(''); }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Popover open={clientePopoverOpen} onOpenChange={setClientePopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" className="w-full justify-between h-10 font-normal">
+                        <span className="text-muted-foreground">Todos los clientes</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[280px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Buscar cliente..."
+                          value={clienteSearch}
+                          onValueChange={setClienteSearch}
+                        />
+                        <CommandEmpty>No se encontraron clientes</CommandEmpty>
+                        <CommandGroup className="max-h-60 overflow-auto">
+                          {clientes
+                            .filter(c => {
+                              const q = clienteSearch.toLowerCase();
+                              return !q || `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(q);
+                            })
+                            .slice(0, 60)
+                            .map((c) => (
+                              <CommandItem
+                                key={c.id}
+                                value={`${c.nombre} ${c.apellido || ''}`}
+                                onSelect={() => {
+                                  setFilters({...filters, cliente_id: c.id.toString()});
+                                  setClientePopoverOpen(false);
+                                  setClienteSearch('');
+                                }}
+                              >
+                                <Check className={cn('mr-2 h-4 w-4', filters.cliente_id === c.id.toString() ? 'opacity-100' : 'opacity-0')} />
+                                {c.nombre} {c.apellido || ''}
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
               </div>
               <div>
                 <Label>Vendedor</Label>
-                <Select 
-                  value={filters.usuario_id || 'all'} 
-                  onValueChange={(v) => setFilters({...filters, usuario_id: v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Todos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {usuarios.map((u) => (
-                      <SelectItem key={u.id} value={u.id.toString()}>
-                        {u.nombre} {u.apellido || ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {filters.usuario_id && filters.usuario_id !== 'all' ? (
+                  <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30 h-10">
+                    <span className="text-sm flex-1 truncate">
+                      {(() => { const u = usuarios.find(x => x.id.toString() === filters.usuario_id); return u ? `${u.nombre} ${u.apellido || ''}`.trim() : filters.usuario_id; })()}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => { setFilters({...filters, usuario_id: ''}); setUsuarioSearch(''); }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Popover open={usuarioPopoverOpen} onOpenChange={setUsuarioPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" className="w-full justify-between h-10 font-normal">
+                        <span className="text-muted-foreground">Todos los vendedores</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[280px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Buscar vendedor..."
+                          value={usuarioSearch}
+                          onValueChange={setUsuarioSearch}
+                        />
+                        <CommandEmpty>No se encontraron vendedores</CommandEmpty>
+                        <CommandGroup className="max-h-60 overflow-auto">
+                          {usuarios
+                            .filter(u => {
+                              const q = usuarioSearch.toLowerCase();
+                              return !q || `${u.nombre} ${u.apellido || ''}`.toLowerCase().includes(q);
+                            })
+                            .slice(0, 60)
+                            .map((u) => (
+                              <CommandItem
+                                key={u.id}
+                                value={`${u.nombre} ${u.apellido || ''}`}
+                                onSelect={() => {
+                                  setFilters({...filters, usuario_id: u.id.toString()});
+                                  setUsuarioPopoverOpen(false);
+                                  setUsuarioSearch('');
+                                }}
+                              >
+                                <Check className={cn('mr-2 h-4 w-4', filters.usuario_id === u.id.toString() ? 'opacity-100' : 'opacity-0')} />
+                                {u.nombre} {u.apellido || ''}
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
               </div>
               <div>
                 <Label>Estado</Label>
