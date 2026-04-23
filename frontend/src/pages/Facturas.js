@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
+import { Button } from '../components/ui/button';
+import { Checkbox } from '../components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -10,121 +12,403 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table';
-import { FileText, Loader2, AlertTriangle } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { FileText, Loader2, Printer, Users, ChevronRight, CheckSquare, Square } from 'lucide-react';
+import { toast } from 'sonner';
+import { FacturaPrint } from '../components/PrintModal';
+
+const PRINT_CSS = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { margin: 0; padding: 0; background: white; }
+  .factura-print { margin: 0; padding: 0; page-break-after: always; }
+  @media print {
+    @page { size: 240mm 200mm; margin: 0; }
+    body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .factura-print { width: 240mm !important; height: 200mm !important; margin: 0 !important; padding: 0 !important; }
+  }
+`;
 
 const Facturas = () => {
   const { api, empresa } = useApp();
-  const [facturas, setFacturas] = useState([]);
-  const [loading, setLoading] = useState(true);
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState('facturar');
+  const [clientesPendientes, setClientesPendientes] = useState([]);
+  const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
+  const [boletasPendientes, setBoletasPendientes] = useState([]);
+  const [boletasSeleccionadas, setBoletasSeleccionadas] = useState(new Set());
+  const [facturasEmitidas, setFacturasEmitidas] = useState([]);
+  const [loadingClientes, setLoadingClientes] = useState(false);
+  const [loadingBoletas, setLoadingBoletas] = useState(false);
+  const [loadingEmitidas, setLoadingEmitidas] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [facturaImpresionData, setFacturaImpresionData] = useState(null);
+  const facturaRef = useRef(null);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const fmt = (v) =>
+    new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', minimumFractionDigits: 0 }).format(v);
+
+  const fmtDate = (iso) =>
+    iso ? new Date(iso).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-';
+
+  // ── Cargar clientes pendientes ─────────────────────────────────────────────
+  const fetchClientesPendientes = useCallback(async () => {
+    if (!empresa?.id) return;
+    setLoadingClientes(true);
+    try {
+      const data = await api(`/facturas/clientes-pendientes?empresa_id=${empresa.id}`);
+      setClientesPendientes(data);
+    } catch (e) {
+      toast.error('Error al cargar clientes pendientes');
+    } finally {
+      setLoadingClientes(false);
+    }
+  }, [api, empresa?.id]);
+
+  // ── Cargar facturas emitidas ───────────────────────────────────────────────
+  const fetchFacturasEmitidas = useCallback(async () => {
+    if (!empresa?.id) return;
+    setLoadingEmitidas(true);
+    try {
+      const data = await api(`/facturas/grupales?empresa_id=${empresa.id}`);
+      setFacturasEmitidas(data);
+    } catch (e) {
+      toast.error('Error al cargar facturas emitidas');
+    } finally {
+      setLoadingEmitidas(false);
+    }
+  }, [api, empresa?.id]);
 
   useEffect(() => {
-    const fetchFacturas = async () => {
-      if (!empresa?.id) return;
-      try {
-        const data = await api(`/facturas?empresa_id=${empresa.id}`);
-        setFacturas(data);
-      } catch (e) {
-        console.error('Error al cargar facturas:', e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchFacturas();
-  }, [empresa?.id]);
+    fetchClientesPendientes();
+    fetchFacturasEmitidas();
+  }, [fetchClientesPendientes, fetchFacturasEmitidas]);
 
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('es-PY', {
-      style: 'currency',
-      currency: 'PYG',
-      minimumFractionDigits: 0
-    }).format(value);
+  // ── Trigger print when data is ready ──────────────────────────────────────
+  useEffect(() => {
+    if (!facturaImpresionData) return;
+    const timer = setTimeout(() => {
+      if (facturaRef.current) {
+        const html = facturaRef.current.innerHTML;
+        const win = window.open('', '_blank');
+        if (win) {
+          win.document.write(
+            `<html><head><title>Factura ${facturaImpresionData.numero}</title><meta charset="UTF-8"><style>${PRINT_CSS}</style></head><body>${html}</body></html>`
+          );
+          win.document.close();
+          win.print();
+          win.close();
+        }
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [facturaImpresionData]);
+
+  // ── Seleccionar cliente ────────────────────────────────────────────────────
+  const handleSeleccionarCliente = async (cliente) => {
+    setClienteSeleccionado(cliente);
+    setBoletasSeleccionadas(new Set());
+    setLoadingBoletas(true);
+    try {
+      const data = await api(
+        `/facturas/boletas-pendientes/${cliente.cliente_id}?empresa_id=${empresa.id}`
+      );
+      setBoletasPendientes(data);
+      setBoletasSeleccionadas(new Set(data.map((b) => b.id)));
+    } catch (e) {
+      toast.error('Error al cargar boletas del cliente');
+    } finally {
+      setLoadingBoletas(false);
+    }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
-    );
-  }
+  const toggleBoleta = (id) => {
+    setBoletasSeleccionadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
+  const toggleTodas = () => {
+    if (boletasSeleccionadas.size === boletasPendientes.length) {
+      setBoletasSeleccionadas(new Set());
+    } else {
+      setBoletasSeleccionadas(new Set(boletasPendientes.map((b) => b.id)));
+    }
+  };
+
+  // ── Generar factura grupal ─────────────────────────────────────────────────
+  const handleGenerarFactura = async () => {
+    if (!clienteSeleccionado) return;
+    if (boletasSeleccionadas.size === 0) {
+      toast.error('Seleccione al menos una boleta');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await api('/facturas/grupal', {
+        method: 'POST',
+        body: JSON.stringify({
+          empresa_id: empresa.id,
+          cliente_id: clienteSeleccionado.cliente_id,
+          venta_ids: Array.from(boletasSeleccionadas)
+        })
+      });
+
+      toast.success(`Factura ${result.numero} generada`);
+
+      const printData = await api(`/facturas/grupal/${result.id}/imprimir`);
+      setFacturaImpresionData(printData);
+
+      await fetchClientesPendientes();
+      await fetchFacturasEmitidas();
+
+      setClienteSeleccionado(null);
+      setBoletasPendientes([]);
+      setBoletasSeleccionadas(new Set());
+    } catch (e) {
+      toast.error(e.message || 'Error al generar factura');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ── Re-imprimir factura existente ─────────────────────────────────────────
+  const handleReimprimir = async (facturaId, numero) => {
+    try {
+      const data = await api(`/facturas/grupal/${facturaId}/imprimir`);
+      setFacturaImpresionData(data);
+      toast.info(`Imprimiendo factura ${numero}`);
+    } catch (e) {
+      toast.error('Error al obtener datos de impresión');
+    }
+  };
+
+  const totalSeleccionado = boletasPendientes
+    .filter((b) => boletasSeleccionadas.has(b.id))
+    .reduce((acc, b) => acc + b.total, 0);
+
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6" data-testid="facturas-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Facturas</h1>
-          <p className="text-muted-foreground">Documentos de facturación</p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold">Facturas</h1>
+        <p className="text-muted-foreground">Facturación agrupada de boletas por cliente</p>
       </div>
 
-      {/* SIFEN Notice */}
-      <Card className="bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800">
-        <CardContent className="p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
-            <div>
-              <p className="font-medium text-yellow-800 dark:text-yellow-200">
-                Módulo en preparación para SIFEN
-              </p>
-              <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                Este módulo está preparado para la integración con el Sistema Integrado de 
-                Facturación Electrónica Nacional (SIFEN) de Paraguay. La funcionalidad completa 
-                estará disponible próximamente.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="facturar">Facturar Boletas</TabsTrigger>
+          <TabsTrigger value="emitidas">Facturas Emitidas</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Listado de Facturas
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {facturas.length === 0 ? (
-            <div className="text-center py-12">
-              <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <p className="text-muted-foreground">No hay facturas registradas</p>
-              <p className="text-sm text-muted-foreground mt-2">
-                Las facturas se generarán automáticamente al confirmar ventas con datos fiscales
-              </p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="table-compact">
-                  <TableHead>Número</TableHead>
-                  <TableHead>Venta #</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>IVA</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Fecha</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {facturas.map((factura) => (
-                  <TableRow key={factura.id}>
-                    <TableCell className="font-mono font-medium">{factura.numero}</TableCell>
-                    <TableCell>#{factura.venta_id}</TableCell>
-                    <TableCell className="font-mono-data">{formatCurrency(factura.total)}</TableCell>
-                    <TableCell className="font-mono-data">{formatCurrency(factura.iva)}</TableCell>
-                    <TableCell>
-                      <Badge className="badge-success">{factura.estado}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(factura.creado_en).toLocaleDateString('es-PY')}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+        {/* ═══════════════ TAB: FACTURAR BOLETAS ═══════════════ */}
+        <TabsContent value="facturar" className="mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+            {/* Panel izquierdo: clientes con boletas pendientes */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Users className="h-4 w-4" />
+                  Clientes con boletas pendientes
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {loadingClientes ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : clientesPendientes.length === 0 ? (
+                  <div className="text-center py-10 px-4">
+                    <FileText className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+                    <p className="text-muted-foreground text-sm">No hay boletas pendientes de facturar</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {clientesPendientes.map((c) => (
+                      <button
+                        key={c.cliente_id}
+                        onClick={() => handleSeleccionarCliente(c)}
+                        className={`w-full text-left px-4 py-3 hover:bg-accent transition-colors flex items-center justify-between group ${
+                          clienteSeleccionado?.cliente_id === c.cliente_id
+                            ? 'bg-primary/10 border-l-4 border-primary'
+                            : ''
+                        }`}
+                      >
+                        <div>
+                          <p className="font-medium text-sm">{c.nombre}</p>
+                          <p className="text-xs text-muted-foreground">
+                            RUC: {c.ruc || <span className="text-destructive font-medium">Sin RUC</span>}
+                            {' · '}
+                            <Badge variant="secondary" className="text-xs px-1 py-0">
+                              {c.boletas_count} boleta{c.boletas_count !== 1 ? 's' : ''}
+                            </Badge>
+                          </p>
+                          <p className="text-xs font-mono-data text-primary mt-0.5">{fmt(c.total_pendiente)}</p>
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Panel derecho: boletas del cliente seleccionado */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center justify-between text-base">
+                  <span className="flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    {clienteSeleccionado ? `Boletas de ${clienteSeleccionado.nombre}` : 'Seleccione un cliente'}
+                  </span>
+                  {boletasPendientes.length > 0 && (
+                    <Button variant="ghost" size="sm" onClick={toggleTodas} className="h-7 text-xs">
+                      {boletasSeleccionadas.size === boletasPendientes.length ? (
+                        <><CheckSquare className="h-3 w-3 mr-1" />Deseleccionar todas</>
+                      ) : (
+                        <><Square className="h-3 w-3 mr-1" />Seleccionar todas</>
+                      )}
+                    </Button>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {!clienteSeleccionado ? (
+                  <div className="text-center py-10">
+                    <p className="text-muted-foreground text-sm">Haga clic en un cliente para ver sus boletas</p>
+                  </div>
+                ) : loadingBoletas ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : boletasPendientes.length === 0 ? (
+                  <div className="text-center py-8">
+                    <p className="text-muted-foreground text-sm">Sin boletas pendientes</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="divide-y rounded-md border">
+                      {boletasPendientes.map((b) => (
+                        <div
+                          key={b.id}
+                          className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/50 cursor-pointer"
+                          onClick={() => toggleBoleta(b.id)}
+                        >
+                          <Checkbox
+                            checked={boletasSeleccionadas.has(b.id)}
+                            onCheckedChange={() => toggleBoleta(b.id)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">Boleta #{b.id}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {fmtDate(b.creado_en)} · {b.tipo_pago}
+                            </p>
+                          </div>
+                          <span className="font-mono-data text-sm font-medium">{fmt(b.total)}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="rounded-md bg-muted/50 p-3 space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          {boletasSeleccionadas.size} boleta{boletasSeleccionadas.size !== 1 ? 's' : ''} seleccionada{boletasSeleccionadas.size !== 1 ? 's' : ''}
+                        </span>
+                        <span className="font-mono-data font-bold text-primary">{fmt(totalSeleccionado)}</span>
+                      </div>
+                      {!clienteSeleccionado.ruc && (
+                        <p className="text-xs text-destructive">
+                          ⚠ Este cliente no tiene RUC. No se puede emitir factura.
+                        </p>
+                      )}
+                      <Button
+                        className="w-full"
+                        disabled={submitting || boletasSeleccionadas.size === 0 || !clienteSeleccionado.ruc}
+                        onClick={handleGenerarFactura}
+                      >
+                        {submitting ? (
+                          <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Generando...</>
+                        ) : (
+                          <><Printer className="mr-2 h-4 w-4" />Generar e Imprimir Factura</>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* ═══════════════ TAB: FACTURAS EMITIDAS ═══════════════ */}
+        <TabsContent value="emitidas" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Facturas Emitidas
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingEmitidas ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              ) : facturasEmitidas.length === 0 ? (
+                <div className="text-center py-12">
+                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground">No hay facturas emitidas aún</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Número</TableHead>
+                      <TableHead>Cliente</TableHead>
+                      <TableHead>RUC</TableHead>
+                      <TableHead className="text-center">Boletas</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead>Fecha</TableHead>
+                      <TableHead />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {facturasEmitidas.map((f) => (
+                      <TableRow key={f.id}>
+                        <TableCell className="font-mono font-medium">{f.numero}</TableCell>
+                        <TableCell>{f.cliente_nombre}</TableCell>
+                        <TableCell className="font-mono text-sm">{f.cliente_ruc}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="secondary">{f.boletas_count}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono-data">{fmt(f.total)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{fmtDate(f.creado_en)}</TableCell>
+                        <TableCell>
+                          <Button variant="outline" size="sm" onClick={() => handleReimprimir(f.id, f.numero)}>
+                            <Printer className="h-3 w-3 mr-1" />
+                            Imprimir
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Área oculta para render de impresión */}
+      <div style={{ position: 'fixed', left: '-9999px', top: 0, pointerEvents: 'none' }}>
+        <FacturaPrint ref={facturaRef} data={facturaImpresionData} />
+      </div>
     </div>
   );
 };

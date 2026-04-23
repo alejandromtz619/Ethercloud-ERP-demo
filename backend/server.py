@@ -41,7 +41,8 @@ from models import (
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
-    DocumentoTemporal, TipoDocumento, Gasto
+    DocumentoTemporal, TipoDocumento, Gasto,
+    FacturaGrupal, factura_grupal_ventas
 )
 from schemas import (
     EmpresaCreate, EmpresaResponse,
@@ -63,6 +64,7 @@ from schemas import (
     VehiculoCreate, VehiculoResponse,
     EntregaCreate, EntregaResponse, EntregaConDetalles, AsignarEntrega,
     FacturaCreate, FacturaResponse,
+    FacturaGrupalCreate, FacturaGrupalResponse,
     PreferenciaUsuarioCreate, PreferenciaUsuarioResponse,
     DashboardStats, VentasPorHora, StockBajo, CotizacionDivisa, Alerta,
     DocumentoTemporalCreate, DocumentoTemporal as DocumentoTemporalSchema
@@ -3468,7 +3470,210 @@ async def listar_facturas(empresa_id: int, db: AsyncSession = Depends(get_db)):
     )
     return result.scalars().all()
 
-# ==================== PREFERENCIAS ====================
+@api_router.get("/facturas/clientes-pendientes")
+async def clientes_con_boletas_pendientes(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Clientes que tienen boletas CONFIRMADAS no facturadas"""
+    result = await db.execute(
+        select(
+            Cliente.id,
+            Cliente.nombre,
+            Cliente.apellido,
+            Cliente.ruc,
+            func_sql.count(Venta.id).label('boletas_count'),
+            func_sql.sum(Venta.total).label('total_pendiente')
+        )
+        .join(Venta, Venta.cliente_id == Cliente.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.facturada == False
+        )
+        .group_by(Cliente.id, Cliente.nombre, Cliente.apellido, Cliente.ruc)
+        .having(func_sql.count(Venta.id) > 0)
+        .order_by(Cliente.nombre)
+    )
+    rows = result.all()
+    return [
+        {
+            "cliente_id": r.id,
+            "nombre": f"{r.nombre} {r.apellido or ''}".strip(),
+            "ruc": r.ruc or '',
+            "boletas_count": r.boletas_count,
+            "total_pendiente": float(r.total_pendiente or 0)
+        }
+        for r in rows
+    ]
+
+@api_router.get("/facturas/boletas-pendientes/{cliente_id}")
+async def boletas_pendientes_cliente(cliente_id: int, empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Boletas CONFIRMADAS no facturadas de un cliente"""
+    result = await db.execute(
+        select(Venta)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.cliente_id == cliente_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.facturada == False
+        )
+        .order_by(Venta.creado_en.asc())
+    )
+    ventas = result.scalars().all()
+    return [
+        {
+            "id": v.id,
+            "total": float(v.total),
+            "tipo_pago": v.tipo_pago.value if v.tipo_pago else "EFECTIVO",
+            "creado_en": v.creado_en.isoformat() if v.creado_en else None
+        }
+        for v in ventas
+    ]
+
+@api_router.post("/facturas/grupal", response_model=FacturaGrupalResponse)
+async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Depends(get_db)):
+    """Crea una factura que engloba múltiples boletas de un cliente y las marca como facturadas"""
+    if not data.venta_ids:
+        raise HTTPException(status_code=400, detail="Seleccione al menos una boleta")
+
+    # Validate client has RUC
+    cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
+    cliente = cliente_result.scalar_one_or_none()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if not cliente.ruc:
+        raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+
+    # Validate all ventas belong to client, are CONFIRMADA, and not yet facturada
+    result = await db.execute(
+        select(Venta)
+        .where(
+            Venta.id.in_(data.venta_ids),
+            Venta.empresa_id == data.empresa_id,
+            Venta.cliente_id == data.cliente_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.facturada == False
+        )
+    )
+    ventas = result.scalars().all()
+    if len(ventas) != len(data.venta_ids):
+        raise HTTPException(status_code=400, detail="Algunas boletas no son válidas o ya fueron facturadas")
+
+    # Calculate totals
+    total = sum(v.total for v in ventas)
+    base_imponible = total / Decimal('1.10')
+    iva = total - base_imponible
+
+    # Generate numero based on current count
+    count_result = await db.execute(select(func_sql.count(FacturaGrupal.id)))
+    count = count_result.scalar() or 0
+    numero = f"FG-{(count + 1):07d}"
+
+    # Create factura grupal
+    factura = FacturaGrupal(
+        empresa_id=data.empresa_id,
+        cliente_id=data.cliente_id,
+        numero=numero,
+        total=total,
+        iva=iva,
+        creado_en=now_paraguay()
+    )
+    db.add(factura)
+    await db.flush()
+
+    # Link ventas and mark as facturadas
+    for venta in ventas:
+        venta.facturada = True
+        factura.ventas.append(venta)
+
+    await db.commit()
+    await db.refresh(factura)
+    return factura
+
+@api_router.get("/facturas/grupal/{factura_id}/imprimir")
+async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(get_db)):
+    """Datos de impresión para una factura grupal"""
+    result = await db.execute(
+        select(FacturaGrupal)
+        .options(
+            selectinload(FacturaGrupal.ventas),
+            selectinload(FacturaGrupal.cliente),
+            selectinload(FacturaGrupal.empresa)
+        )
+        .where(FacturaGrupal.id == factura_id)
+    )
+    factura = result.scalar_one_or_none()
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    items = []
+    for venta in sorted(factura.ventas, key=lambda v: v.id):
+        items.append({
+            'cantidad': 1,
+            'descripcion': f"Compra de insumo y materiales Boleta #{venta.id}",
+            'precio_unitario': float(venta.total),
+            'exenta': 0,
+            'iva_5': 0,
+            'iva_10': float(venta.total)
+        })
+
+    iva_10 = round(float(factura.iva), 0)
+    return {
+        'tipo': 'FACTURA',
+        'numero': factura.numero,
+        'fecha': factura.creado_en.strftime('%d de %B de %Y'),
+        'condicion': 'CONTADO',
+        'empresa': {
+            'nombre': factura.empresa.nombre,
+            'ruc': factura.empresa.ruc,
+            'telefono': factura.empresa.telefono,
+            'direccion': factura.empresa.direccion
+        },
+        'cliente': {
+            'nombre': f"{factura.cliente.nombre} {factura.cliente.apellido or ''}".strip(),
+            'ruc': factura.cliente.ruc,
+            'direccion': factura.cliente.direccion or '',
+            'telefono': factura.cliente.telefono or ''
+        },
+        'items': items,
+        'subtotal_exenta': 0,
+        'subtotal_iva_5': 0,
+        'subtotal_iva_10': float(factura.total),
+        'descuento': 0,
+        'total': float(factura.total),
+        'total_letras': numero_a_letras(int(factura.total)),
+        'creado_en': factura.creado_en.isoformat(),
+        'liquidacion_iva': {
+            'iva_5': 0,
+            'iva_10': iva_10,
+            'total_iva': iva_10
+        }
+    }
+
+@api_router.get("/facturas/grupales")
+async def listar_facturas_grupales(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Lista facturas grupales emitidas"""
+    result = await db.execute(
+        select(FacturaGrupal)
+        .options(selectinload(FacturaGrupal.ventas), selectinload(FacturaGrupal.cliente))
+        .where(FacturaGrupal.empresa_id == empresa_id)
+        .order_by(FacturaGrupal.creado_en.desc())
+    )
+    facturas = result.scalars().all()
+    return [
+        {
+            "id": f.id,
+            "numero": f.numero,
+            "cliente_id": f.cliente_id,
+            "cliente_nombre": f"{f.cliente.nombre} {f.cliente.apellido or ''}".strip(),
+            "cliente_ruc": f.cliente.ruc or '',
+            "total": float(f.total),
+            "iva": float(f.iva),
+            "boletas_count": len(f.ventas),
+            "creado_en": f.creado_en.isoformat() if f.creado_en else None
+        }
+        for f in facturas
+    ]
+
+
 @api_router.post("/preferencias", response_model=PreferenciaUsuarioResponse)
 async def crear_actualizar_preferencias(data: PreferenciaUsuarioCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(

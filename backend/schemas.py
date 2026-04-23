@@ -574,6 +574,22 @@ class FacturaResponse(FacturaBase):
     estado: str
     creado_en: Optional[datetime] = None
 
+# FacturaGrupal
+class FacturaGrupalCreate(BaseModel):
+    empresa_id: int
+    cliente_id: int
+    venta_ids: List[int]
+
+class FacturaGrupalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empresa_id: int
+    cliente_id: int
+    numero: str
+    total: Decimal
+    iva: Decimal
+    creado_en: Optional[datetime] = None
+
 # Preferencias Usuario
 class PreferenciaUsuarioBase(BaseModel):
     tema: str = "light"

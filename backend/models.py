@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date
+    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -392,6 +392,7 @@ class Venta(Base):
     es_delivery = Column(Boolean, default=False)
     estado = Column(Enum(EstadoVenta), default=EstadoVenta.BORRADOR)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+    facturada = Column(Boolean, default=False)
     
     empresa = relationship("Empresa", back_populates="ventas")
     cliente = relationship("Cliente", back_populates="ventas", foreign_keys=[cliente_id])
@@ -515,6 +516,30 @@ class DocumentoElectronico(Base):
     creado_en = Column(DateTime(timezone=True), server_default=func.now())
     
     factura = relationship("Factura", back_populates="documento")
+
+# Association table for FacturaGrupal <-> Venta (many-to-many)
+factura_grupal_ventas = Table(
+    'factura_grupal_ventas',
+    Base.metadata,
+    Column('factura_grupal_id', Integer, ForeignKey('facturas_grupales.id'), primary_key=True),
+    Column('venta_id', Integer, ForeignKey('ventas.id'), primary_key=True)
+)
+
+class FacturaGrupal(Base):
+    """Factura que engloba múltiples boletas de un mismo cliente"""
+    __tablename__ = "facturas_grupales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
+    numero = Column(String(50), nullable=False)
+    total = Column(Numeric(15, 2), nullable=False)
+    iva = Column(Numeric(15, 2), nullable=False)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
+    empresa = relationship("Empresa")
+    cliente = relationship("Cliente")
+    ventas = relationship("Venta", secondary=factura_grupal_ventas)
 
 class PreferenciaUsuario(Base):
     __tablename__ = "preferencias_usuario"

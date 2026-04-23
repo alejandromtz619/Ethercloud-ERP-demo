@@ -1,0 +1,20 @@
+-- 1. Agregar columna facturada a la tabla ventas
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS facturada BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- 2. Crear tabla facturas_grupales
+CREATE TABLE IF NOT EXISTS facturas_grupales (
+    id          SERIAL PRIMARY KEY,
+    empresa_id  INTEGER NOT NULL REFERENCES empresas(id),
+    cliente_id  INTEGER NOT NULL REFERENCES clientes(id),
+    numero      VARCHAR(50) NOT NULL,
+    total       NUMERIC(15,2) NOT NULL,
+    iva         NUMERIC(15,2) NOT NULL,
+    creado_en   TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. Crear tabla de asociación factura_grupal_ventas
+CREATE TABLE IF NOT EXISTS factura_grupal_ventas (
+    factura_grupal_id  INTEGER NOT NULL REFERENCES facturas_grupales(id),
+    venta_id           INTEGER NOT NULL REFERENCES ventas(id),
+    PRIMARY KEY (factura_grupal_id, venta_id)
+);

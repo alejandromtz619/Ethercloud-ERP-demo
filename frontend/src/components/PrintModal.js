@@ -669,4 +669,5 @@ Gracias por su compra! 🙏
   );
 };
 
+export { FacturaPrint };
 export default PrintModal;
