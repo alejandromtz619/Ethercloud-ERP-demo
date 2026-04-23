@@ -34,7 +34,7 @@ import {
 } from '../components/ui/table';
 import { 
   Search, Plus, Trash2, ShoppingCart, User, Barcode, 
-  CreditCard, Truck, Store, Loader2, Check, X, Package
+  CreditCard, Truck, Store, Loader2, Check, X, Package, Save
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -365,6 +365,43 @@ const Ventas = () => {
     }
   }, [montoPagado, total]);
 
+  // Guardar venta pendiente sin confirmar (se queda en la página para seguir editando)
+  const handleGuardarPendiente = async () => {
+    if (!selectedCliente) {
+      toast.error('Seleccione un cliente');
+      return;
+    }
+    if (cart.length === 0) {
+      toast.error('Agregue productos al carrito');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const updateData = {
+        cliente_id: selectedCliente.id,
+        representante_cliente_id: isRepresentante ? representante?.id : null,
+        tipo_pago: tipoPago,
+        es_delivery: esDelivery,
+        items: cart.map(item => ({
+          producto_id: item.producto_id || null,
+          materia_laboratorio_id: item.materia_laboratorio_id || null,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+          observaciones: item.observaciones || null
+        }))
+      };
+      await api(`/ventas/${editingVenta.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updateData)
+      });
+      toast.success('Cambios guardados - Venta sigue pendiente');
+    } catch (e) {
+      toast.error(e.message || 'Error al guardar cambios');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleConfirmarVentaClick = () => {
     if (!selectedCliente) {
       toast.error('Seleccione un cliente');
@@ -411,7 +448,7 @@ const Ventas = () => {
     setCashModalOpen(false);
     
     try {
-      // Caso 1: EDITAR venta pendiente existente
+      // Caso 1: EDITAR venta pendiente existente → actualizar e inmediatamente confirmar
       if (isEditMode && editingVenta) {
         const updateData = {
           cliente_id: selectedCliente.id,
@@ -433,13 +470,9 @@ const Ventas = () => {
           body: JSON.stringify(updateData)
         });
         
-        // Ask if user wants to confirm the sale now
-        if (window.confirm('¿Desea confirmar esta venta ahora? (Se validará stock y crédito)')) {
-          await api(`/ventas/${editingVenta.id}/confirmar-pendiente`, { method: 'POST' });
-          toast.success('Venta actualizada y confirmada');
-        } else {
-          toast.success('Venta actualizada - Sigue pendiente');
-        }
+        // Confirmar directamente (validar stock y crédito)
+        await api(`/ventas/${editingVenta.id}/confirmar-pendiente`, { method: 'POST' });
+        toast.success('Venta confirmada exitosamente');
         
         // Redirect to historial
         navigate('/historial-ventas');
@@ -1002,31 +1035,61 @@ const Ventas = () => {
               )}
             </div>
 
-            {/* Submit Button */}
-            <Button 
-              className="w-full" 
-              size="lg"
-              disabled={!selectedCliente || cart.length === 0 || submitting}
-              onClick={handleConfirmarVentaClick}
-              data-testid="confirmar-venta-btn"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Procesando...
-                </>
-              ) : (
-                <>
-                  <Check className="mr-2 h-4 w-4" />
-                  {isEditMode ? 'Actualizar Venta Pendiente' : 'Confirmar Venta'}
-                </>
-              )}
-            </Button>
-            
-            {isEditMode && (
-              <p className="text-xs text-muted-foreground text-center mt-2">
-                Al actualizar, se preguntará si desea confirmar el pago
-              </p>
+            {/* Submit Button(s) */}
+            {isEditMode ? (
+              <div className="flex flex-col gap-2">
+                {/* Guardar sin confirmar — sigue pendiente */}
+                <Button
+                  variant="outline"
+                  className="w-full border-yellow-500 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40"
+                  size="lg"
+                  disabled={!selectedCliente || cart.length === 0 || submitting}
+                  onClick={handleGuardarPendiente}
+                >
+                  {submitting ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Guardando...</>
+                  ) : (
+                    <><Save className="mr-2 h-4 w-4" />Guardar Pendiente</>
+                  )}
+                </Button>
+                {/* Confirmar — valida stock y crédito */}
+                <Button
+                  className="w-full"
+                  size="lg"
+                  disabled={!selectedCliente || cart.length === 0 || submitting}
+                  onClick={handleConfirmarVentaClick}
+                  data-testid="confirmar-venta-btn"
+                >
+                  {submitting ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Procesando...</>
+                  ) : (
+                    <><Check className="mr-2 h-4 w-4" />Confirmar Venta</>
+                  )}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center">
+                  "Guardar Pendiente" mantiene la venta abierta para seguir editando
+                </p>
+              </div>
+            ) : (
+              <Button 
+                className="w-full" 
+                size="lg"
+                disabled={!selectedCliente || cart.length === 0 || submitting}
+                onClick={handleConfirmarVentaClick}
+                data-testid="confirmar-venta-btn"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Procesando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Confirmar Venta
+                  </>
+                )}
+              </Button>
             )}
           </CardContent>
         </Card>
