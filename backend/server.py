@@ -6131,6 +6131,194 @@ async def reporte_creditos_clientes_excel(
         headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.xlsx"}
     )
 
+@api_router.get("/reportes/venta-items")
+async def reporte_venta_items(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    categoria_id: int = None,
+    producto_id: int = None,
+    cliente_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte PDF de ventas de items agrupadas por producto/materia de laboratorio"""
+    from collections import defaultdict
+    query = (
+        select(VentaItem, Venta, Producto, Categoria, MateriaLaboratorio)
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
+        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA
+        )
+    )
+    if fecha_desde:
+        try:
+            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+    if fecha_hasta:
+        try:
+            query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+    if categoria_id:
+        query = query.where(Producto.categoria_id == categoria_id)
+    if producto_id:
+        query = query.where(VentaItem.producto_id == producto_id)
+    if cliente_id:
+        query = query.where(Venta.cliente_id == cliente_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
+
+    agg = defaultdict(lambda: {'cantidad': 0, 'total': Decimal('0'), 'categoria': '-'})
+    for item, venta, producto, categoria, materia in rows:
+        if producto:
+            key = producto.nombre
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = categoria.nombre if categoria else 'Sin categoría'
+        elif materia:
+            key = f"[LAB] {materia.nombre}"
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = 'Laboratorio'
+
+    sorted_items = sorted(agg.items(), key=lambda x: x[1]['total'], reverse=True)
+
+    columnas = ['Producto / Item', 'Categoría', 'Cant. Vendida', 'Monto Total (Gs.)']
+    datos = []
+    total_cant = 0
+    total_monto = Decimal('0')
+    for nombre, data in sorted_items:
+        total_cant += data['cantidad']
+        total_monto += data['total']
+        datos.append([
+            nombre[:40],
+            data['categoria'],
+            str(data['cantidad']),
+            f"{float(data['total']):,.0f}"
+        ])
+
+    totales = ['TOTAL', '', str(total_cant), f"{float(total_monto):,.0f}"]
+
+    subtitle_parts = []
+    if fecha_desde and fecha_hasta:
+        subtitle_parts.append(f"Período: {fecha_desde} al {fecha_hasta}")
+    elif fecha_desde:
+        subtitle_parts.append(f"Desde: {fecha_desde}")
+    elif fecha_hasta:
+        subtitle_parts.append(f"Hasta: {fecha_hasta}")
+    subtitle_parts.append(f"Items distintos: {len(datos)}")
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+
+    pdf_bytes = crear_pdf_reporte("Reporte de Venta de Items", subtitle, columnas, datos, totales)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=reporte_venta_items_{today_paraguay().isoformat()}.pdf"}
+    )
+
+@api_router.get("/reportes/venta-items/excel")
+async def reporte_venta_items_excel(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    categoria_id: int = None,
+    producto_id: int = None,
+    cliente_id: int = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte Excel de ventas de items agrupadas por producto/materia de laboratorio"""
+    from collections import defaultdict
+    query = (
+        select(VentaItem, Venta, Producto, Categoria, MateriaLaboratorio)
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
+        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA
+        )
+    )
+    if fecha_desde:
+        try:
+            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+    if fecha_hasta:
+        try:
+            query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+    if categoria_id:
+        query = query.where(Producto.categoria_id == categoria_id)
+    if producto_id:
+        query = query.where(VentaItem.producto_id == producto_id)
+    if cliente_id:
+        query = query.where(Venta.cliente_id == cliente_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
+
+    agg = defaultdict(lambda: {'cantidad': 0, 'total': Decimal('0'), 'categoria': '-'})
+    for item, venta, producto, categoria, materia in rows:
+        if producto:
+            key = producto.nombre
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = categoria.nombre if categoria else 'Sin categoría'
+        elif materia:
+            key = f"[LAB] {materia.nombre}"
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = 'Laboratorio'
+
+    sorted_items = sorted(agg.items(), key=lambda x: x[1]['total'], reverse=True)
+
+    columnas = ['Producto / Item', 'Categoría', 'Cant. Vendida', 'Monto Total (Gs.)']
+    datos = []
+    total_cant = 0
+    total_monto = Decimal('0')
+    for nombre, data in sorted_items:
+        total_cant += data['cantidad']
+        total_monto += data['total']
+        datos.append([
+            nombre,
+            data['categoria'],
+            data['cantidad'],
+            float(data['total'])
+        ])
+
+    totales = ['TOTAL', '', total_cant, float(total_monto)]
+
+    subtitle_parts = []
+    if fecha_desde and fecha_hasta:
+        subtitle_parts.append(f"Período: {fecha_desde} al {fecha_hasta}")
+    elif fecha_desde:
+        subtitle_parts.append(f"Desde: {fecha_desde}")
+    elif fecha_hasta:
+        subtitle_parts.append(f"Hasta: {fecha_hasta}")
+    subtitle_parts.append(f"Items distintos: {len(datos)}")
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+
+    excel_bytes = crear_excel_reporte("Reporte de Venta de Items", subtitle, columnas, datos, totales)
+    return Response(
+        content=excel_bytes,
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename=reporte_venta_items_{today_paraguay().isoformat()}.xlsx"}
+    )
+
 # ==================== CICLOS DE SALARIO ====================
 @api_router.post("/ciclos-salario/generar")
 async def generar_ciclo_salario(empresa_id: int, mes: str, db: AsyncSession = Depends(get_db)):
