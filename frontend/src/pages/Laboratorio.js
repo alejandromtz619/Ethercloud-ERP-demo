@@ -22,7 +22,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { FlaskConical, Plus, Loader2, Printer, Pencil } from 'lucide-react';
+import { FlaskConical, Plus, Loader2, Printer, Pencil, Search } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import JsBarcode from 'jsbarcode';
@@ -39,6 +46,9 @@ const Laboratorio = () => {
   const [editMateria, setEditMateria] = useState(null);
   const [editFormData, setEditFormData] = useState({ nombre: '', descripcion: '', precio: '' });
   const [editSubmitting, setEditSubmitting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterEstado, setFilterEstado] = useState('todos');
+  const [sortOrder, setSortOrder] = useState('newest');
   const barcodeRef = useRef(null);
   
   const [formData, setFormData] = useState({
@@ -251,6 +261,18 @@ const Laboratorio = () => {
     printWindow.document.close();
   }, [printMateria]);
 
+  const filteredMaterias = materias
+    .filter((m) => {
+      const matchesSearch = m.nombre.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesEstado = filterEstado === 'todos' || m.estado === filterEstado;
+      return matchesSearch && matchesEstado;
+    })
+    .sort((a, b) => {
+      const da = new Date(a.creado_en);
+      const db = new Date(b.creado_en);
+      return sortOrder === 'newest' ? db - da : da - db;
+    });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -333,16 +355,53 @@ const Laboratorio = () => {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FlaskConical className="h-5 w-5" />
-            Listado de Materias
-          </CardTitle>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <FlaskConical className="h-5 w-5" />
+              Listado de Materias
+            </CardTitle>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nombre..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 h-9 w-48"
+                />
+              </div>
+              <Select value={filterEstado} onValueChange={setFilterEstado}>
+                <SelectTrigger className="h-9 w-36">
+                  <SelectValue placeholder="Estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="DISPONIBLE">Disponible</SelectItem>
+                  <SelectItem value="VENDIDO">Vendido</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={sortOrder} onValueChange={setSortOrder}>
+                <SelectTrigger className="h-9 w-40">
+                  <SelectValue placeholder="Ordenar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Más reciente</SelectItem>
+                  <SelectItem value="oldest">Más antiguo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          {materias.length === 0 ? (
+          {filteredMaterias.length === 0 && materias.length === 0 ? (
             <div className="text-center py-12">
               <FlaskConical className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <p className="text-muted-foreground">No hay materias de laboratorio creadas</p>
+            </div>
+          ) : filteredMaterias.length === 0 ? (
+            <div className="text-center py-12">
+              <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="text-muted-foreground">Sin resultados para los filtros aplicados</p>
             </div>
           ) : (
             <Table>
@@ -357,7 +416,7 @@ const Laboratorio = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {materias.map((materia) => (
+                {filteredMaterias.map((materia) => (
                   <TableRow key={materia.id} data-testid={`materia-row-${materia.id}`}>
                     <TableCell>
                       <div>
