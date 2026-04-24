@@ -3585,6 +3585,27 @@ async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Dep
         venta.facturada = True
         factura.ventas.append(venta)
 
+    # Cobrar créditos pendientes de las boletas con tipo_pago CREDITO
+    venta_ids_credito = [v.id for v in ventas if v.tipo_pago == TipoPago.CREDITO]
+    if venta_ids_credito:
+        creditos_result = await db.execute(
+            select(CreditoCliente).where(
+                CreditoCliente.venta_id.in_(venta_ids_credito),
+                CreditoCliente.pagado == False
+            )
+        )
+        creditos_pendientes = creditos_result.scalars().all()
+        for credito in creditos_pendientes:
+            pago = PagoCredito(
+                credito_id=credito.id,
+                monto=credito.monto_pendiente,
+                observacion=f"Cobrado al facturar {factura.numero}",
+                fecha_pago=now_paraguay()
+            )
+            db.add(pago)
+            credito.monto_pendiente = Decimal('0')
+            credito.pagado = True
+
     await db.commit()
     await db.refresh(factura)
     return factura
