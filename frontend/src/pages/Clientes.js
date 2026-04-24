@@ -487,7 +487,7 @@ const Clientes = () => {
                           {credito.descripcion || 'Sin descripción'}
                         </p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          Fecha: {new Date(credito.fecha_venta).toLocaleDateString('es-PY')}
+                          Fecha: {new Date(credito.fecha_venta + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                         </p>
                         
                         {/* Pagos realizados */}
@@ -496,7 +496,7 @@ const Clientes = () => {
                             <p className="text-xs font-medium mb-1">Pagos realizados:</p>
                             {credito.pagos.map((pago) => (
                               <div key={pago.id} className="text-xs text-muted-foreground flex justify-between">
-                                <span>{new Date(pago.fecha_pago).toLocaleDateString('es-PY')}</span>
+                                <span>{new Date(pago.fecha_pago).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}</span>
                                 <span className="font-mono">{formatCurrency(pago.monto)}</span>
                               </div>
                             ))}

@@ -2379,10 +2379,12 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 'total': float(item.total)
             })
         
+        # Convertir a timezone de Paraguay para formatear correctamente
+        creado_en_py = venta.creado_en.astimezone(PARAGUAY_TZ) if venta.creado_en.tzinfo else venta.creado_en.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
         return {
             'tipo': 'BOLETA',
             'numero': venta.id,
-            'fecha': venta.creado_en.strftime('%d/%m/%Y %I:%M %p'),
+            'fecha': creado_en_py.strftime('%d/%m/%Y %I:%M %p'),
             'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
                 'nombre': empresa.nombre,
@@ -2470,10 +2472,12 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         base_imponible = float(venta.total) / 1.10
         iva_10 = float(venta.total) - base_imponible
         
+        # Convertir a timezone de Paraguay para formatear correctamente
+        creado_en_py_f = venta.creado_en.astimezone(PARAGUAY_TZ) if venta.creado_en.tzinfo else venta.creado_en.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
         return {
             'tipo': 'FACTURA',
             'numero': f"{venta.id:07d}",
-            'fecha': venta.creado_en.strftime('%d de %B de %Y'),
+            'fecha': creado_en_py_f.strftime('%d de %B de %Y'),
             'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
                 'nombre': empresa.nombre,
@@ -2496,7 +2500,6 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
             'iva_10': round(iva_10, 0),
             'total': float(venta.total),
             'total_letras': numero_a_letras(int(venta.total)),
-            'creado_en': venta.creado_en.isoformat(),
             'liquidacion_iva': {
                 'iva_5': 0,
                 'iva_10': round(iva_10, 0),

@@ -438,7 +438,7 @@ const Laboratorio = () => {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {new Date(materia.creado_en).toLocaleDateString('es-PY')}
+                      {new Date(materia.creado_en).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                     </TableCell>
                     <TableCell className="text-right">
                       {materia.estado === 'DISPONIBLE' && hasPermission('laboratorio.editar') && (

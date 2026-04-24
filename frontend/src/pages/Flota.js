@@ -293,7 +293,7 @@ const Flota = () => {
                           {habCheck?.status === 'vencido' ? `Vencido hace ${habCheck.dias}d` :
                            habCheck?.status === 'urgente' ? `Vence en ${habCheck.dias}d` :
                            habCheck?.status === 'proximo' ? `${habCheck.dias} días` :
-                           new Date(vehiculo.vencimiento_habilitacion).toLocaleDateString('es-PY')}
+                           new Date(vehiculo.vencimiento_habilitacion + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">No definido</span>
@@ -306,7 +306,7 @@ const Flota = () => {
                           {cedulaCheck?.status === 'vencido' ? `Vencido hace ${cedulaCheck.dias}d` :
                            cedulaCheck?.status === 'urgente' ? `Vence en ${cedulaCheck.dias}d` :
                            cedulaCheck?.status === 'proximo' ? `${cedulaCheck.dias} días` :
-                           new Date(vehiculo.vencimiento_cedula_verde).toLocaleDateString('es-PY')}
+                           new Date(vehiculo.vencimiento_cedula_verde + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                         </Badge>
                       ) : (
                         <span className="text-xs text-muted-foreground">No definido</span>

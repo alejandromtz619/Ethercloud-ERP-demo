@@ -213,7 +213,7 @@ const Gastos = () => {
                   {filtered.map(g => (
                     <tr key={g.id} className="hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                        {new Date(g.fecha + 'T00:00:00').toLocaleDateString('es-PY')}
+                        {new Date(g.fecha + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                       </td>
                       <td className="px-4 py-2.5 font-medium max-w-xs">{g.motivo}</td>
                       <td className="px-4 py-2.5 text-muted-foreground">{g.responsable_nombre}</td>

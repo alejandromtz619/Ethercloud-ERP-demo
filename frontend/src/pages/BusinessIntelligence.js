@@ -1186,7 +1186,7 @@ const TabAging = ({ empresa, API_URL, token }) => {
                           <td className="px-4 py-2"></td>
                           <td className="px-4 py-2" colSpan={1}>
                             <div className="text-[10px] text-muted-foreground">
-                              Tanda #{t.tanda_id} · Ingreso {new Date(t.fecha_entrada).toLocaleDateString('es-PY')}
+                              Tanda #{t.tanda_id} · Ingreso {new Date(t.fecha_entrada + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                               {!t.tiene_seguimiento_fifo && (
                                 <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 text-[10px] font-semibold border border-amber-500/30" title="Este lote no tiene seguimiento FIFO habilitado. Las unidades restantes son estimadas (se asume el lote completo disponible).">sin seguim. FIFO</span>
                               )}

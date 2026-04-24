@@ -52,7 +52,7 @@ const Facturas = () => {
     new Intl.NumberFormat('es-PY', { style: 'currency', currency: 'PYG', minimumFractionDigits: 0 }).format(v);
 
   const fmtDate = (iso) =>
-    iso ? new Date(iso).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-';
+    iso ? new Date(iso.length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Asuncion' }) : '-';
 
   // ── Cargar clientes pendientes ─────────────────────────────────────────────
   const fetchClientesPendientes = useCallback(async () => {

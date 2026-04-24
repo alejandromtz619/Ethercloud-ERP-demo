@@ -427,10 +427,10 @@ const Proveedores = () => {
                         <p className="font-mono-data font-medium">{formatCurrency(deuda.monto)}</p>
                         <p className="text-xs text-muted-foreground">{deuda.descripcion || 'Sin descripción'}</p>
                         <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                          <span>Emitida: {new Date(deuda.creado_en).toLocaleDateString('es-PY')}</span>
+                          <span>Emitida: {new Date(deuda.creado_en).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}</span>
                           {deuda.fecha_limite && (
                             <span className={new Date(deuda.fecha_limite) < new Date() && !deuda.pagado ? 'text-destructive' : ''}>
-                              Vence: {new Date(deuda.fecha_limite).toLocaleDateString('es-PY')}
+                              Vence: {new Date(deuda.fecha_limite + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                             </span>
                           )}
                         </div>
@@ -441,7 +441,7 @@ const Proveedores = () => {
                             <Badge className="badge-success">Pagado</Badge>
                             {deuda.fecha_pago && (
                               <p className="text-xs text-muted-foreground mt-1">
-                                {new Date(deuda.fecha_pago).toLocaleDateString('es-PY')}
+                                {new Date(deuda.fecha_pago + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                               </p>
                             )}
                           </div>

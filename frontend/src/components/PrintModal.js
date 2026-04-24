@@ -511,7 +511,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       
       // Generate message with download link
       const docType = printBoleta ? 'Boleta' : 'Factura';
-      const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY');
+      const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' });
       
       const message = `
 🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*

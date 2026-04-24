@@ -240,7 +240,7 @@ const Sistema = () => {
                   </Badge>
                   {cotizacion?.fecha_actualizacion && (
                     <span className="text-xs text-muted-foreground">
-                      Actualizado: {new Date(cotizacion.fecha_actualizacion).toLocaleString('es-PY')}
+                      Actualizado: {new Date(cotizacion.fecha_actualizacion).toLocaleString('es-PY', { timeZone: 'America/Asuncion' })}
                     </span>
                   )}
                 </div>

@@ -997,7 +997,8 @@ const Stock = () => {
                         <TableCell className="text-xs whitespace-nowrap">
                           {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
                             day: '2-digit', month: '2-digit', year: 'numeric',
-                            hour: '2-digit', minute: '2-digit'
+                            hour: '2-digit', minute: '2-digit',
+                            timeZone: 'America/Asuncion'
                           }) : '-'}
                         </TableCell>
                         <TableCell className={cn('font-semibold text-xs', tipoColor[mov.tipo])}>

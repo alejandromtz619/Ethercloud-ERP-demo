@@ -625,7 +625,7 @@ const HistorialVentas = () => {
                 <div>
                   <Label className="text-muted-foreground">Fecha</Label>
                   <p className="font-medium">
-                    {new Date(selectedVenta.creado_en).toLocaleString('es-PY')}
+                    {new Date(selectedVenta.creado_en).toLocaleString('es-PY', { timeZone: 'America/Asuncion' })}
                   </p>
                 </div>
                 <div>
