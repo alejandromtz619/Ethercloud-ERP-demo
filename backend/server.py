@@ -5939,6 +5939,7 @@ async def reporte_creditos_clientes(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    cliente_id: int = None,
     current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
@@ -5949,6 +5950,8 @@ async def reporte_creditos_clientes(
             .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
             .where(Cliente.empresa_id == empresa_id)
         )
+        if cliente_id:
+            query = query.where(CreditoCliente.cliente_id == cliente_id)
         
         # Filter by estado (default: PENDIENTE if not specified)
         if estado:
@@ -6040,6 +6043,7 @@ async def reporte_creditos_clientes_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    cliente_id: int = None,
     current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
@@ -6050,6 +6054,8 @@ async def reporte_creditos_clientes_excel(
             .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
             .where(Cliente.empresa_id == empresa_id)
         )
+        if cliente_id:
+            query = query.where(CreditoCliente.cliente_id == cliente_id)
         if estado:
             if estado == 'TODOS':
                 pass

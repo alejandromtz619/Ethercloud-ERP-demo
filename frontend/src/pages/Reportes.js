@@ -62,6 +62,9 @@ const Reportes = () => {
   const [creditosFechaDesde, setCreditosFechaDesde] = useState('');
   const [creditosFechaHasta, setCreditosFechaHasta] = useState('');
   const [creditosEstado, setCreditosEstado] = useState('PENDIENTE');
+  const [creditosClienteId, setCreditosClienteId] = useState(null);
+  const [creditosClienteSearch, setCreditosClienteSearch] = useState('');
+  const [creditosClientePopoverOpen, setCreditosClientePopoverOpen] = useState(false);
 
   // Filters for Venta Items report
   const [itemsFechaDesde, setItemsFechaDesde] = useState('');
@@ -114,6 +117,20 @@ const Reportes = () => {
 
   // Get selected cliente
   const selectedCliente = ventasClienteId ? clientes.find(c => c.id === ventasClienteId) : null;
+
+  // Get selected creditos cliente
+  const selectedCreditosCliente = creditosClienteId ? clientes.find(c => c.id === creditosClienteId) : null;
+
+  // Filter creditos clientes by search
+  const filteredCreditosClientes = clientes.filter(c => {
+    const s = creditosClienteSearch.toLowerCase();
+    return (
+      c.nombre.toLowerCase().includes(s) ||
+      (c.apellido && c.apellido.toLowerCase().includes(s)) ||
+      c.id.toString() === creditosClienteSearch ||
+      (c.ruc && c.ruc.toLowerCase().includes(s))
+    );
+  });
 
   // Get selected items report values
   const selectedItemsProducto = itemsProductoId ? productos.find(p => p.id === itemsProductoId) : null;
@@ -360,12 +377,14 @@ const Reportes = () => {
             { value: 'PENDIENTE', label: 'Solo Pendientes' },
             { value: 'PAGADO', label: 'Solo Pagados' }
           ]
-        }
+        },
+        { type: 'creditosClienteSearch', label: 'Cliente (Opcional)' }
       ],
       getParams: () => ({
         fecha_desde: creditosFechaDesde || undefined,
         fecha_hasta: creditosFechaHasta || undefined,
-        estado: creditosEstado !== 'TODOS' ? creditosEstado : undefined
+        estado: creditosEstado !== 'TODOS' ? creditosEstado : undefined,
+        cliente_id: creditosClienteId || undefined
       })
     },
     {
@@ -659,6 +678,51 @@ const Reportes = () => {
                                       {filteredItemsClientes.slice(0, 50).map((cliente) => (
                                         <CommandItem key={cliente.id} value={cliente.id.toString()} onSelect={() => { setItemsClienteId(cliente.id); setItemsClientePopoverOpen(false); setItemsClienteSearch(''); }} className="text-sm">
                                           <Check className={cn('mr-2 h-3 w-3', itemsClienteId === cliente.id ? 'opacity-100' : 'opacity-0')} />
+                                          <div className="flex-1 min-w-0">
+                                            <p className="font-medium truncate">{cliente.nombre} {cliente.apellido || ''}</p>
+                                            <p className="text-xs text-muted-foreground truncate">ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}</p>
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      if (filter.type === 'creditosClienteSearch') {
+                        return (
+                          <div key={idx}>
+                            <Label className="text-xs mb-1 block">{filter.label}</Label>
+                            {selectedCreditosCliente ? (
+                              <div className="flex items-center justify-between p-2 bg-secondary rounded-md text-sm">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium truncate">{selectedCreditosCliente.nombre} {selectedCreditosCliente.apellido || ''}</p>
+                                  <p className="text-xs text-muted-foreground truncate">ID: {selectedCreditosCliente.id} | RUC: {selectedCreditosCliente.ruc || 'N/A'}</p>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setCreditosClienteId(null); setCreditosClienteSearch(''); }}>
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Popover open={creditosClientePopoverOpen} onOpenChange={setCreditosClientePopoverOpen}>
+                                <PopoverTrigger asChild>
+                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
+                                    <Search className="mr-2 h-3 w-3" />
+                                    Buscar por ID o nombre...
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
+                                  <Command shouldFilter={false}>
+                                    <CommandInput placeholder="ID, nombre o RUC..." value={creditosClienteSearch} onValueChange={setCreditosClienteSearch} />
+                                    <CommandEmpty>{clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}</CommandEmpty>
+                                    <CommandGroup className="max-h-64 overflow-auto">
+                                      {filteredCreditosClientes.slice(0, 50).map((cliente) => (
+                                        <CommandItem key={cliente.id} value={cliente.id.toString()} onSelect={() => { setCreditosClienteId(cliente.id); setCreditosClientePopoverOpen(false); setCreditosClienteSearch(''); }} className="text-sm">
+                                          <Check className={cn('mr-2 h-3 w-3', creditosClienteId === cliente.id ? 'opacity-100' : 'opacity-0')} />
                                           <div className="flex-1 min-w-0">
                                             <p className="font-medium truncate">{cliente.nombre} {cliente.apellido || ''}</p>
                                             <p className="text-xs text-muted-foreground truncate">ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}</p>
