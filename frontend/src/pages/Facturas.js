@@ -13,7 +13,8 @@ import {
   TableRow,
 } from '../components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { FileText, Loader2, Printer, Users, ChevronRight, CheckSquare, Square } from 'lucide-react';
+import { Input } from '../components/ui/input';
+import { FileText, Loader2, Printer, Users, ChevronRight, CheckSquare, Square, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { FacturaPrint } from '../components/PrintModal';
 
@@ -43,6 +44,7 @@ const Facturas = () => {
   const [loadingEmitidas, setLoadingEmitidas] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [facturaImpresionData, setFacturaImpresionData] = useState(null);
+  const [filtroCliente, setFiltroCliente] = useState('');
   const facturaRef = useRef(null);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -216,6 +218,15 @@ const Facturas = () => {
                   <Users className="h-4 w-4" />
                   Clientes con boletas pendientes
                 </CardTitle>
+                <div className="relative mt-2">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar por nombre o RUC..."
+                    value={filtroCliente}
+                    onChange={(e) => setFiltroCliente(e.target.value)}
+                    className="pl-8 h-8 text-sm"
+                  />
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 {loadingClientes ? (
@@ -229,7 +240,16 @@ const Facturas = () => {
                   </div>
                 ) : (
                   <div className="divide-y">
-                    {clientesPendientes.map((c) => (
+                    {clientesPendientes
+                      .filter((c) => {
+                        const q = filtroCliente.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          c.nombre?.toLowerCase().includes(q) ||
+                          c.ruc?.toLowerCase().includes(q)
+                        );
+                      })
+                      .map((c) => (
                       <button
                         key={c.cliente_id}
                         onClick={() => handleSeleccionarCliente(c)}
