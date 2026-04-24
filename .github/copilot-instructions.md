@@ -121,8 +121,9 @@ See [design_guidelines.json](../design_guidelines.json) for:
 4. Update sidebar in `Layout.js` with permission check
 
 ### Database migrations
-- **No Alembic currently used** - schema changes via `Base.metadata.create_all()`
-- For production, manually run SQL or add Alembic
+- **Raw SQL only** — all schema changes are applied manually via pgAdmin directly on the PostgreSQL database
+- Do NOT suggest SQLAlchemy migrations, Alembic, or `Base.metadata.create_all()` for schema changes
+- When a schema change is needed, provide the raw SQL `ALTER TABLE` / `CREATE TABLE` / etc. statement to run in pgAdmin
 
 ## Gotchas
 - **server.py size**: 3100 lines - prefer grep_search over full reads

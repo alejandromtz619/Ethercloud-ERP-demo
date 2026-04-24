@@ -3593,10 +3593,13 @@ async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Dep
     db.add(factura)
     await db.flush()
 
-    # Link ventas and mark as facturadas
+    # Link ventas and mark as facturadas (insert directly to avoid async lazy-load)
     for venta in ventas:
         venta.facturada = True
-        factura.ventas.append(venta)
+    await db.execute(
+        factura_grupal_ventas.insert(),
+        [{"factura_grupal_id": factura.id, "venta_id": v.id} for v in ventas]
+    )
 
     # Cobrar créditos pendientes de las boletas con tipo_pago CREDITO
     venta_ids_credito = [v.id for v in ventas if v.tipo_pago == TipoPago.CREDITO]
