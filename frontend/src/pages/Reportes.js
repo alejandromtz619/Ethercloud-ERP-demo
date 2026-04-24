@@ -517,7 +517,7 @@ const Reportes = () => {
                                   </Button>
                                 </PopoverTrigger>
                                 <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
-                                  <Command>
+                                  <Command shouldFilter={false}>
                                     <CommandInput
                                       placeholder="ID, nombre o RUC..."
                                       value={ventasClienteSearch}
