@@ -2414,7 +2414,7 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
 
 @api_router.get("/ventas/{venta_id}/factura")
 async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
-    """Generate factura data for printing"""
+    """Generate factura data for printing and mark the venta as facturada"""
     try:
         result = await db.execute(
             select(Venta, Cliente, Usuario, Empresa)
@@ -2433,6 +2433,11 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         # Check if client has RUC for factura
         if not cliente.ruc:
             raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+
+        # Mark as facturada so it no longer appears as pending in the Facturas module
+        if not venta.facturada:
+            venta.facturada = True
+            await db.commit()
         
         items_result = await db.execute(
             select(VentaItem, Producto, MateriaLaboratorio)
@@ -2609,6 +2614,11 @@ async def generar_enlace_documento(
             
             if not cliente.ruc:
                 raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+
+            # Mark as facturada so it no longer appears as pending in the Facturas module
+            if not venta_obj.facturada:
+                venta_obj.facturada = True
+                await db.commit()
             
             pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
             filename_prefix = f"factura_{venta_id}"
