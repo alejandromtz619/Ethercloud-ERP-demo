@@ -2112,7 +2112,7 @@ async def listar_ventas(
     if fecha_desde:
         query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
-        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta))
+        query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
@@ -5464,7 +5464,7 @@ async def reporte_historial_ventas(
     if fecha_desde:
         query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
-        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+        query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
@@ -5566,7 +5566,7 @@ async def reporte_historial_ventas_excel(
     if fecha_desde:
         query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
-        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+        query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
