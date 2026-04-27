@@ -54,6 +54,7 @@ const Ventas = () => {
   const [clientes, setClientes] = useState([]);
   const [productos, setProductos] = useState([]);
   const [materias, setMaterias] = useState([]);
+  const [searchMaterias, setSearchMaterias] = useState('');
   const [vehiculos, setVehiculos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   
@@ -812,9 +813,20 @@ const Ventas = () => {
               <>
                 <Separator className="my-4" />
                 <div>
-                  <h4 className="font-semibold mb-3">Materias de Laboratorio</h4>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold">Materias de Laboratorio</h4>
+                    <div className="relative w-48">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        className="pl-8 h-8 text-sm"
+                        placeholder="Buscar materia..."
+                        value={searchMaterias}
+                        onChange={(e) => setSearchMaterias(e.target.value)}
+                      />
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {materias.map((materia) => (
+                    {materias.filter(m => m.nombre.toLowerCase().includes(searchMaterias.toLowerCase())).map((materia) => (
                       <div
                         key={materia.id}
                         className="p-3 rounded-lg border border-dashed cursor-pointer hover:bg-secondary transition-colors"
