@@ -14,7 +14,8 @@ import {
 } from '../components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Input } from '../components/ui/input';
-import { FileText, Loader2, Printer, Users, ChevronRight, CheckSquare, Square, Search } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
+import { FileText, Loader2, Printer, Users, ChevronRight, CheckSquare, Square, Search, CreditCard, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
 import { FacturaPrint } from '../components/PrintModal';
 
@@ -45,6 +46,7 @@ const Facturas = () => {
   const [submitting, setSubmitting] = useState(false);
   const [facturaImpresionData, setFacturaImpresionData] = useState(null);
   const [filtroCliente, setFiltroCliente] = useState('');
+  const [modalTipoPago, setModalTipoPago] = useState(false);
   const facturaRef = useRef(null);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -143,12 +145,28 @@ const Facturas = () => {
   };
 
   // ── Generar factura grupal ─────────────────────────────────────────────────
-  const handleGenerarFactura = async () => {
+  const handleGenerarFactura = () => {
     if (!clienteSeleccionado) return;
     if (boletasSeleccionadas.size === 0) {
       toast.error('Seleccione al menos una boleta');
       return;
     }
+    setModalTipoPago(true);
+  };
+
+  const confirmarGenerarFactura = async (cobrarCredito) => {
+    setModalTipoPago(false);
+
+    // Validate: if credit mode, all selected boletas must be CREDITO
+    if (!cobrarCredito) {
+      const seleccionadas = boletasPendientes.filter((b) => boletasSeleccionadas.has(b.id));
+      const hayNoCredito = seleccionadas.some((b) => b.tipo_pago !== 'CREDITO');
+      if (hayNoCredito) {
+        toast.error('Para factura a crédito, todas las boletas seleccionadas deben ser de tipo CRÉDITO. Facture las boletas de contado por separado.');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const result = await api('/facturas/grupal', {
@@ -156,11 +174,12 @@ const Facturas = () => {
         body: JSON.stringify({
           empresa_id: empresa.id,
           cliente_id: clienteSeleccionado.cliente_id,
-          venta_ids: Array.from(boletasSeleccionadas)
+          venta_ids: Array.from(boletasSeleccionadas),
+          cobrar_credito: cobrarCredito
         })
       });
 
-      toast.success(`Factura ${result.numero} generada`);
+      toast.success(`Factura ${result.numero} generada${cobrarCredito ? ' (créditos cobrados)' : ' (sin cobrar crédito)'}`);
 
       const printData = await api(`/facturas/grupal/${result.id}/imprimir`);
       setFacturaImpresionData(printData);
@@ -192,6 +211,10 @@ const Facturas = () => {
   const totalSeleccionado = boletasPendientes
     .filter((b) => boletasSeleccionadas.has(b.id))
     .reduce((acc, b) => acc + b.total, 0);
+
+  const boletasSeleccionadasArr = boletasPendientes.filter((b) => boletasSeleccionadas.has(b.id));
+  const todasCredito = boletasSeleccionadasArr.length > 0 && boletasSeleccionadasArr.every((b) => b.tipo_pago === 'CREDITO');
+  const hayMixto = boletasSeleccionadasArr.some((b) => b.tipo_pago !== 'CREDITO') && boletasSeleccionadasArr.some((b) => b.tipo_pago === 'CREDITO');
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -429,6 +452,52 @@ const Facturas = () => {
       <div style={{ position: 'fixed', left: '-9999px', top: 0, pointerEvents: 'none' }}>
         <FacturaPrint ref={facturaRef} data={facturaImpresionData} />
       </div>
+
+      {/* Modal: selección tipo de factura */}
+      <Dialog open={modalTipoPago} onOpenChange={setModalTipoPago}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>¿Cómo desea generar la factura?</DialogTitle>
+            <DialogDescription>
+              Seleccione si desea cobrar los créditos pendientes o solo agrupar las boletas para enviarle al cliente.
+            </DialogDescription>
+          </DialogHeader>
+          {hayMixto && (
+            <div className="rounded-md bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 text-sm">
+              ⚠ Tiene boletas de distintos métodos de pago seleccionadas. La opción <strong>A Crédito</strong> no está disponible — solo puede usarse cuando todas las boletas son de crédito.
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3 py-2">
+            <button
+              onClick={() => confirmarGenerarFactura(true)}
+              className="flex flex-col items-center gap-2 rounded-lg border-2 border-primary/30 bg-primary/5 hover:border-primary hover:bg-primary/10 p-4 transition-colors text-center"
+            >
+              <Banknote className="h-8 w-8 text-primary" />
+              <span className="font-semibold text-sm">Al Contado</span>
+              <span className="text-xs text-muted-foreground">Cobra los créditos pendientes asociados a las boletas</span>
+            </button>
+            <button
+              disabled={!todasCredito}
+              onClick={() => todasCredito && confirmarGenerarFactura(false)}
+              className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors text-center ${
+                todasCredito
+                  ? 'border-orange-300 bg-orange-50 hover:border-orange-500 hover:bg-orange-100 cursor-pointer'
+                  : 'border-muted bg-muted/30 opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <CreditCard className="h-8 w-8 text-orange-500" />
+              <span className="font-semibold text-sm">A Crédito</span>
+              <span className="text-xs text-muted-foreground">Agrupa las boletas sin cobrar el crédito. El cliente lo pagará luego.</span>
+              {!todasCredito && (
+                <span className="text-xs text-destructive font-medium">Solo disponible si todas las boletas son de crédito</span>
+              )}
+            </button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setModalTipoPago(false)}>Cancelar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

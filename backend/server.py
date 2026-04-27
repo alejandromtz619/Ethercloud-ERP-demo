@@ -3571,6 +3571,15 @@ async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Dep
     if len(ventas) != len(data.venta_ids):
         raise HTTPException(status_code=400, detail="Algunas boletas no son válidas o ya fueron facturadas")
 
+    # Si es factura a crédito (sin cobrar), todas las boletas deben ser CREDITO
+    if not data.cobrar_credito:
+        no_credito = [v.id for v in ventas if v.tipo_pago != TipoPago.CREDITO]
+        if no_credito:
+            raise HTTPException(
+                status_code=400,
+                detail="Para generar factura a crédito todas las boletas seleccionadas deben ser de tipo CRÉDITO. Separe las boletas de contado y fáctúrelas por separado."
+            )
+
     # Calculate totals
     total = sum(v.total for v in ventas)
     base_imponible = total / Decimal('1.10')
@@ -3601,26 +3610,27 @@ async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Dep
         [{"factura_grupal_id": factura.id, "venta_id": v.id} for v in ventas]
     )
 
-    # Cobrar créditos pendientes de las boletas con tipo_pago CREDITO
-    venta_ids_credito = [v.id for v in ventas if v.tipo_pago == TipoPago.CREDITO]
-    if venta_ids_credito:
-        creditos_result = await db.execute(
-            select(CreditoCliente).where(
-                CreditoCliente.venta_id.in_(venta_ids_credito),
-                CreditoCliente.pagado == False
+    # Cobrar créditos pendientes de las boletas con tipo_pago CREDITO (solo si se pidió cobrar)
+    if data.cobrar_credito:
+        venta_ids_credito = [v.id for v in ventas if v.tipo_pago == TipoPago.CREDITO]
+        if venta_ids_credito:
+            creditos_result = await db.execute(
+                select(CreditoCliente).where(
+                    CreditoCliente.venta_id.in_(venta_ids_credito),
+                    CreditoCliente.pagado == False
+                )
             )
-        )
-        creditos_pendientes = creditos_result.scalars().all()
-        for credito in creditos_pendientes:
-            pago = PagoCredito(
-                credito_id=credito.id,
-                monto=credito.monto_pendiente,
-                observacion=f"Cobrado al facturar {factura.numero}",
-                fecha_pago=now_paraguay()
-            )
-            db.add(pago)
-            credito.monto_pendiente = Decimal('0')
-            credito.pagado = True
+            creditos_pendientes = creditos_result.scalars().all()
+            for credito in creditos_pendientes:
+                pago = PagoCredito(
+                    credito_id=credito.id,
+                    monto=credito.monto_pendiente,
+                    observacion=f"Cobrado al facturar {factura.numero}",
+                    fecha_pago=now_paraguay()
+                )
+                db.add(pago)
+                credito.monto_pendiente = Decimal('0')
+                credito.pagado = True
 
     await db.commit()
     await db.refresh(factura)

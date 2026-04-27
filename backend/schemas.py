@@ -580,6 +580,7 @@ class FacturaGrupalCreate(BaseModel):
     empresa_id: int
     cliente_id: int
     venta_ids: List[int]
+    cobrar_credito: bool = True
 
 class FacturaGrupalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
