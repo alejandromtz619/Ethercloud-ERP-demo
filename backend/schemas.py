@@ -588,6 +588,7 @@ class FacturaGrupalResponse(BaseModel):
     empresa_id: int
     cliente_id: int
     numero: str
+    condicion: str = 'CONTADO'
     total: Decimal
     iva: Decimal
     creado_en: Optional[datetime] = None

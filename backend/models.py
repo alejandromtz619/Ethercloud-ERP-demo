@@ -533,6 +533,7 @@ class FacturaGrupal(Base):
     empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
     numero = Column(String(50), nullable=False)
+    condicion = Column(String(10), nullable=False, default='CONTADO')  # CONTADO o CREDITO
     total = Column(Numeric(15, 2), nullable=False)
     iva = Column(Numeric(15, 2), nullable=False)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)

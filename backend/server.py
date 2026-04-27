@@ -3591,10 +3591,12 @@ async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Dep
     numero = f"FG-{(count + 1):07d}"
 
     # Create factura grupal
+    condicion = 'CREDITO' if not data.cobrar_credito else 'CONTADO'
     factura = FacturaGrupal(
         empresa_id=data.empresa_id,
         cliente_id=data.cliente_id,
         numero=numero,
+        condicion=condicion,
         total=total,
         iva=iva,
         creado_en=now_paraguay()
@@ -3668,7 +3670,7 @@ async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(ge
         'tipo': 'FACTURA',
         'numero': factura.numero,
         'fecha': factura.creado_en.strftime('%d de %B de %Y'),
-        'condicion': 'CONTADO',
+        'condicion': factura.condicion or 'CONTADO',
         'empresa': {
             'nombre': factura.empresa.nombre,
             'ruc': factura.empresa.ruc,
