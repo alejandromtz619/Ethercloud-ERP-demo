@@ -24,7 +24,7 @@ const PRINT_CSS = `
   body { margin: 0; padding: 0; background: white; }
   .factura-print { margin: 0; padding: 0; page-break-after: always; }
   @media print {
-    @page { size: 240mm 200mm; margin: 0; }
+    @page { size: auto; margin: 15mm 8mm 10mm 8mm; }
     body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .factura-print { width: 240mm !important; height: 200mm !important; margin: 0 !important; padding: 0 !important; }
   }
