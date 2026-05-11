@@ -1696,7 +1696,7 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
         item_total = Decimal(str(item.cantidad)) * item.precio_unitario
         subtotal += item_total
 
-        # Fetch precio_costo for product items
+        # Fetch precio_costo: productos usan costo real, materias laboratorio usan 70% del precio (30% ganancia fija)
         precio_costo = Decimal('0')
         if item.producto_id:
             prod_costo_res = await db.execute(
@@ -1704,6 +1704,8 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
             )
             raw_costo = prod_costo_res.scalar_one_or_none()
             precio_costo = Decimal(str(raw_costo or 0))
+        elif item.materia_laboratorio_id:
+            precio_costo = item.precio_unitario * Decimal('0.70')
         costo_total += Decimal(str(item.cantidad)) * precio_costo
 
         items_data.append({
@@ -1921,7 +1923,7 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
             item_total = Decimal(str(item.cantidad)) * item.precio_unitario
             subtotal += item_total
 
-            # Fetch precio_costo for product items
+            # Fetch precio_costo: productos usan costo real, materias laboratorio usan 70% del precio (30% ganancia fija)
             precio_costo = Decimal('0')
             if item.producto_id:
                 prod_costo_res = await db.execute(
@@ -1929,6 +1931,8 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
                 )
                 raw_costo = prod_costo_res.scalar_one_or_none()
                 precio_costo = Decimal(str(raw_costo or 0))
+            elif item.materia_laboratorio_id:
+                precio_costo = item.precio_unitario * Decimal('0.70')
             costo_total += Decimal(str(item.cantidad)) * precio_costo
             
             venta_item = VentaItem(
