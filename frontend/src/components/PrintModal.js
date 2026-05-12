@@ -175,7 +175,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
         <span style={{ position: 'absolute', left: '120mm', fontSize: '14px' }}>{anio}</span>
         {/* Marca X en Contado o Crédito */}
         <span style={{ position: 'absolute', left: '183mm', fontSize: '16px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
-        <span style={{ position: 'absolute', left: '211mm', fontSize: '16px', fontWeight: '900' }}>{esCredito ? 'X' : ''}</span>
+        <span style={{ position: 'absolute', left: '211mm', fontSize: '16px', fontWeight: '900' }}>{esCredito ? 'XX' : ''}</span>
       </div>
 
       {/* ═══ NOMBRE DEL CLIENTE + CI/RUC ═══ */}
@@ -210,7 +210,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
           }}>
             {/* Cantidad */}
             <span style={{ position: 'absolute', left: '17mm', width: '14mm', textAlign: 'center' }}>
-              {item.cantidad}
+              {item.es_continuacion ? '' : item.cantidad}
             </span>
             {/* Descripción */}
             <span style={{ position: 'absolute', left: '31mm', width: '80mm', textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
@@ -218,19 +218,19 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
             </span>
             {/* Precio Unitario */}
             <span style={{ position: 'absolute', left: '102mm', width: '28mm', textAlign: 'right' }}>
-              {fmt(item.precio_unitario)}
+              {item.es_continuacion ? '' : fmt(item.precio_unitario)}
             </span>
             {/* Exentas */}
             <span style={{ position: 'absolute', left: '142mm', width: '24mm', textAlign: 'right' }}>
-              {item.exenta || 0}
+              {item.es_continuacion ? '' : (item.exenta || 0)}
             </span>
             {/* 5% */}
             <span style={{ position: 'absolute', left: '168mm', width: '24mm', textAlign: 'right' }}>
-              {item.iva_5 || 0}
+              {item.es_continuacion ? '' : (item.iva_5 || 0)}
             </span>
             {/* 10% */}
             <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
-              {fmt(item.iva_10)}
+              {item.es_continuacion ? '' : fmt(item.iva_10)}
             </span>
           </div>
         ))}

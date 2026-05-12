@@ -47,6 +47,8 @@ const Facturas = () => {
   const [facturaImpresionData, setFacturaImpresionData] = useState(null);
   const [filtroCliente, setFiltroCliente] = useState('');
   const [modalTipoPago, setModalTipoPago] = useState(false);
+  const [limitarBoletas, setLimitarBoletas] = useState(true);
+  const LIMITE_BOLETAS = 50;
   const facturaRef = useRef(null);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -119,7 +121,13 @@ const Facturas = () => {
         `/facturas/boletas-pendientes/${cliente.cliente_id}?empresa_id=${empresa.id}`
       );
       setBoletasPendientes(data);
-      setBoletasSeleccionadas(new Set(data.map((b) => b.id)));
+      const ids = data.map((b) => b.id);
+      if (limitarBoletas && ids.length > LIMITE_BOLETAS) {
+        setBoletasSeleccionadas(new Set(ids.slice(0, LIMITE_BOLETAS)));
+        toast.info(`Se seleccionaron las primeras ${LIMITE_BOLETAS} boletas (límite activo)`);
+      } else {
+        setBoletasSeleccionadas(new Set(ids));
+      }
     } catch (e) {
       toast.error('Error al cargar boletas del cliente');
     } finally {
@@ -130,8 +138,15 @@ const Facturas = () => {
   const toggleBoleta = (id) => {
     setBoletasSeleccionadas((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (limitarBoletas && next.size >= LIMITE_BOLETAS) {
+          toast.warning(`Límite de ${LIMITE_BOLETAS} boletas activo. Desactívelo para seleccionar más.`);
+          return prev;
+        }
+        next.add(id);
+      }
       return next;
     });
   };
@@ -140,7 +155,13 @@ const Facturas = () => {
     if (boletasSeleccionadas.size === boletasPendientes.length) {
       setBoletasSeleccionadas(new Set());
     } else {
-      setBoletasSeleccionadas(new Set(boletasPendientes.map((b) => b.id)));
+      const ids = boletasPendientes.map((b) => b.id);
+      if (limitarBoletas && ids.length > LIMITE_BOLETAS) {
+        setBoletasSeleccionadas(new Set(ids.slice(0, LIMITE_BOLETAS)));
+        toast.info(`Se seleccionaron las primeras ${LIMITE_BOLETAS} boletas (límite activo)`);
+      } else {
+        setBoletasSeleccionadas(new Set(ids));
+      }
     }
   };
 
@@ -309,15 +330,28 @@ const Facturas = () => {
                     <FileText className="h-4 w-4" />
                     {clienteSeleccionado ? `Boletas de ${clienteSeleccionado.nombre}` : 'Seleccione un cliente'}
                   </span>
-                  {boletasPendientes.length > 0 && (
-                    <Button variant="ghost" size="sm" onClick={toggleTodas} className="h-7 text-xs">
-                      {boletasSeleccionadas.size === boletasPendientes.length ? (
-                        <><CheckSquare className="h-3 w-3 mr-1" />Deseleccionar todas</>
-                      ) : (
-                        <><Square className="h-3 w-3 mr-1" />Seleccionar todas</>
-                      )}
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setLimitarBoletas((v) => !v)}
+                      title={limitarBoletas ? 'Límite de 50 boletas activo. Clic para desactivar.' : 'Límite desactivado. Clic para activar.'}
+                      className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium border transition-colors ${
+                        limitarBoletas
+                          ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
+                          : 'bg-muted border-muted-foreground/30 text-muted-foreground hover:bg-accent'
+                      }`}
+                    >
+                      {limitarBoletas ? '⚠ Límite: 50' : 'Sin límite'}
+                    </button>
+                    {boletasPendientes.length > 0 && (
+                      <Button variant="ghost" size="sm" onClick={toggleTodas} className="h-7 text-xs">
+                        {boletasSeleccionadas.size === boletasPendientes.length ? (
+                          <><CheckSquare className="h-3 w-3 mr-1" />Deseleccionar todas</>
+                        ) : (
+                          <><Square className="h-3 w-3 mr-1" />Seleccionar todas</>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent>

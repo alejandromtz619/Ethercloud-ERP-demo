@@ -3648,15 +3648,33 @@ async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(ge
     if not factura:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
 
+    ventas_sorted = sorted(factura.ventas, key=lambda v: v.id)
+    nums_boletas = [f"#{v.id}" for v in ventas_sorted]
+    total_general = float(factura.total)
+    NUMS_POR_LINEA = 6
+
     items = []
-    for venta in sorted(factura.ventas, key=lambda v: v.id):
+    # Fila principal: descripción + total agrupado
+    items.append({
+        'cantidad': 1,
+        'descripcion': 'Compras de insumos y materiales',
+        'precio_unitario': total_general,
+        'exenta': 0,
+        'iva_5': 0,
+        'iva_10': total_general
+    })
+    # Filas de continuación con los números de boletas agrupados
+    for i in range(0, len(nums_boletas), NUMS_POR_LINEA):
+        chunk = nums_boletas[i:i + NUMS_POR_LINEA]
+        prefix = 'Boletas: ' if i == 0 else ''
         items.append({
-            'cantidad': 1,
-            'descripcion': f"Compra de insumo y materiales Boleta #{venta.id}",
-            'precio_unitario': float(venta.total),
-            'exenta': 0,
-            'iva_5': 0,
-            'iva_10': float(venta.total)
+            'cantidad': '',
+            'descripcion': prefix + ' '.join(chunk),
+            'precio_unitario': None,
+            'exenta': None,
+            'iva_5': None,
+            'iva_10': None,
+            'es_continuacion': True
         })
 
     iva_10 = round(float(factura.iva), 0)
