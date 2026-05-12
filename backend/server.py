@@ -1294,6 +1294,17 @@ async def actualizar_materia_laboratorio(materia_id: int, data: MateriaLaborator
     await db.refresh(materia)
     return materia
 
+@api_router.delete("/materias-laboratorio/{materia_id}", status_code=204)
+async def eliminar_materia_laboratorio(materia_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if materia.estado != EstadoMateria.DISPONIBLE:
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar materias con estado DISPONIBLE")
+    await db.delete(materia)
+    await db.commit()
+
 # ==================== ALMACENES ====================
 @api_router.post("/almacenes", response_model=AlmacenResponse)
 async def crear_almacen(data: AlmacenCreate, db: AsyncSession = Depends(get_db)):

@@ -22,7 +22,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { FlaskConical, Plus, Loader2, Printer, Pencil, Search } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
+import { FlaskConical, Plus, Loader2, Printer, Pencil, Search, Trash2 } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -49,6 +59,9 @@ const Laboratorio = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterEstado, setFilterEstado] = useState('todos');
   const [sortOrder, setSortOrder] = useState('newest');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteMateria, setDeleteMateria] = useState(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const barcodeRef = useRef(null);
   
   const [formData, setFormData] = useState({
@@ -139,6 +152,26 @@ const Laboratorio = () => {
     setPrintMateria(materia);
     setPrintDialogOpen(true);
   }, []);
+
+  const handleDeleteOpen = (materia) => {
+    setDeleteMateria(materia);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteMateria) return;
+    setDeleteSubmitting(true);
+    try {
+      await api(`/materias-laboratorio/${deleteMateria.id}`, { method: 'DELETE' });
+      toast.success('Materia eliminada');
+      setDeleteDialogOpen(false);
+      fetchMaterias();
+    } catch (e) {
+      toast.error(e.message || 'Error al eliminar materia');
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  };
 
   const handleEditOpen = (materia) => {
     setEditMateria(materia);
@@ -459,6 +492,17 @@ const Laboratorio = () => {
                       >
                         <Printer className="h-4 w-4" />
                       </Button>
+                      {materia.estado === 'DISPONIBLE' && hasPermission('laboratorio.eliminar') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteOpen(materia)}
+                          title="Eliminar materia"
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -467,6 +511,29 @@ const Laboratorio = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar materia?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará permanentemente <strong>{deleteMateria?.nombre}</strong>. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSubmitting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleteSubmitting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
