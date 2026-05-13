@@ -261,6 +261,8 @@ export const AppProvider = ({ children }) => {
         throw new Error(errorMessage);
       }
       
+      // 204 No Content — no body to parse
+      if (res.status === 204) return null;
       return await res.json();
     } catch (error) {
       // Network errors or fetch failures
