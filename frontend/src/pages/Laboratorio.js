@@ -164,8 +164,8 @@ const Laboratorio = () => {
     try {
       await api(`/materias-laboratorio/${deleteMateria.id}`, { method: 'DELETE' });
       toast.success('Materia eliminada');
+      setMaterias(prev => prev.filter(m => m.id !== deleteMateria.id));
       setDeleteDialogOpen(false);
-      fetchMaterias();
     } catch (e) {
       toast.error(e.message || 'Error al eliminar materia');
     } finally {

@@ -196,13 +196,13 @@ const Ventas = () => {
         return;
       }
       
-      setCart([...cart, {
+      setCart([{
         materia_laboratorio_id: item.id,
         nombre: item.nombre,
         cantidad: 1,
         precio_unitario: parseFloat(item.precio),
         observaciones: ''
-      }]);
+      }, ...cart]);
       
       // Warning when approaching limit
       if (cart.length >= 7) {
@@ -234,7 +234,7 @@ const Ventas = () => {
           return;
         }
         
-        setCart([...cart, {
+        setCart([{
           producto_id: item.id,
           nombre: item.nombre,
           cantidad: 1,
@@ -242,7 +242,7 @@ const Ventas = () => {
           precio_costo: parseFloat(item.precio_costo) || 0,
           stock_disponible: item.stock_total,
           observaciones: ''
-        }]);
+        }, ...cart]);
         
         // Warning when approaching limit
         if (cart.length >= 7) {
