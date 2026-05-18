@@ -70,7 +70,6 @@ const Ventas = () => {
   
   const [searchCliente, setSearchCliente] = useState('');
   const [searchProducto, setSearchProducto] = useState('');
-  const [barcodeInput, setBarcodeInput] = useState('');
   
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -268,7 +267,7 @@ const Ventas = () => {
       const product = productos.find(p => p.codigo_barra === code);
       if (product) {
         addToCart(product, 'producto');
-        setBarcodeInput('');
+        setSearchProducto('');
         return;
       }
       
@@ -276,7 +275,7 @@ const Ventas = () => {
       const materia = materias.find(m => m.codigo_barra === code);
       if (materia) {
         addToCart(materia, 'materia');
-        setBarcodeInput('');
+        setSearchProducto('');
         return;
       }
       
@@ -286,17 +285,7 @@ const Ventas = () => {
     }
   }, [productos, materias, selectedCliente, addToCart]);
 
-  // Handle barcode input (USB scanner sends Enter key)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Enter' && barcodeInput) {
-        handleBarcodeSearch(barcodeInput);
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [barcodeInput, handleBarcodeSearch]);
+
 
   const updateCartItem = (index, field, value) => {
     const newCart = [...cart];
@@ -695,34 +684,19 @@ const Ventas = () => {
           </CardContent>
         </Card>
 
-        {/* Barcode Scanner */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="relative">
-              <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Escanear código de barras..."
-                className="pl-9 font-mono"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                data-testid="barcode-input"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Products Grid */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle>Productos</CardTitle>
-              <div className="relative w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <div className="relative w-72">
+                <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nombre o ID..."
+                  placeholder="Buscar por nombre, ID o código de barras..."
                   className="pl-9"
                   value={searchProducto}
                   onChange={(e) => setSearchProducto(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && searchProducto) handleBarcodeSearch(searchProducto); }}
                   data-testid="search-producto"
                 />
               </div>
