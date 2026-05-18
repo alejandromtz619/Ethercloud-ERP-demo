@@ -101,7 +101,7 @@ const HistorialVentas = () => {
       if (filters.estado && filters.estado !== 'all') endpoint += `&estado=${filters.estado}`;
       if (filters.monto_min) endpoint += `&monto_min=${filters.monto_min}`;
       if (filters.monto_max) endpoint += `&monto_max=${filters.monto_max}`;
-      if (newLimit && newLimit > 0) endpoint += `&limit=${newLimit}`;
+      endpoint += `&limit=${newLimit}`;
       const data = await api(endpoint);
       setVentas(data);
     } catch (e) {
@@ -124,7 +124,7 @@ const HistorialVentas = () => {
       if (filters.estado && filters.estado !== 'all') endpoint += `&estado=${filters.estado}`;
       if (filters.monto_min) endpoint += `&monto_min=${filters.monto_min}`;
       if (filters.monto_max) endpoint += `&monto_max=${filters.monto_max}`;
-      if (limit && limit > 0) endpoint += `&limit=${limit}`;
+      endpoint += `&limit=${limit}`;
       
       const data = await api(endpoint);
       setVentas(data);
