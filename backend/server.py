@@ -2115,6 +2115,7 @@ async def listar_ventas(
     estado: Optional[str] = None,
     monto_min: Optional[float] = None,
     monto_max: Optional[float] = None,
+    limit: Optional[int] = 100,
     db: AsyncSession = Depends(get_db)
 ):
     query = (
@@ -2141,6 +2142,9 @@ async def listar_ventas(
         query = query.where(Venta.total >= monto_min)
     if monto_max:
         query = query.where(Venta.total <= monto_max)
+    
+    if limit and limit > 0:
+        query = query.limit(limit)
     
     result = await db.execute(query)
     ventas = []

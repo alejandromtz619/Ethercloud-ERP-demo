@@ -82,10 +82,34 @@ const HistorialVentas = () => {
     monto_max: '',
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [limit, setLimit] = useState(100);
   const [clienteSearch, setClienteSearch] = useState('');
   const [usuarioSearch, setUsuarioSearch] = useState('');
   const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
   const [usuarioPopoverOpen, setUsuarioPopoverOpen] = useState(false);
+
+  const fetchVentasWithLimit = async (newLimit) => {
+    setLimit(newLimit);
+    if (!empresa?.id) return;
+    setLoading(true);
+    try {
+      let endpoint = `/ventas?empresa_id=${empresa.id}`;
+      if (filters.fecha_desde) endpoint += `&fecha_desde=${filters.fecha_desde}`;
+      if (filters.fecha_hasta) endpoint += `&fecha_hasta=${filters.fecha_hasta}`;
+      if (filters.cliente_id && filters.cliente_id !== 'all') endpoint += `&cliente_id=${filters.cliente_id}`;
+      if (filters.usuario_id && filters.usuario_id !== 'all') endpoint += `&usuario_id=${filters.usuario_id}`;
+      if (filters.estado && filters.estado !== 'all') endpoint += `&estado=${filters.estado}`;
+      if (filters.monto_min) endpoint += `&monto_min=${filters.monto_min}`;
+      if (filters.monto_max) endpoint += `&monto_max=${filters.monto_max}`;
+      if (newLimit && newLimit > 0) endpoint += `&limit=${newLimit}`;
+      const data = await api(endpoint);
+      setVentas(data);
+    } catch (e) {
+      toast.error('Error al cargar ventas');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchVentas = async () => {
     if (!empresa?.id) return;
@@ -100,6 +124,7 @@ const HistorialVentas = () => {
       if (filters.estado && filters.estado !== 'all') endpoint += `&estado=${filters.estado}`;
       if (filters.monto_min) endpoint += `&monto_min=${filters.monto_min}`;
       if (filters.monto_max) endpoint += `&monto_max=${filters.monto_max}`;
+      if (limit && limit > 0) endpoint += `&limit=${limit}`;
       
       const data = await api(endpoint);
       setVentas(data);
@@ -266,7 +291,7 @@ const HistorialVentas = () => {
           <h1 className="text-2xl font-bold">Historial de Ventas</h1>
           <p className="text-muted-foreground">Consulta y reimpresión de documentos</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button 
             variant="outline" 
             onClick={() => setShowFilters(!showFilters)}
@@ -275,6 +300,22 @@ const HistorialVentas = () => {
             <Filter className="mr-2 h-4 w-4" />
             {showFilters ? 'Ocultar Filtros' : 'Mostrar Filtros'}
           </Button>
+          <div className="flex rounded-md border border-input overflow-hidden">
+            {[{label: '100', value: 100}, {label: '200', value: 200}, {label: 'Todo', value: 0}].map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => fetchVentasWithLimit(opt.value)}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  limit === opt.value
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-background text-foreground hover:bg-muted'
+                } border-r border-input last:border-r-0`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <Button 
             variant="outline"
             onClick={handleDescargarExcel}
@@ -482,7 +523,7 @@ const HistorialVentas = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
-            Ventas ({ventas.length})
+            Ventas ({ventas.length}{limit > 0 ? ` — últimos ${limit}` : ''})
           </CardTitle>
         </CardHeader>
         <CardContent>
