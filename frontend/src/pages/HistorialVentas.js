@@ -300,21 +300,24 @@ const HistorialVentas = () => {
             <Filter className="mr-2 h-4 w-4" />
             {showFilters ? 'Ocultar Filtros' : 'Mostrar Filtros'}
           </Button>
-          <div className="flex rounded-md border border-input overflow-hidden">
-            {[{label: '100', value: 100}, {label: '200', value: 200}, {label: 'Todo', value: 0}].map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => fetchVentasWithLimit(opt.value)}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                  limit === opt.value
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-background text-foreground hover:bg-muted'
-                } border-r border-input last:border-r-0`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">Boletas a cargar:</span>
+            <div className="flex rounded-md border border-input overflow-hidden">
+              {[{label: '100', value: 100}, {label: '200', value: 200}, {label: 'Todo', value: 0}].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => fetchVentasWithLimit(opt.value)}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    limit === opt.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-foreground hover:bg-muted'
+                  } border-r border-input last:border-r-0`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
           <Button 
             variant="outline"
@@ -644,6 +647,18 @@ const HistorialVentas = () => {
                   })}
                 </TableBody>
               </Table>
+            </div>
+          )}
+          {limit > 0 && ventas.length >= limit && (
+            <div className="flex justify-center pt-4 pb-2">
+              <Button
+                variant="outline"
+                onClick={() => fetchVentasWithLimit(limit + 100)}
+                disabled={loading}
+              >
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Cargar 100 más
+              </Button>
             </div>
           )}
         </CardContent>
