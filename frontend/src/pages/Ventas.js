@@ -956,11 +956,16 @@ const Ventas = () => {
             <div className="space-y-3">
               <div>
                 <Label>Tipo de Pago</Label>
-                <Select value={tipoPago} onValueChange={setTipoPago}>
+                <Select value={crearPendiente ? 'PENDIENTE' : tipoPago} onValueChange={(val) => { if (val === 'PENDIENTE') { setCrearPendiente(true); } else { setCrearPendiente(false); setTipoPago(val); } }}>
                   <SelectTrigger data-testid="tipo-pago-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    {!isEditMode && (
+                      <SelectItem value="PENDIENTE" className="text-yellow-600 dark:text-yellow-400 font-semibold bg-yellow-50 dark:bg-yellow-950/40 focus:bg-yellow-100 dark:focus:bg-yellow-900/50">
+                        ⏳ Pendiente — Solo Presupuesto
+                      </SelectItem>
+                    )}
                     <SelectItem value="EFECTIVO">Efectivo</SelectItem>
                     <SelectItem value="TARJETA">Tarjeta</SelectItem>
                     <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
@@ -985,19 +990,7 @@ const Ventas = () => {
                 )}
               </div>
 
-              {/* Crear como Pendiente Option - Solo visible en modo creación */}
-              {!isEditMode && (
-                <div className="flex items-center space-x-2 bg-yellow-50 dark:bg-yellow-950/30 p-2 rounded border border-yellow-200 dark:border-yellow-800">
-                  <Checkbox
-                    id="crearPendiente"
-                    checked={crearPendiente}
-                    onCheckedChange={setCrearPendiente}
-                  />
-                  <Label htmlFor="crearPendiente" className="text-sm text-yellow-900 dark:text-yellow-100">
-                    Crear como venta pendiente (sin confirmar pago)
-                  </Label>
-                </div>
-              )}
+
 
               {/* Delivery Option */}
               <div className="flex items-center space-x-2">
