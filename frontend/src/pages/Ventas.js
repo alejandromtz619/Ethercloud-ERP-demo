@@ -412,8 +412,8 @@ const Ventas = () => {
       toast.error('Este cliente no tiene crédito habilitado. Asigne un límite de crédito mayor a 0.');
       return;
     }
-    // If cash payment, open cash modal
-    if (tipoPago === 'EFECTIVO') {
+    // If cash payment and NOT pendiente, open cash modal
+    if (tipoPago === 'EFECTIVO' && !crearPendiente) {
       setMontoPagado('');
       setVuelto(0);
       setCashModalOpen(true);
