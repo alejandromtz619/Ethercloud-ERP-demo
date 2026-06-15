@@ -2404,6 +2404,7 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
             'tipo': 'BOLETA',
             'numero': venta.id,
             'fecha': creado_en_py.strftime('%d/%m/%Y %I:%M %p'),
+            'estado': venta.estado.value if venta.estado else 'BORRADOR',
             'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
                 'nombre': empresa.nombre,
@@ -2861,7 +2862,7 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
         ['Telefono:', cliente.telefono or '0'],
         ['Ruc:', cliente.ruc or '0'],
         ['Fecha de Venta:', venta.creado_en.strftime('%d/%m/%Y %I:%M %p')],
-        ['Tipo Comprob:', venta.tipo_pago.value if venta.tipo_pago else 'CONTADO']
+        ['Tipo Comprob:', 'SOLO PRESUPUESTO' if venta.estado and venta.estado.value == 'PENDIENTE' else (venta.tipo_pago.value if venta.tipo_pago else 'CONTADO')]
     ]
     
     # Ajuste de columnas para ancho de 75mm (rollo térmico)
@@ -2961,9 +2962,12 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
     elements.append(Paragraph('_' * 40, firma_style))
     elements.append(Paragraph('<b>Firma Cliente</b>', firma_style))
     elements.append(Spacer(1, 2*mm))
-    
+
     footer_style = ParagraphStyle('Footer', fontName='Courier', fontSize=7, alignment=TA_CENTER, fontStyle='italic')
-    elements.append(Paragraph('<b>Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.</b>', footer_style))
+    if venta.estado and venta.estado.value == 'PENDIENTE':
+        elements.append(Paragraph('<b>Este documento es solo una cotizacion, la venta no esta confirmada y no es valida en stock ni credito del cliente.</b>', footer_style))
+    else:
+        elements.append(Paragraph('<b>Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.</b>', footer_style))
     
     # Calcular altura dinámica según cantidad de filas para rollo continuo
     rows_count = max(1, len(items_data))

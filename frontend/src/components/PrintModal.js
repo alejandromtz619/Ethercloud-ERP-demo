@@ -47,7 +47,7 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
         <span>Fecha: {data.fecha}</span>
-        <span>Tipo Comprob: {data.tipo_pago}</span>
+        <span>Tipo Comprob: {data.estado === 'PENDIENTE' ? 'SOLO PRESUPUESTO' : data.tipo_pago}</span>
       </div>
 
       <div style={{ borderTop: '1px dashed black', margin: '3px 0' }} />
@@ -97,8 +97,14 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
       <div style={{ marginTop: '8px' }}>
         <div style={{ marginBottom: '2px' }}>________________________________</div>
         <div>Firma Cliente</div>
-        <div style={{ marginTop: '5px', fontSize: '9px' }}>Favor Confirmar Su Mercaderia al recibirla.</div>
-        <div style={{ fontSize: '9px' }}>No Aceptamos Reclamos Posteriores.</div>
+        {data.estado === 'PENDIENTE' ? (
+          <div style={{ marginTop: '5px', fontSize: '9px' }}>Este documento es solo una cotizacion, la venta no esta confirmada y no es valida en stock ni credito del cliente.</div>
+        ) : (
+          <>
+            <div style={{ marginTop: '5px', fontSize: '9px' }}>Favor Confirmar Su Mercaderia al recibirla.</div>
+            <div style={{ fontSize: '9px' }}>No Aceptamos Reclamos Posteriores.</div>
+          </>
+        )}
       </div>
     </div>
   );
