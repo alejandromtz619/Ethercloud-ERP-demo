@@ -88,7 +88,7 @@ const Ventas = () => {
   useEffect(() => {
     const fetchData = async () => {
       if (!empresa?.id) return;
-      
+
       try {
         const [clientesData, productosData, materiasData, vehiculosData, usuariosData] = await Promise.all([
           api(`/clientes?empresa_id=${empresa.id}`),
@@ -97,7 +97,7 @@ const Ventas = () => {
           api(`/vehiculos?empresa_id=${empresa.id}`),
           api(`/usuarios?empresa_id=${empresa.id}`)
         ]);
-        
+
         setClientes(clientesData);
         setProductos(productosData);
         setMaterias(materiasData);
@@ -110,9 +110,27 @@ const Ventas = () => {
         setLoading(false);
       }
     };
-    
+
     fetchData();
   }, [empresa?.id, api]);
+
+  // Silent background refresh of products/materials to pick up changes from other PCs
+  const refreshProductosAndMaterias = useCallback(async () => {
+    if (!empresa?.id) return;
+    try {
+      const [productosData, materiasData] = await Promise.all([
+        api(`/productos?empresa_id=${empresa.id}`),
+        api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`)
+      ]);
+      setProductos(productosData);
+      setMaterias(materiasData);
+    } catch (_) {}
+  }, [empresa?.id, api]);
+
+  useEffect(() => {
+    const id = setInterval(refreshProductosAndMaterias, 45000);
+    return () => clearInterval(id);
+  }, [refreshProductosAndMaterias]);
 
   // Load existing sale if editing
   useEffect(() => {
@@ -256,34 +274,55 @@ const Ventas = () => {
   // Barcode scanner handler
   const handleBarcodeSearch = useCallback(async (code) => {
     if (!code.trim()) return;
-    
+
     if (!selectedCliente) {
       toast.error('Primero seleccione un cliente');
       return;
     }
-    
+
     try {
-      // Try product first
+      // Try local cache first
       const product = productos.find(p => p.codigo_barra === code);
       if (product) {
         addToCart(product, 'producto');
         setSearchProducto('');
         return;
       }
-      
-      // Try materia
+
       const materia = materias.find(m => m.codigo_barra === code);
       if (materia) {
         addToCart(materia, 'materia');
         setSearchProducto('');
         return;
       }
-      
+
+      // Not in cache — fetch fresh data (handles products added from another PC)
+      const [freshProductos, freshMaterias] = await Promise.all([
+        api(`/productos?empresa_id=${empresa.id}`),
+        api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`)
+      ]);
+      setProductos(freshProductos);
+      setMaterias(freshMaterias);
+
+      const freshProduct = freshProductos.find(p => p.codigo_barra === code);
+      if (freshProduct) {
+        addToCart(freshProduct, 'producto');
+        setSearchProducto('');
+        return;
+      }
+
+      const freshMateria = freshMaterias.find(m => m.codigo_barra === code);
+      if (freshMateria) {
+        addToCart(freshMateria, 'materia');
+        setSearchProducto('');
+        return;
+      }
+
       toast.error('Producto no encontrado');
     } catch (e) {
       toast.error('Error al buscar producto');
     }
-  }, [productos, materias, selectedCliente, addToCart]);
+  }, [productos, materias, selectedCliente, addToCart, empresa?.id, api]);
 
 
 
@@ -538,11 +577,24 @@ const Ventas = () => {
   };
 
   // Filter products
-  const filteredProductos = productos.filter(p => 
+  const filteredProductos = productos.filter(p =>
     p.nombre.toLowerCase().includes(searchProducto.toLowerCase()) ||
     p.codigo_barra?.toLowerCase().includes(searchProducto.toLowerCase()) ||
     p.id.toString() === searchProducto
   );
+
+  // When keyboard search finds nothing, refresh data after 500ms (picks up new products from other PCs)
+  useEffect(() => {
+    if (!searchProducto) return;
+    const hasLocal = productos.some(p =>
+      p.nombre.toLowerCase().includes(searchProducto.toLowerCase()) ||
+      p.codigo_barra?.toLowerCase().includes(searchProducto.toLowerCase()) ||
+      p.id.toString() === searchProducto
+    );
+    if (hasLocal) return;
+    const t = setTimeout(refreshProductosAndMaterias, 500);
+    return () => clearTimeout(t);
+  }, [searchProducto, productos, refreshProductosAndMaterias]);
 
   // Filter clients
   const filteredClientes = clientes.filter(c =>

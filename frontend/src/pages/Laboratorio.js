@@ -65,7 +65,8 @@ const Laboratorio = () => {
   const barcodeRef = useRef(null);
   
   const [formData, setFormData] = useState({
-    nombre: '',
+    cliente: '',
+    pintura: '',
     descripcion: '',
     precio: ''
   });
@@ -88,26 +89,29 @@ const Laboratorio = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!formData.nombre || !formData.precio) {
+
+    if (!formData.cliente || !formData.pintura || !formData.precio) {
       toast.error('Complete todos los campos requeridos');
       return;
     }
-    
+
+    const nombre = `${formData.pintura.trim()} ${formData.cliente.trim()}`;
+
     setSubmitting(true);
     try {
       await api('/materias-laboratorio', {
         method: 'POST',
         body: JSON.stringify({
-          ...formData,
+          nombre,
+          descripcion: formData.descripcion || null,
           empresa_id: empresa.id,
           precio: parseFloat(formData.precio)
         })
       });
-      
+
       toast.success('Materia creada exitosamente');
       setDialogOpen(false);
-      setFormData({ nombre: '', descripcion: '', precio: '' });
+      setFormData({ cliente: '', pintura: '', descripcion: '', precio: '' });
       fetchMaterias();
     } catch (e) {
       toast.error(e.message || 'Error al crear materia');
@@ -339,13 +343,23 @@ const Laboratorio = () => {
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <Label htmlFor="nombre">Nombre *</Label>
+                <Label htmlFor="cliente">Cliente *</Label>
                 <Input
-                  id="nombre"
-                  value={formData.nombre}
-                  onChange={(e) => setFormData({...formData, nombre: e.target.value})}
-                  placeholder="Nombre de la materia"
-                  data-testid="materia-nombre"
+                  id="cliente"
+                  value={formData.cliente}
+                  onChange={(e) => setFormData({...formData, cliente: e.target.value})}
+                  placeholder="Nombre del cliente"
+                  data-testid="materia-cliente"
+                />
+              </div>
+              <div>
+                <Label htmlFor="pintura">Pintura *</Label>
+                <Input
+                  id="pintura"
+                  value={formData.pintura}
+                  onChange={(e) => setFormData({...formData, pintura: e.target.value})}
+                  placeholder="Ej: BLANCO PERLA 1LTS"
+                  data-testid="materia-pintura"
                 />
               </div>
               <div>
