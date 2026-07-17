@@ -488,6 +488,31 @@ async def obtener_permisos_usuario(usuario_id: int, db: AsyncSession = Depends(g
 # ==================== CLIENTES ====================
 @api_router.post("/clientes", response_model=ClienteResponse)
 async def crear_cliente(data: ClienteCreate, db: AsyncSession = Depends(get_db)):
+    ruc = (data.ruc or "").strip()
+    cedula = (data.cedula or "").strip()
+
+    if ruc:
+        existing = await db.execute(
+            select(Cliente).where(
+                Cliente.empresa_id == data.empresa_id,
+                Cliente.estado == True,
+                Cliente.ruc == ruc,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con el RUC {ruc}")
+
+    if cedula:
+        existing = await db.execute(
+            select(Cliente).where(
+                Cliente.empresa_id == data.empresa_id,
+                Cliente.estado == True,
+                Cliente.cedula == cedula,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con la cédula {cedula}")
+
     cliente = Cliente(**data.model_dump())
     db.add(cliente)
     await db.commit()
@@ -515,7 +540,35 @@ async def actualizar_cliente(cliente_id: int, data: dict, db: AsyncSession = Dep
     cliente = result.scalar_one_or_none()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    
+
+    if 'ruc' in data:
+        ruc = (data['ruc'] or "").strip()
+        if ruc:
+            existing = await db.execute(
+                select(Cliente).where(
+                    Cliente.empresa_id == cliente.empresa_id,
+                    Cliente.estado == True,
+                    Cliente.ruc == ruc,
+                    Cliente.id != cliente_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con el RUC {ruc}")
+
+    if 'cedula' in data:
+        cedula = (data['cedula'] or "").strip()
+        if cedula:
+            existing = await db.execute(
+                select(Cliente).where(
+                    Cliente.empresa_id == cliente.empresa_id,
+                    Cliente.estado == True,
+                    Cliente.cedula == cedula,
+                    Cliente.id != cliente_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con la cédula {cedula}")
+
     for key, value in data.items():
         if hasattr(cliente, key) and key != 'id':
             setattr(cliente, key, value)
