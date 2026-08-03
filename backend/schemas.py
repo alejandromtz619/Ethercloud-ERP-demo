@@ -452,6 +452,11 @@ class VentaUpdate(BaseModel):
     es_delivery: Optional[bool] = None
     items: Optional[List[VentaItemCreate]] = None
 
+class FechaImpresionUpdate(BaseModel):
+    """Corrige solo la fecha que se imprime en el documento. No toca creado_en."""
+    tipo_documento: str  # 'BOLETA' | 'FACTURA'
+    fecha: Optional[date] = None  # None = restaurar la fecha original
+
 class VentaResponse(VentaBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -464,6 +469,8 @@ class VentaResponse(VentaBase):
     ganancia: Optional[Decimal] = 0
     estado: EstadoVenta
     creado_en: Optional[datetime] = None
+    fecha_impresion_boleta: Optional[date] = None
+    fecha_impresion_factura: Optional[date] = None
 
 class VentaConDetalles(VentaResponse):
     items: List[VentaItemResponse] = []

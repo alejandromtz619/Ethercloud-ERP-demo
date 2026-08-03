@@ -57,6 +57,13 @@ const formatCurrency = (val) => {
   }).format(val || 0);
 };
 
+// "YYYY-MM-DD" -> "dd/MM/yyyy" (sin conversión de zona horaria)
+const formatFechaISO = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
+
 const HistorialVentas = () => {
   const { api, empresa, API_URL, token, userPermisos } = useApp();
   const [ventas, setVentas] = useState([]);
@@ -567,9 +574,21 @@ const HistorialVentas = () => {
                         <span className="text-xs text-muted-foreground block">
                           {new Date(venta.creado_en).toLocaleTimeString('es-PY', { 
                             hour: '2-digit', 
-                            minute: '2-digit' 
+                            minute: '2-digit'
                           })}
                         </span>
+                        {(venta.fecha_impresion_boleta || venta.fecha_impresion_factura) && (
+                          <Badge
+                            className="badge-info mt-1 text-[10px] px-1.5 py-0 font-normal"
+                            title={[
+                              venta.fecha_impresion_boleta && `Boleta se imprime con fecha ${formatFechaISO(venta.fecha_impresion_boleta)}`,
+                              venta.fecha_impresion_factura && `Factura se imprime con fecha ${formatFechaISO(venta.fecha_impresion_factura)}`,
+                              'La fecha real de la venta no fue modificada.'
+                            ].filter(Boolean).join('\n')}
+                          >
+                            Fecha impr. editada
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="font-medium">{venta.cliente_nombre}</span>
@@ -762,6 +781,7 @@ const HistorialVentas = () => {
         onOpenChange={setPrintModalOpen}
         ventaId={printVentaId}
         ventaEstado={printVentaEstado}
+        onPrintComplete={fetchVentas}
       />
     </div>
   );

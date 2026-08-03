@@ -58,6 +58,7 @@ from schemas import (
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
     EntradaStockHistorialResponse,
     VentaCreate, VentaUpdate, VentaResponse, VentaConDetalles, VentaItemResponse,
+    FechaImpresionUpdate,
     FuncionarioCreate, FuncionarioResponse,
     AdelantoSalarioCreate, AdelantoSalarioResponse,
     CicloSalarioCreate, CicloSalarioResponse,
@@ -89,6 +90,24 @@ def get_day_range_paraguay(date_obj):
     # End: 23:59:59 of the day in Paraguay
     day_end = datetime.combine(date_obj, datetime.max.time()).replace(tzinfo=PARAGUAY_TZ)
     return day_start, day_end
+
+def fecha_documento(venta, tipo_documento: str = 'BOLETA'):
+    """Fecha que debe salir IMPRESA en el documento.
+
+    Toma creado_en en hora Paraguay y, si el usuario corrigio la fecha de impresion
+    (ventas.fecha_impresion_boleta / _factura), reemplaza solo el dia/mes/anio y
+    conserva la hora original. creado_en NUNCA se modifica.
+
+    Devuelve (datetime, bool modificada).
+    """
+    base = venta.creado_en
+    if base is None:
+        return now_paraguay(), False
+    base = base.astimezone(PARAGUAY_TZ) if base.tzinfo else base.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
+    override = venta.fecha_impresion_factura if tipo_documento == 'FACTURA' else venta.fecha_impresion_boleta
+    if override:
+        return base.replace(year=override.year, month=override.month, day=override.day), True
+    return base, False
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2025,6 +2044,78 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
     await db.refresh(venta)
     return venta
 
+@api_router.get("/ventas/{venta_id}/fechas-impresion")
+async def obtener_fechas_impresion(venta_id: int, db: AsyncSession = Depends(get_db)):
+    """Fecha real de la venta + fechas de impresion corregidas (si las hay)"""
+    result = await db.execute(select(Venta).where(Venta.id == venta_id))
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    creado_en_py = None
+    if venta.creado_en:
+        creado_en_py = (
+            venta.creado_en.astimezone(PARAGUAY_TZ) if venta.creado_en.tzinfo
+            else venta.creado_en.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
+        )
+
+    return {
+        "venta_id": venta.id,
+        "fecha_original": creado_en_py.strftime('%Y-%m-%d') if creado_en_py else None,
+        "hora_original": creado_en_py.strftime('%I:%M %p') if creado_en_py else None,
+        "fecha_impresion_boleta": venta.fecha_impresion_boleta.isoformat() if venta.fecha_impresion_boleta else None,
+        "fecha_impresion_factura": venta.fecha_impresion_factura.isoformat() if venta.fecha_impresion_factura else None,
+    }
+
+@api_router.put("/ventas/{venta_id}/fecha-impresion")
+async def actualizar_fecha_impresion(venta_id: int, data: FechaImpresionUpdate, db: AsyncSession = Depends(get_db)):
+    """Cambia SOLO la fecha que se imprime en la boleta o factura.
+
+    La fecha real de la venta (creado_en) no se modifica: reportes, cierres,
+    filtros y stock siguen usando la fecha original.
+    """
+    tipo = (data.tipo_documento or '').upper()
+    if tipo not in ('BOLETA', 'FACTURA'):
+        raise HTTPException(status_code=400, detail="tipo_documento debe ser BOLETA o FACTURA")
+
+    result = await db.execute(select(Venta).where(Venta.id == venta_id))
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if tipo == 'FACTURA':
+        venta.fecha_impresion_factura = data.fecha
+    else:
+        venta.fecha_impresion_boleta = data.fecha
+
+    # Invalidar el PDF ya generado para WhatsApp: si no, se reutiliza el viejo
+    # con la fecha anterior (generar_enlace_documento devuelve ya_existia=True).
+    docs_result = await db.execute(
+        select(DocumentoTemporal).where(
+            and_(
+                DocumentoTemporal.venta_id == venta_id,
+                DocumentoTemporal.tipo_documento == TipoDocumento[tipo]
+            )
+        )
+    )
+    for doc in docs_result.scalars().all():
+        try:
+            if doc.file_path and Path(doc.file_path).exists():
+                Path(doc.file_path).unlink()
+        except Exception as e:
+            logger.warning(f"No se pudo eliminar el PDF {doc.file_path}: {e}")
+        await db.delete(doc)
+
+    await db.commit()
+    await db.refresh(venta)
+
+    return {
+        "venta_id": venta.id,
+        "tipo_documento": tipo,
+        "fecha_impresion_boleta": venta.fecha_impresion_boleta.isoformat() if venta.fecha_impresion_boleta else None,
+        "fecha_impresion_factura": venta.fecha_impresion_factura.isoformat() if venta.fecha_impresion_factura else None,
+    }
+
 @api_router.post("/ventas/{venta_id}/confirmar-pendiente", response_model=VentaResponse)
 async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(get_db)):
     """Confirma una venta PENDIENTE: valida stock, genera movimientos, crea crédito si aplica"""
@@ -2451,12 +2542,13 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 'total': float(item.total)
             })
         
-        # Convertir a timezone de Paraguay para formatear correctamente
-        creado_en_py = venta.creado_en.astimezone(PARAGUAY_TZ) if venta.creado_en.tzinfo else venta.creado_en.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
+        # Fecha de impresion (respeta correccion manual, hora original intacta)
+        creado_en_py, fecha_modificada = fecha_documento(venta, 'BOLETA')
         return {
             'tipo': 'BOLETA',
             'numero': venta.id,
             'fecha': creado_en_py.strftime('%d/%m/%Y %I:%M %p'),
+            'fecha_modificada': fecha_modificada,
             'estado': venta.estado.value if venta.estado else 'BORRADOR',
             'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
@@ -2540,12 +2632,13 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         base_imponible = float(venta.total) / 1.10
         iva_10 = float(venta.total) - base_imponible
         
-        # Convertir a timezone de Paraguay para formatear correctamente
-        creado_en_py_f = venta.creado_en.astimezone(PARAGUAY_TZ) if venta.creado_en.tzinfo else venta.creado_en.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
+        # Fecha de impresion (respeta correccion manual, hora original intacta)
+        creado_en_py_f, fecha_modificada_f = fecha_documento(venta, 'FACTURA')
         return {
             'tipo': 'FACTURA',
             'numero': f"{venta.id:07d}",
             'fecha': creado_en_py_f.strftime('%d de %B de %Y'),
+            'fecha_modificada': fecha_modificada_f,
             'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
                 'nombre': empresa.nombre,
@@ -2914,7 +3007,7 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
         ['Dirección:', cliente.direccion or '0'],
         ['Telefono:', cliente.telefono or '0'],
         ['Ruc:', cliente.ruc or '0'],
-        ['Fecha de Venta:', venta.creado_en.strftime('%d/%m/%Y %I:%M %p')],
+        ['Fecha de Venta:', fecha_documento(venta, 'BOLETA')[0].strftime('%d/%m/%Y %I:%M %p')],
         ['Tipo Comprob:', 'SOLO PRESUPUESTO' if venta.estado and venta.estado.value == 'PENDIENTE' else (venta.tipo_pago.value if venta.tipo_pago else 'CONTADO')]
     ]
     
@@ -3125,7 +3218,7 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
     cliente_data = [
         [
             f'Señor(es): {cliente.nombre} {cliente.apellido or ""}',
-            f'Fecha: {venta.creado_en.strftime("%d/%m/%Y")}'
+            f'Fecha: {fecha_documento(venta, "FACTURA")[0].strftime("%d/%m/%Y")}'
         ],
         [
             f'Dirección: {cliente.direccion or ""}',

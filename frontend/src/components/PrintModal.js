@@ -9,8 +9,16 @@ import {
 } from '../components/ui/dialog';
 import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
-import { Loader2, Printer, Receipt, FileText, Send } from 'lucide-react';
+import { DatePickerInput } from '../components/ui/date-picker-input';
+import { Loader2, Printer, Receipt, FileText, Send, CalendarDays, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
+
+// Formatea "YYYY-MM-DD" como "dd/MM/yyyy" sin depender de la zona horaria del navegador
+const formatFechaISO = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
 
 // Boleta Print Template - Impresora matricial Epson (papel ~190mm x 170mm)
 const BoletaPrint = React.forwardRef(({ data }, ref) => {
@@ -301,9 +309,57 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
   const [boletaData, setBoletaData] = useState(null);
   const [facturaData, setFacturaData] = useState(null);
   const [error, setError] = useState(null);
-  
+  // Fecha de impresión editable (no modifica la fecha real de la venta)
+  const [fechas, setFechas] = useState(null);
+  const [editandoFecha, setEditandoFecha] = useState(null); // 'BOLETA' | 'FACTURA' | null
+  const [fechaTemp, setFechaTemp] = useState('');
+  const [guardandoFecha, setGuardandoFecha] = useState(false);
+
   const boletaRef = useRef(null);
   const facturaRef = useRef(null);
+
+  const getFechaImpresion = (tipo) => (
+    tipo === 'FACTURA' ? fechas?.fecha_impresion_factura : fechas?.fecha_impresion_boleta
+  );
+
+  const fetchFechas = async () => {
+    if (!ventaId) return;
+    try {
+      const data = await api(`/ventas/${ventaId}/fechas-impresion`);
+      setFechas(data);
+    } catch (e) {
+      // No bloquea la impresión: solo se pierde la opción de corregir la fecha
+      console.error('Error al cargar fechas de impresión', e);
+    }
+  };
+
+  const abrirEditorFecha = (tipo) => {
+    if (editandoFecha === tipo) {
+      setEditandoFecha(null);
+      return;
+    }
+    setFechaTemp(getFechaImpresion(tipo) || fechas?.fecha_original || '');
+    setEditandoFecha(tipo);
+  };
+
+  const guardarFecha = async (tipo, fecha) => {
+    setGuardandoFecha(true);
+    try {
+      await api(`/ventas/${ventaId}/fecha-impresion`, {
+        method: 'PUT',
+        body: JSON.stringify({ tipo_documento: tipo, fecha: fecha || null })
+      });
+      toast.success(fecha ? 'Fecha de impresión actualizada' : 'Se restauró la fecha original');
+      setEditandoFecha(null);
+      await fetchFechas();
+      await fetchPrintData();
+      onPrintComplete?.();
+    } catch (e) {
+      toast.error(e.message || 'Error al actualizar la fecha de impresión');
+    } finally {
+      setGuardandoFecha(false);
+    }
+  };
 
   const fetchPrintData = async () => {
     if (!ventaId) return;
@@ -556,6 +612,7 @@ Gracias por su compra! 🙏
   React.useEffect(() => {
     if (open && ventaId) {
       fetchPrintData();
+      fetchFechas();
     }
   }, [open, ventaId]);
 
@@ -567,8 +624,76 @@ Gracias por su compra! 🙏
       setError(null);
       setPrintBoleta(true);
       setPrintFactura(false);
+      setFechas(null);
+      setEditandoFecha(null);
+      setFechaTemp('');
     }
   }, [open]);
+
+  // Botón / badge de fecha de impresión al lado de cada documento
+  const renderBotonFecha = (tipo) => {
+    const modificada = getFechaImpresion(tipo);
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => abrirEditorFecha(tipo)}
+        title={modificada
+          ? `Fecha de impresión modificada: ${formatFechaISO(modificada)} (clic para cambiar o restaurar)`
+          : 'Cambiar la fecha que se imprime en este documento'}
+        className={modificada
+          ? 'shrink-0 h-auto py-1 px-2 text-xs font-medium bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-900 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
+          : 'shrink-0 h-auto py-1 px-2 text-xs text-muted-foreground'}
+      >
+        <CalendarDays className="h-3.5 w-3.5 mr-1" />
+        {modificada ? formatFechaISO(modificada) : 'Fecha'}
+      </Button>
+    );
+  };
+
+  // Editor inline que se despliega debajo del documento seleccionado
+  const renderEditorFecha = (tipo) => {
+    if (editandoFecha !== tipo) return null;
+    const modificada = getFechaImpresion(tipo);
+    return (
+      <div className="px-3 pb-3 pt-1 space-y-2 border-t bg-muted/30">
+        <Label className="text-xs">Fecha a imprimir en {tipo === 'FACTURA' ? 'la factura' : 'la boleta'}</Label>
+        <DatePickerInput value={fechaTemp} onChange={setFechaTemp} />
+        <p className="text-xs text-muted-foreground">
+          Fecha real de la venta: {formatFechaISO(fechas?.fecha_original)}
+          {fechas?.hora_original ? ` ${fechas.hora_original}` : ''} — no se modifica.
+          {tipo === 'BOLETA' ? ' Se conserva la hora original.' : ''}
+        </p>
+        <div className="flex justify-end gap-2">
+          {modificada && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={guardandoFecha}
+              onClick={() => guardarFecha(tipo, null)}
+            >
+              <RotateCcw className="h-3.5 w-3.5 mr-1" />
+              Restaurar original
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" onClick={() => setEditandoFecha(null)}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={guardandoFecha || !fechaTemp}
+            onClick={() => guardarFecha(tipo, fechaTemp)}
+          >
+            {guardandoFecha && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
+            Guardar
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -592,39 +717,47 @@ Gracias por su compra! 🙏
           )}
           
           <div className="space-y-3">
-            <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
-              <Checkbox 
-                id="boleta" 
-                checked={printBoleta} 
-                onCheckedChange={setPrintBoleta}
-              />
-              <div className="flex-1">
-                <Label htmlFor="boleta" className="flex items-center gap-2 cursor-pointer">
-                  <Receipt className="h-4 w-4" />
-                  Boleta
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Documento simple para clientes sin RUC
-                </p>
-              </div>
-            </div>
-            
-            {userPermisos.includes('ventas.imprimir_factura') && (
-              <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
-                <Checkbox 
-                  id="factura" 
-                  checked={printFactura} 
-                  onCheckedChange={setPrintFactura}
+            <div className="border rounded-lg">
+              <div className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg">
+                <Checkbox
+                  id="boleta"
+                  checked={printBoleta}
+                  onCheckedChange={setPrintBoleta}
                 />
                 <div className="flex-1">
-                  <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
-                    <FileText className="h-4 w-4" />
-                    Factura
+                  <Label htmlFor="boleta" className="flex items-center gap-2 cursor-pointer">
+                    <Receipt className="h-4 w-4" />
+                    Boleta
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Documento fiscal con desglose de IVA (requiere RUC)
+                    Documento simple para clientes sin RUC
                   </p>
                 </div>
+                {renderBotonFecha('BOLETA')}
+              </div>
+              {renderEditorFecha('BOLETA')}
+            </div>
+
+            {userPermisos.includes('ventas.imprimir_factura') && (
+              <div className="border rounded-lg">
+                <div className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg">
+                  <Checkbox
+                    id="factura"
+                    checked={printFactura}
+                    onCheckedChange={setPrintFactura}
+                  />
+                  <div className="flex-1">
+                    <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
+                      <FileText className="h-4 w-4" />
+                      Factura
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Documento fiscal con desglose de IVA (requiere RUC)
+                    </p>
+                  </div>
+                  {renderBotonFecha('FACTURA')}
+                </div>
+                {renderEditorFecha('FACTURA')}
               </div>
             )}
           </div>

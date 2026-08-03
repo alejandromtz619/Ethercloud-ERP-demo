@@ -393,7 +393,11 @@ class Venta(Base):
     estado = Column(Enum(EstadoVenta), default=EstadoVenta.BORRADOR)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     facturada = Column(Boolean, default=False)
-    
+    # Fecha que se imprime en el documento (NO afecta creado_en ni ningun reporte).
+    # NULL = usar la fecha real de la venta.
+    fecha_impresion_boleta = Column(Date, nullable=True)
+    fecha_impresion_factura = Column(Date, nullable=True)
+
     empresa = relationship("Empresa", back_populates="ventas")
     cliente = relationship("Cliente", back_populates="ventas", foreign_keys=[cliente_id])
     representante = relationship("Cliente", foreign_keys=[representante_cliente_id])

@@ -1,0 +1,6 @@
+-- Fecha de impresion editable por documento (boleta / factura).
+-- NULL = se imprime la fecha real de la venta (creado_en).
+-- Estas columnas NO afectan reportes, cierres, filtros ni stock.
+
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS fecha_impresion_boleta DATE;
+ALTER TABLE ventas ADD COLUMN IF NOT EXISTS fecha_impresion_factura DATE;
