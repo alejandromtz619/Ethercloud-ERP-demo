@@ -52,7 +52,7 @@ from schemas import (
     ProveedorCreate, ProveedorResponse, DeudaProveedorCreate, DeudaProveedorResponse,
     CategoriaCreate, CategoriaResponse, MarcaCreate, MarcaResponse,
     GastoCreate, GastoResponse, GastoUpdate,
-    ProductoCreate, ProductoResponse, ProductoConStock,
+    ProductoCreate, ProductoResponse, ProductoConStock, ProductoCodigoBarraConflicto,
     MateriaLaboratorioCreate, MateriaLaboratorioUpdate, MateriaLaboratorioResponse,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
@@ -225,6 +225,20 @@ async def get_current_usuario(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario inactivo."
         )
+    return usuario
+
+async def verificar_es_admin(
+    usuario: Usuario = Depends(get_current_usuario),
+    db: AsyncSession = Depends(get_db)
+) -> Usuario:
+    """Dependency that requires the current user to have the ADMIN role."""
+    result = await db.execute(
+        select(Rol)
+        .join(UsuarioRol, Rol.id == UsuarioRol.rol_id)
+        .where(UsuarioRol.usuario_id == usuario.id, Rol.nombre == 'ADMIN')
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Solo un administrador puede realizar esta acción")
     return usuario
 
 def numero_a_letras(numero):
@@ -1136,10 +1150,67 @@ async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db
         dump['codigo_barra'] = None
     else:
         dump['codigo_barra'] = str(dump['codigo_barra']).strip()
+        existing = await db.execute(
+            select(Producto).where(Producto.codigo_barra == dump['codigo_barra'])
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Código de barra ya existe")
     if not dump.get('imagen_url') or not str(dump['imagen_url']).strip():
         dump['imagen_url'] = None
     producto = Producto(**dump)
     db.add(producto)
+    await db.commit()
+    await db.refresh(producto)
+    return producto
+
+@api_router.get("/productos/verificar-codigo-barra", response_model=Optional[ProductoCodigoBarraConflicto])
+async def verificar_codigo_barra(
+    codigo_barra: str,
+    exclude_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Verifica si un código de barra ya está en uso por otro producto y devuelve sus detalles."""
+    codigo = codigo_barra.strip()
+    if not codigo:
+        return None
+    query = select(Producto).where(Producto.codigo_barra == codigo)
+    if exclude_id:
+        query = query.where(Producto.id != exclude_id)
+    result = await db.execute(query)
+    producto = result.scalar_one_or_none()
+    if not producto:
+        return None
+
+    tres_meses_atras = now_paraguay() - timedelta(days=90)
+    mov_result = await db.execute(
+        select(func_sql.count(MovimientoStock.id))
+        .where(
+            MovimientoStock.producto_id == producto.id,
+            MovimientoStock.creado_en >= tres_meses_atras
+        )
+    )
+    tuvo_movimientos = (mov_result.scalar() or 0) > 0
+
+    return ProductoCodigoBarraConflicto(
+        id=producto.id,
+        nombre=producto.nombre,
+        creado_en=producto.creado_en,
+        activo=producto.activo,
+        tuvo_movimientos_3_meses=tuvo_movimientos
+    )
+
+@api_router.patch("/productos/{producto_id}/limpiar-codigo-barra", response_model=ProductoResponse)
+async def limpiar_codigo_barra_producto(
+    producto_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: Usuario = Depends(verificar_es_admin)
+):
+    """Quita el código de barra de un producto en conflicto. Solo administradores."""
+    result = await db.execute(select(Producto).where(Producto.id == producto_id))
+    producto = result.scalar_one_or_none()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    producto.codigo_barra = None
     await db.commit()
     await db.refresh(producto)
     return producto

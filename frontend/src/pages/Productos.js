@@ -23,7 +23,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown } from 'lucide-react';
+import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 import {
@@ -38,6 +38,7 @@ import { toast } from 'sonner';
 
 const Productos = () => {
   const { api, empresa, userPermisos } = useApp();
+  const isAdmin = userPermisos.includes('usuarios.gestionar');
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -56,7 +57,11 @@ const Productos = () => {
   const [marcaOpen, setMarcaOpen] = useState(false);
   const [categoriaOpen, setCategoriaOpen] = useState(false);
   const [proveedorOpen, setProveedorOpen] = useState(false);
-  
+  const [codigoConflicto, setCodigoConflicto] = useState(null);
+  const [checkingCodigo, setCheckingCodigo] = useState(false);
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
+
   const [formData, setFormData] = useState({
     nombre: '',
     descripcion: '',
@@ -100,6 +105,38 @@ const Productos = () => {
     fetchData();
   }, [empresa?.id]);
 
+  useEffect(() => {
+    const value = formData.codigo_barra?.trim();
+    if (!dialogOpen || !value) {
+      setCodigoConflicto(null);
+      setCheckingCodigo(false);
+      return;
+    }
+    setCheckingCodigo(true);
+    const timer = setTimeout(async () => {
+      try {
+        const qs = `codigo_barra=${encodeURIComponent(value)}${editingId ? `&exclude_id=${editingId}` : ''}`;
+        const conflicto = await api(`/productos/verificar-codigo-barra?${qs}`);
+        setCodigoConflicto(conflicto || null);
+      } catch (err) {
+        setCodigoConflicto(null);
+      } finally {
+        setCheckingCodigo(false);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.codigo_barra, dialogOpen, editingId]);
+
+  const formatDate = (iso) => {
+    if (!iso) return '-';
+    try {
+      return new Date(iso).toLocaleDateString('es-PY', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch (e) {
+      return '-';
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       nombre: '',
@@ -114,6 +151,8 @@ const Productos = () => {
       imagen_url: ''
     });
     setEditingId(null);
+    setCodigoConflicto(null);
+    setConflictModalOpen(false);
   };
 
   const handleEdit = (producto) => {
@@ -133,14 +172,7 @@ const Productos = () => {
     setDialogOpen(true);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!formData.nombre || !formData.precio_venta) {
-      toast.error('Complete nombre y precio');
-      return;
-    }
-    
+  const doSave = async () => {
     setSubmitting(true);
     try {
       const payload = {
@@ -166,7 +198,7 @@ const Productos = () => {
         });
         toast.success('Producto creado');
       }
-      
+
       setDialogOpen(false);
       resetForm();
       fetchData();
@@ -174,6 +206,48 @@ const Productos = () => {
       toast.error(e.message || 'Error al guardar');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!formData.nombre || !formData.precio_venta) {
+      toast.error('Complete nombre y precio');
+      return;
+    }
+
+    const codigo = formData.codigo_barra?.trim();
+    if (codigo) {
+      try {
+        const qs = `codigo_barra=${encodeURIComponent(codigo)}${editingId ? `&exclude_id=${editingId}` : ''}`;
+        const conflicto = await api(`/productos/verificar-codigo-barra?${qs}`);
+        if (conflicto) {
+          setCodigoConflicto(conflicto);
+          setConflictModalOpen(true);
+          return;
+        }
+      } catch (err) {
+        // si falla la verificación, dejamos que el backend valide al guardar
+      }
+    }
+
+    await doSave();
+  };
+
+  const handleResolveConflict = async () => {
+    if (!codigoConflicto) return;
+    setResolvingConflict(true);
+    try {
+      await api(`/productos/${codigoConflicto.id}/limpiar-codigo-barra`, { method: 'PATCH' });
+      toast.success('Código de barra liberado del producto anterior');
+      setConflictModalOpen(false);
+      setCodigoConflicto(null);
+      await doSave();
+    } catch (err) {
+      toast.error(err.message || 'No se pudo liberar el código de barra');
+    } finally {
+      setResolvingConflict(false);
     }
   };
 
@@ -256,13 +330,26 @@ const Productos = () => {
                   />
                 </div>
                 <div>
-                  <Label>Código de Barra</Label>
+                  <Label className="flex items-center gap-1.5">
+                    Código de Barra
+                    {checkingCodigo && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                    {!checkingCodigo && codigoConflicto && (
+                      <span title={`Ya existe en: ${codigoConflicto.nombre} (ID ${codigoConflicto.id})`}>
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                      </span>
+                    )}
+                  </Label>
                   <Input
                     value={formData.codigo_barra}
                     onChange={(e) => setFormData({...formData, codigo_barra: e.target.value})}
-                    className="font-mono"
+                    className={`font-mono ${codigoConflicto ? 'border-amber-500 focus-visible:ring-amber-500' : ''}`}
                     data-testid="producto-codigo"
                   />
+                  {codigoConflicto && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Ya usado por "{codigoConflicto.nombre}" (ID {codigoConflicto.id})
+                    </p>
+                  )}
                 </div>
                 <div>
                   <Label>Precio de Venta *</Label>
@@ -633,6 +720,72 @@ const Productos = () => {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Conflict Dialog */}
+      <Dialog open={conflictModalOpen} onOpenChange={(open) => { setConflictModalOpen(open); if (!open) setCodigoConflicto(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Código de barra en conflicto
+            </DialogTitle>
+            <DialogDescription>
+              El código <span className="font-mono">{formData.codigo_barra}</span> ya está asignado a otro producto.
+            </DialogDescription>
+          </DialogHeader>
+          {codigoConflicto && (
+            <div className="space-y-2 text-sm border rounded-md p-3 bg-muted/30">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Producto</span>
+                <span className="font-medium text-right">{codigoConflicto.nombre}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">ID</span>
+                <span className="font-mono">{codigoConflicto.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Fecha de creación</span>
+                <span>{formatDate(codigoConflicto.creado_en)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Movimientos últimos 3 meses</span>
+                <span>{codigoConflicto.tuvo_movimientos_3_meses ? 'Sí' : 'No'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Estado</span>
+                <Badge variant={codigoConflicto.activo ? 'secondary' : 'destructive'}>
+                  {codigoConflicto.activo ? 'ACTIVO' : 'INACTIVO'}
+                </Badge>
+              </div>
+            </div>
+          )}
+          {!isAdmin && (
+            <p className="text-xs text-muted-foreground">
+              No podés guardar con este código mientras esté en uso. Pedile a un administrador que lo libere, o cambiá el código.
+            </p>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { setConflictModalOpen(false); setCodigoConflicto(null); }}
+            >
+              Cancelar
+            </Button>
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={resolvingConflict}
+                onClick={handleResolveConflict}
+              >
+                {resolvingConflict && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Quitar código al otro producto y guardar
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Image Preview Dialog */}
       <Dialog open={imageDialogOpen} onOpenChange={setImageDialogOpen}>

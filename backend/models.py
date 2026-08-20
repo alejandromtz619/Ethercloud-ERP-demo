@@ -302,7 +302,8 @@ class Producto(Base):
     fecha_vencimiento = Column(Date)
     activo = Column(Boolean, default=True)
     imagen_url = Column(String(500))
-    
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
     empresa = relationship("Empresa", back_populates="productos")
     categoria = relationship("Categoria", back_populates="productos")
     marca = relationship("Marca", back_populates="productos")

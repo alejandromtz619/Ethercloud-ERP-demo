@@ -286,6 +286,7 @@ class ProductoResponse(ProductoBase):
     id: int
     empresa_id: int
     activo: bool
+    creado_en: Optional[datetime] = None
     proveedor_nombre: Optional[str] = None
 
 class ProductoConStock(ProductoResponse):
@@ -293,6 +294,13 @@ class ProductoConStock(ProductoResponse):
     categoria_nombre: Optional[str] = None
     marca_nombre: Optional[str] = None
     proveedor_nombre: Optional[str] = None
+
+class ProductoCodigoBarraConflicto(BaseModel):
+    id: int
+    nombre: str
+    creado_en: Optional[datetime] = None
+    activo: bool
+    tuvo_movimientos_3_meses: bool
 
 # Materia Laboratorio
 class MateriaLaboratorioBase(BaseModel):
