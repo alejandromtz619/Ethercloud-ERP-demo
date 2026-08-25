@@ -32,7 +32,7 @@ import { Textarea } from '../components/ui/textarea';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 import {
   FileSpreadsheet, Plus, Loader2, X, ChevronsUpDown, Check, Trash2,
-  Download, FileText, Package
+  Download, FileText, Package, Eye
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -67,6 +67,12 @@ const Presupuestos = () => {
   const [clienteSearch, setClienteSearch] = useState('');
   const [filtroClientePopoverOpen, setFiltroClientePopoverOpen] = useState(false);
   const [filtroClienteSearch, setFiltroClienteSearch] = useState('');
+
+  // Visor de PDF en el sistema
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerUrl, setViewerUrl] = useState(null);
+  const [viewerNumero, setViewerNumero] = useState('');
 
   const fetchBase = async () => {
     if (!empresa?.id) return;
@@ -212,6 +218,36 @@ const Presupuestos = () => {
       toast.error(e.message || 'Error al descargar');
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  const handleView = async (id, numero) => {
+    setViewerLoading(true);
+    setViewerNumero(numero);
+    setViewerOpen(true);
+    try {
+      const response = await fetch(`${API_URL}/presupuestos/${id}/pdf`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        throw new Error('Error al generar el documento');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      setViewerUrl(url);
+    } catch (e) {
+      toast.error(e.message || 'Error al visualizar el presupuesto');
+      setViewerOpen(false);
+    } finally {
+      setViewerLoading(false);
+    }
+  };
+
+  const closeViewer = (open) => {
+    setViewerOpen(open);
+    if (!open && viewerUrl) {
+      window.URL.revokeObjectURL(viewerUrl);
+      setViewerUrl(null);
     }
   };
 
@@ -605,6 +641,14 @@ const Presupuestos = () => {
                         <Button
                           variant="ghost"
                           size="icon"
+                          title="Ver presupuesto"
+                          onClick={() => handleView(p.id, p.numero)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           title="Descargar PDF"
                           disabled={downloadingId === `${p.id}_pdf`}
                           onClick={() => handleDownload(p.id, p.numero, 'pdf')}
@@ -642,6 +686,27 @@ const Presupuestos = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={viewerOpen} onOpenChange={closeViewer}>
+        <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0 gap-0">
+          <DialogDescription className="hidden">Vista previa del presupuesto en PDF</DialogDescription>
+          <DialogHeader className="px-4 py-3 border-b shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              {viewerNumero}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 bg-muted">
+            {viewerLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : viewerUrl ? (
+              <iframe src={viewerUrl} title={viewerNumero} className="w-full h-full border-0" />
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

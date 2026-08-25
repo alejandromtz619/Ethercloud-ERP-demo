@@ -2721,19 +2721,38 @@ async def eliminar_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(g
     await db.commit()
     return {"message": "Presupuesto eliminado"}
 
-def _resolver_imagen_local(imagen_url: Optional[str]):
-    """Devuelve la ruta local del archivo si imagen_url apunta a un upload propio, si no None."""
-    if not imagen_url or not imagen_url.startswith('/uploads/'):
+async def _obtener_imagen_bytes(imagen_url: Optional[str]) -> Optional[bytes]:
+    """Obtiene los bytes de la imagen de un producto, sea un upload propio o una URL externa
+    (Productos.js permite cargar cualquiera de los dos como imagen_url)."""
+    if not imagen_url:
         return None
-    path = ROOT_DIR / imagen_url.lstrip('/')
-    return path if path.exists() else None
+    if imagen_url.startswith('/uploads/'):
+        path = ROOT_DIR / imagen_url.lstrip('/')
+        if not path.exists():
+            return None
+        try:
+            return path.read_bytes()
+        except Exception:
+            return None
+    if imagen_url.startswith('http://') or imagen_url.startswith('https://'):
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(imagen_url)
+                if resp.status_code == 200:
+                    return resp.content
+        except Exception:
+            logger.warning(f"No se pudo descargar imagen de producto para presupuesto: {imagen_url}")
+        return None
+    return None
 
 PRESUPUESTO_EMPRESA_NOMBRE = "Luz Brill Pinturas"
 LOGO_PATH = ROOT_DIR / 'assets' / 'logo_lbp_pdf.png'
 
-def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa: Empresa) -> bytes:
+def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa: Empresa, imagenes: dict) -> bytes:
     """Genera el PDF A4 del presupuesto. Diseño moderno, deliberadamente distinto
-    de la boleta (matricial) y la factura (papel pre-impreso)."""
+    de la boleta (matricial) y la factura (papel pre-impreso).
+    `imagenes` es un dict {presupuesto_item_id: bytes | None} ya resuelto de antemano
+    (la resolución de imágenes es async y esta función es sync)."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -2849,8 +2868,13 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
     ]]
     row_heights = [9 * mm]
     for item in presupuesto.items:
-        imagen_path = _resolver_imagen_local(item.imagen_url)
-        celda_imagen = Image(str(imagen_path), width=15 * mm, height=15 * mm) if imagen_path else ''
+        img_bytes = imagenes.get(item.id)
+        celda_imagen = ''
+        if img_bytes:
+            try:
+                celda_imagen = Image(io.BytesIO(img_bytes), width=15 * mm, height=15 * mm)
+            except Exception:
+                celda_imagen = ''
         tabla_datos.append([
             celda_imagen,
             Paragraph(item.nombre_producto, item_nombre_style),
@@ -2880,7 +2904,28 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
         ('BOX', (0, 0), (-1, -1), 0.75, azul),
     ]))
     elements.append(items_table)
-    elements.append(Spacer(1, 7 * mm))
+    elements.append(Spacer(1, 5 * mm))
+
+    # ---- Resumen: Subtotal / IVA incluido (precios ya incluyen IVA, igual que en Ventas) ----
+    iva_incluido = (presupuesto.total * Decimal('10') / Decimal('110')).quantize(Decimal('1'))
+    subtotal_sin_iva = presupuesto.total - iva_incluido
+    resumen_label_style = ParagraphStyle('ResumenLabel', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=gris)
+    resumen_value_style = ParagraphStyle('ResumenValue', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=texto)
+    resumen_table = Table(
+        [
+            [Paragraph('Subtotal (sin IVA)', resumen_label_style), Paragraph(f"Gs. {int(subtotal_sin_iva):,}", resumen_value_style)],
+            [Paragraph('IVA (10%, incluido)', resumen_label_style), Paragraph(f"Gs. {int(iva_incluido):,}", resumen_value_style)],
+        ],
+        colWidths=[ancho_util - 55 * mm, 55 * mm]
+    )
+    resumen_table.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(resumen_table)
+    elements.append(Spacer(1, 2 * mm))
 
     # ---- Total ----
     total_label_style = ParagraphStyle('TotalLabel', fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=TA_RIGHT, textColor=colors.white)
@@ -2924,7 +2969,8 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
 @api_router.get("/presupuestos/{presupuesto_id}/pdf")
 async def descargar_pdf_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
     presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
-    pdf_bytes = generar_pdf_presupuesto(presupuesto, cliente, empresa)
+    imagenes = {item.id: await _obtener_imagen_bytes(item.imagen_url) for item in presupuesto.items}
+    pdf_bytes = generar_pdf_presupuesto(presupuesto, cliente, empresa, imagenes)
     filename = f"{numero_presupuesto(presupuesto.id)}.pdf"
     return Response(
         content=pdf_bytes,
