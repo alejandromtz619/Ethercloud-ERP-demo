@@ -2783,8 +2783,10 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
     item_nombre_style = ParagraphStyle('ItemNombre', fontName='Helvetica', fontSize=9.5, leading=13, textColor=texto)
 
     # ---- Encabezado: logo + datos de la empresa a la izquierda, título a la derecha ----
+    logo_size = 35 * mm  # 20mm * 1.75
+    logo_col_gap = 4 * mm
     if LOGO_PATH.exists():
-        logo_flowable = Image(str(LOGO_PATH), width=20 * mm, height=20 * mm)
+        logo_flowable = Image(str(LOGO_PATH), width=logo_size, height=logo_size)
     else:
         logo_flowable = ''
 
@@ -2798,7 +2800,8 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
     if empresa.telefono:
         datos_empresa.append(Paragraph(f"Tel: {empresa.telefono}", subtitulo_style))
 
-    empresa_block = Table([[logo_flowable, datos_empresa]], colWidths=[24 * mm, (ancho_util - 94 * mm)])
+    logo_col_width = logo_size + logo_col_gap
+    empresa_block = Table([[logo_flowable, datos_empresa]], colWidths=[logo_col_width, (ancho_util - 70 * mm) - logo_col_width])
     empresa_block.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('LEFTPADDING', (0, 0), (0, 0), 0),
