@@ -7208,7 +7208,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "productos.ver", "stock.ver",
         "clientes.ver", "clientes.crear",
         "delivery.ver", "delivery.crear",
-        "laboratorio.ver"
+        "laboratorio.ver",
+        "presupuestos.ver", "presupuestos.crear", "presupuestos.editar"
     ]
     if vendedor_rol:
         for perm_clave in vendedor_permisos:
@@ -7359,13 +7360,23 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
         for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"):
             db.add(RolPermiso(rol_id=rol_gerente.id, permiso_id=permisos_creados[clave].id))
 
-        for rol_nombre in ["VENDEDOR", "DELIVERY"]:
-            db.add(Rol(
-                empresa_id=empresa.id,
-                nombre=rol_nombre,
-                descripcion=f"Rol {rol_nombre}",
-                estado=True
-            ))
+        rol_vendedor = Rol(
+            empresa_id=empresa.id,
+            nombre="VENDEDOR",
+            descripcion="Rol VENDEDOR",
+            estado=True
+        )
+        db.add(rol_vendedor)
+        await db.flush()
+        for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar"):
+            db.add(RolPermiso(rol_id=rol_vendedor.id, permiso_id=permisos_creados[clave].id))
+
+        db.add(Rol(
+            empresa_id=empresa.id,
+            nombre="DELIVERY",
+            descripcion="Rol DELIVERY",
+            estado=True
+        ))
 
         # Create categories
         categorias = ["Pinturas", "Herramientas", "Materiales", "Accesorios"]

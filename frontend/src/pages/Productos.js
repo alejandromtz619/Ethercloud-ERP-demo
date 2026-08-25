@@ -23,7 +23,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { Package, Plus, Minus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle } from 'lucide-react';
 import EntradaStockDialog from '../components/EntradaStockDialog';
 import SalidaStockDialog from '../components/SalidaStockDialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -709,22 +709,22 @@ const Productos = () => {
                     <div className="flex items-center gap-1">
                       {userPermisos.includes('stock.entrada') && (
                         <Button
-                          variant="ghost"
                           size="icon"
-                          title="Entrada de stock"
+                          title="Agregar stock"
+                          className="h-8 w-8 rounded-md bg-green-600 hover:bg-green-700 text-white shrink-0"
                           onClick={() => { setSelectedProductoId(producto.id); setEntradaDialogOpen(true); }}
                         >
-                          <ArrowDownToLine className="h-4 w-4 text-green-600" />
+                          <Plus className="h-5 w-5" strokeWidth={3} />
                         </Button>
                       )}
                       {userPermisos.includes('stock.salida') && (
                         <Button
-                          variant="ghost"
                           size="icon"
-                          title="Salida de stock"
+                          title="Quitar stock"
+                          className="h-8 w-8 rounded-md bg-red-600 hover:bg-red-700 text-white shrink-0"
                           onClick={() => { setSelectedProductoId(producto.id); setSalidaDialogOpen(true); }}
                         >
-                          <ArrowUpFromLine className="h-4 w-4 text-red-600" />
+                          <Minus className="h-5 w-5" strokeWidth={3} />
                         </Button>
                       )}
                       {userPermisos.includes('productos.editar') && (
