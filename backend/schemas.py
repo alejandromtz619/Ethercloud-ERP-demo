@@ -489,6 +489,7 @@ class VentaConDetalles(VentaResponse):
 class PresupuestoItemCreate(BaseModel):
     producto_id: int
     cantidad: int
+    precio_venta_unitario: Optional[Decimal] = None  # override manual del precio (ajustes/descuentos)
 
 class PresupuestoItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

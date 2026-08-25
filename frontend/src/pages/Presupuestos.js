@@ -21,13 +21,6 @@ import {
   DialogTrigger,
 } from '../components/ui/dialog';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../components/ui/select';
-import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -44,7 +37,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 
-const emptyItem = { producto_id: '', cantidad: '1' };
+const emptyItem = { producto_id: '', cantidad: '1', precio_unitario: '' };
 
 const Presupuestos = () => {
   const { api, empresa, user, userPermisos, API_URL, token } = useApp();
@@ -70,6 +63,10 @@ const Presupuestos = () => {
   const [items, setItems] = useState([{ ...emptyItem }]);
   const [productoPopoverIdx, setProductoPopoverIdx] = useState(null);
   const [productoSearch, setProductoSearch] = useState('');
+  const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
+  const [clienteSearch, setClienteSearch] = useState('');
+  const [filtroClientePopoverOpen, setFiltroClientePopoverOpen] = useState(false);
+  const [filtroClienteSearch, setFiltroClienteSearch] = useState('');
 
   const fetchBase = async () => {
     if (!empresa?.id) return;
@@ -131,10 +128,15 @@ const Presupuestos = () => {
 
   const productoDe = (id) => productos.find(p => p.id.toString() === id);
 
-  const totalPresupuesto = items.reduce((sum, it) => {
+  const precioDe = (it) => {
+    if (it.precio_unitario !== '' && it.precio_unitario != null) return Number(it.precio_unitario);
     const producto = productoDe(it.producto_id);
+    return producto ? Number(producto.precio_venta) : 0;
+  };
+
+  const totalPresupuesto = items.reduce((sum, it) => {
     const cantidad = parseInt(it.cantidad) || 0;
-    return sum + (producto ? Number(producto.precio_venta) * cantidad : 0);
+    return sum + precioDe(it) * cantidad;
   }, 0);
 
   const handleSubmit = async (e) => {
@@ -160,7 +162,8 @@ const Presupuestos = () => {
           notas: notas || null,
           items: itemsValidos.map(it => ({
             producto_id: parseInt(it.producto_id),
-            cantidad: parseInt(it.cantidad)
+            cantidad: parseInt(it.cantidad),
+            precio_venta_unitario: it.precio_unitario !== '' && it.precio_unitario != null ? Number(it.precio_unitario) : null
           }))
         })
       });
@@ -264,18 +267,61 @@ const Presupuestos = () => {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <Label>Cliente *</Label>
-                  <Select value={clienteId} onValueChange={setClienteId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clientes.map(c => (
-                        <SelectItem key={c.id} value={c.id.toString()}>
-                          {c.nombre} {c.apellido || ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={clientePopoverOpen} onOpenChange={setClientePopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={clientePopoverOpen}
+                        className="w-full justify-between font-normal"
+                      >
+                        {clienteId
+                          ? (() => {
+                              const c = clientes.find((c) => c.id.toString() === clienteId);
+                              return c ? `${c.nombre} ${c.apellido || ''}`.trim() : 'Buscar cliente...';
+                            })()
+                          : "Buscar cliente..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[420px] p-0">
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Buscar por nombre..."
+                          value={clienteSearch}
+                          onValueChange={setClienteSearch}
+                        />
+                        <CommandEmpty>No se encontró el cliente.</CommandEmpty>
+                        <CommandGroup className="max-h-64 overflow-auto">
+                          {clientes
+                            .filter(c =>
+                              !clienteSearch ||
+                              `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(clienteSearch.toLowerCase())
+                            )
+                            .map((c) => (
+                              <CommandItem
+                                key={c.id}
+                                value={`${c.nombre} ${c.apellido || ''}`}
+                                onSelect={() => {
+                                  setClienteId(c.id.toString());
+                                  setClientePopoverOpen(false);
+                                  setClienteSearch('');
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    clienteId === c.id.toString() ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                {c.nombre} {c.apellido || ''}
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div className="space-y-3">
@@ -327,7 +373,7 @@ const Presupuestos = () => {
                                         key={p.id}
                                         value={p.nombre}
                                         onSelect={() => {
-                                          updateItem(idx, { producto_id: p.id.toString() });
+                                          updateItem(idx, { producto_id: p.id.toString(), precio_unitario: p.precio_venta?.toString() || '' });
                                           setProductoPopoverIdx(null);
                                           setProductoSearch('');
                                         }}
@@ -349,18 +395,34 @@ const Presupuestos = () => {
                             </PopoverContent>
                           </Popover>
                           {producto && (
-                            <p className="text-xs text-muted-foreground">
-                              {formatCurrency(producto.precio_venta)} c/u &nbsp;·&nbsp; Subtotal: {formatCurrency(Number(producto.precio_venta) * (parseInt(item.cantidad) || 0))}
-                            </p>
+                            <div className="flex items-center gap-3 pt-1">
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Cantidad</Label>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  className="w-20 h-8"
+                                  value={item.cantidad}
+                                  onChange={(e) => updateItem(idx, { cantidad: e.target.value })}
+                                />
+                              </div>
+                              <div>
+                                <Label className="text-xs text-muted-foreground">Precio unit.</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  className="w-28 h-8"
+                                  value={item.precio_unitario}
+                                  disabled={!userPermisos.includes('ventas.modificar_precio')}
+                                  onChange={(e) => updateItem(idx, { precio_unitario: e.target.value })}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground pt-4">
+                                Subtotal: {formatCurrency(precioDe(item) * (parseInt(item.cantidad) || 0))}
+                              </p>
+                            </div>
                           )}
                         </div>
-                        <Input
-                          type="number"
-                          min="1"
-                          className="w-20"
-                          value={item.cantidad}
-                          onChange={(e) => updateItem(idx, { cantidad: e.target.value })}
-                        />
                         {items.length > 1 && (
                           <Button type="button" variant="ghost" size="icon" onClick={() => removeItemRow(idx)}>
                             <Trash2 className="h-4 w-4 text-destructive" />
@@ -415,17 +477,74 @@ const Presupuestos = () => {
                 value={filtroNumero}
                 onChange={(e) => setFiltroNumero(e.target.value)}
               />
-              <Select value={filtroClienteId || '__all__'} onValueChange={(v) => setFiltroClienteId(v === '__all__' ? '' : v)}>
-                <SelectTrigger className="h-8 w-48 text-sm">
-                  <SelectValue placeholder="Cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">Todos los clientes</SelectItem>
-                  {clientes.map(c => (
-                    <SelectItem key={c.id} value={c.id.toString()}>{c.nombre} {c.apellido || ''}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={filtroClientePopoverOpen} onOpenChange={setFiltroClientePopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={filtroClientePopoverOpen}
+                    className="h-8 w-48 text-sm justify-between font-normal"
+                  >
+                    <span className="truncate">
+                      {filtroClienteId
+                        ? (() => {
+                            const c = clientes.find((c) => c.id.toString() === filtroClienteId);
+                            return c ? `${c.nombre} ${c.apellido || ''}`.trim() : 'Cliente';
+                          })()
+                        : 'Todos los clientes'}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[320px] p-0">
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      placeholder="Buscar por nombre..."
+                      value={filtroClienteSearch}
+                      onValueChange={setFiltroClienteSearch}
+                    />
+                    <CommandEmpty>No se encontró el cliente.</CommandEmpty>
+                    <CommandGroup className="max-h-64 overflow-auto">
+                      <CommandItem
+                        value="__all__"
+                        onSelect={() => {
+                          setFiltroClienteId('');
+                          setFiltroClientePopoverOpen(false);
+                          setFiltroClienteSearch('');
+                        }}
+                      >
+                        <Check className={cn("mr-2 h-4 w-4", !filtroClienteId ? "opacity-100" : "opacity-0")} />
+                        Todos los clientes
+                      </CommandItem>
+                      {clientes
+                        .filter(c =>
+                          !filtroClienteSearch ||
+                          `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(filtroClienteSearch.toLowerCase())
+                        )
+                        .map((c) => (
+                          <CommandItem
+                            key={c.id}
+                            value={`${c.nombre} ${c.apellido || ''}`}
+                            onSelect={() => {
+                              setFiltroClienteId(c.id.toString());
+                              setFiltroClientePopoverOpen(false);
+                              setFiltroClienteSearch('');
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                filtroClienteId === c.id.toString() ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            {c.nombre} {c.apellido || ''}
+                          </CommandItem>
+                        ))}
+                    </CommandGroup>
+                  </Command>
+                </PopoverContent>
+              </Popover>
               <Input
                 type="number"
                 placeholder="Monto desde"

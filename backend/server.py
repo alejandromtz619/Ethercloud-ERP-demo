@@ -2620,8 +2620,11 @@ async def crear_presupuesto(data: PresupuestoCreate, db: AsyncSession = Depends(
             raise HTTPException(status_code=404, detail=f"Producto {item_data.producto_id} no encontrado")
         if item_data.cantidad <= 0:
             raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a cero")
+        if item_data.precio_venta_unitario is not None and item_data.precio_venta_unitario < 0:
+            raise HTTPException(status_code=400, detail="El precio no puede ser negativo")
 
-        subtotal_item = producto.precio_venta * item_data.cantidad
+        precio_unitario = item_data.precio_venta_unitario if item_data.precio_venta_unitario is not None else producto.precio_venta
+        subtotal_item = precio_unitario * item_data.cantidad
         total += subtotal_item
         db.add(PresupuestoItem(
             presupuesto_id=presupuesto.id,
@@ -2629,7 +2632,7 @@ async def crear_presupuesto(data: PresupuestoCreate, db: AsyncSession = Depends(
             nombre_producto=producto.nombre,
             imagen_url=producto.imagen_url,
             cantidad=item_data.cantidad,
-            precio_venta_unitario=producto.precio_venta,
+            precio_venta_unitario=precio_unitario,
             subtotal=subtotal_item
         ))
 
@@ -2725,6 +2728,9 @@ def _resolver_imagen_local(imagen_url: Optional[str]):
     path = ROOT_DIR / imagen_url.lstrip('/')
     return path if path.exists() else None
 
+PRESUPUESTO_EMPRESA_NOMBRE = "Luz Brill Pinturas"
+LOGO_PATH = ROOT_DIR / 'assets' / 'logo_lbp_pdf.png'
+
 def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa: Empresa) -> bytes:
     """Genera el PDF A4 del presupuesto. Diseño moderno, deliberadamente distinto
     de la boleta (matricial) y la factura (papel pre-impreso)."""
@@ -2732,47 +2738,83 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm
     )
+    ancho_util = A4[0] - doc.leftMargin - doc.rightMargin
 
     elements = []
 
     azul = colors.HexColor('#1E3A8A')
     gris = colors.HexColor('#6B7280')
+    gris_claro = colors.HexColor('#F3F4F6')
+    texto = colors.HexColor('#1F2937')
 
-    empresa_style = ParagraphStyle('Empresa', fontName='Helvetica-Bold', fontSize=18, textColor=azul, spaceAfter=2)
-    subtitulo_style = ParagraphStyle('SubtituloEmpresa', fontName='Helvetica', fontSize=9, textColor=gris)
-    titulo_doc_style = ParagraphStyle('TituloDoc', fontName='Helvetica-Bold', fontSize=20, alignment=TA_RIGHT, textColor=azul)
-    numero_style = ParagraphStyle('NumeroDoc', fontName='Helvetica', fontSize=10, alignment=TA_RIGHT, textColor=gris)
-    seccion_style = ParagraphStyle('Seccion', fontName='Helvetica-Bold', fontSize=9, textColor=gris, spaceAfter=4)
-    cliente_style = ParagraphStyle('Cliente', fontName='Helvetica-Bold', fontSize=12)
-    normal_style = ParagraphStyle('NormalP', fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#374151'))
+    # Nota: cada ParagraphStyle fija su propio 'leading' explícitamente (ReportLab
+    # usa 12pt por defecto sin importar el fontSize, lo que solapaba líneas grandes).
+    empresa_style = ParagraphStyle('Empresa', fontName='Helvetica-Bold', fontSize=16, leading=19, textColor=azul)
+    subtitulo_style = ParagraphStyle('SubtituloEmpresa', fontName='Helvetica', fontSize=8.5, leading=13, textColor=gris)
+    titulo_doc_style = ParagraphStyle('TituloDoc', fontName='Helvetica-Bold', fontSize=18, leading=21, alignment=TA_RIGHT, textColor=azul)
+    numero_style = ParagraphStyle('NumeroDoc', fontName='Helvetica', fontSize=9.5, leading=14, alignment=TA_RIGHT, textColor=gris)
+    seccion_style = ParagraphStyle('Seccion', fontName='Helvetica-Bold', fontSize=8.5, leading=11, textColor=gris)
+    cliente_style = ParagraphStyle('Cliente', fontName='Helvetica-Bold', fontSize=12, leading=15, textColor=texto)
+    normal_style = ParagraphStyle('NormalP', fontName='Helvetica', fontSize=9, leading=13, textColor=texto)
+    item_nombre_style = ParagraphStyle('ItemNombre', fontName='Helvetica', fontSize=9.5, leading=13, textColor=texto)
 
-    header_data = [[
-        [Paragraph(empresa.nombre or 'Luz Brill', empresa_style),
-         Paragraph(empresa.direccion or '', subtitulo_style),
-         Paragraph(f"RUC: {empresa.ruc}" if empresa.ruc else '', subtitulo_style),
-         Paragraph(empresa.telefono or '', subtitulo_style)],
-        [Paragraph('PRESUPUESTO', titulo_doc_style),
-         Paragraph(f"N° {numero_presupuesto(presupuesto.id)}", numero_style),
-         Paragraph(f"Fecha: {presupuesto.creado_en.strftime('%d/%m/%Y') if presupuesto.creado_en else ''}", numero_style)]
-    ]]
-    header_table = Table(header_data, colWidths=[100 * mm, 70 * mm])
+    # ---- Encabezado: logo + datos de la empresa a la izquierda, título a la derecha ----
+    if LOGO_PATH.exists():
+        logo_flowable = Image(str(LOGO_PATH), width=20 * mm, height=20 * mm)
+    else:
+        logo_flowable = ''
+
+    datos_empresa = [
+        Paragraph(PRESUPUESTO_EMPRESA_NOMBRE, empresa_style),
+    ]
+    if empresa.direccion:
+        datos_empresa.append(Paragraph(empresa.direccion, subtitulo_style))
+    if empresa.ruc:
+        datos_empresa.append(Paragraph(f"RUC: {empresa.ruc}", subtitulo_style))
+    if empresa.telefono:
+        datos_empresa.append(Paragraph(f"Tel: {empresa.telefono}", subtitulo_style))
+
+    empresa_block = Table([[logo_flowable, datos_empresa]], colWidths=[24 * mm, (ancho_util - 94 * mm)])
+    empresa_block.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (0, 0), 0),
+        ('LEFTPADDING', (1, 0), (1, 0), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+
+    titulo_block = [
+        Paragraph('PRESUPUESTO', titulo_doc_style),
+        Spacer(1, 2 * mm),
+        Paragraph(f"N° {numero_presupuesto(presupuesto.id)}", numero_style),
+        Paragraph(f"Fecha: {presupuesto.creado_en.strftime('%d/%m/%Y') if presupuesto.creado_en else ''}", numero_style),
+    ]
+
+    header_table = Table([[empresa_block, titulo_block]], colWidths=[ancho_util - 70 * mm, 70 * mm])
     header_table.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     elements.append(header_table)
-    elements.append(Spacer(1, 4 * mm))
-    elements.append(Table([['']], colWidths=[170 * mm], style=TableStyle([
+    elements.append(Spacer(1, 5 * mm))
+    elements.append(Table([['']], colWidths=[ancho_util], style=TableStyle([
         ('LINEBELOW', (0, 0), (-1, 0), 1.2, azul),
     ])))
-    elements.append(Spacer(1, 6 * mm))
+    elements.append(Spacer(1, 7 * mm))
 
+    # ---- Cliente ----
     elements.append(Paragraph('CLIENTE', seccion_style))
+    elements.append(Spacer(1, 1.5 * mm))
     elements.append(Paragraph(f"{cliente.nombre} {cliente.apellido or ''}".strip(), cliente_style))
     detalle_cliente = []
     if cliente.ruc:
@@ -2782,53 +2824,93 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
     if cliente.direccion:
         detalle_cliente.append(cliente.direccion)
     if detalle_cliente:
-        elements.append(Paragraph(' · '.join(detalle_cliente), normal_style))
-    elements.append(Spacer(1, 8 * mm))
+        elements.append(Paragraph('   ·   '.join(detalle_cliente), normal_style))
+    elements.append(Spacer(1, 9 * mm))
 
-    tabla_datos = [['', 'Producto', 'Cantidad', 'Precio Unit.', 'Subtotal']]
-    row_heights = [8 * mm]
+    # ---- Tabla de productos ----
+    col_imagen = 20 * mm
+    col_cant = 20 * mm
+    col_precio = 32 * mm
+    col_subtotal = 34 * mm
+    col_producto = ancho_util - col_imagen - col_cant - col_precio - col_subtotal
+
+    encabezado_style = ParagraphStyle('EncTabla', fontName='Helvetica-Bold', fontSize=9, leading=11, textColor=colors.white)
+    encabezado_style_r = ParagraphStyle('EncTablaR', parent=encabezado_style, alignment=TA_RIGHT)
+    encabezado_style_c = ParagraphStyle('EncTablaC', parent=encabezado_style, alignment=TA_CENTER)
+    precio_style = ParagraphStyle('Precio', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=texto)
+    cant_style = ParagraphStyle('Cant', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_CENTER, textColor=texto)
+
+    tabla_datos = [[
+        '',
+        Paragraph('Producto', encabezado_style),
+        Paragraph('Cant.', encabezado_style_c),
+        Paragraph('Precio Unit.', encabezado_style_r),
+        Paragraph('Subtotal', encabezado_style_r),
+    ]]
+    row_heights = [9 * mm]
     for item in presupuesto.items:
         imagen_path = _resolver_imagen_local(item.imagen_url)
-        celda_imagen = Image(str(imagen_path), width=14 * mm, height=14 * mm) if imagen_path else ''
+        celda_imagen = Image(str(imagen_path), width=15 * mm, height=15 * mm) if imagen_path else ''
         tabla_datos.append([
             celda_imagen,
-            Paragraph(item.nombre_producto, normal_style),
-            str(item.cantidad),
-            f"Gs. {int(item.precio_venta_unitario):,}",
-            f"Gs. {int(item.subtotal):,}"
+            Paragraph(item.nombre_producto, item_nombre_style),
+            Paragraph(str(item.cantidad), cant_style),
+            Paragraph(f"Gs. {int(item.precio_venta_unitario):,}", precio_style),
+            Paragraph(f"Gs. {int(item.subtotal):,}", precio_style),
         ])
-        row_heights.append(16 * mm)
+        row_heights.append(19 * mm)
 
-    items_table = Table(tabla_datos, colWidths=[18 * mm, 82 * mm, 20 * mm, 25 * mm, 25 * mm], rowHeights=row_heights)
+    items_table = Table(
+        tabla_datos,
+        colWidths=[col_imagen, col_producto, col_cant, col_precio, col_subtotal],
+        rowHeights=row_heights
+    )
     items_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), azul),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 9),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('ALIGN', (2, 0), (-1, -1), 'CENTER'),
-        ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F3F4F6')]),
-        ('LINEBELOW', (0, 0), (-1, 0), 0.5, azul),
-        ('LINEBELOW', (0, -1), (-1, -1), 0.75, azul),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, gris_claro]),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.75, azul),
+        ('LINEBELOW', (0, 1), (-1, -2), 0.5, colors.HexColor('#E5E7EB')),
+        ('LINEBELOW', (0, -1), (-1, -1), 1, azul),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('BOX', (0, 0), (-1, -1), 0.75, azul),
     ]))
     elements.append(items_table)
-    elements.append(Spacer(1, 6 * mm))
+    elements.append(Spacer(1, 7 * mm))
 
-    total_style = ParagraphStyle('Total', fontName='Helvetica-Bold', fontSize=13, alignment=TA_RIGHT, textColor=azul)
-    elements.append(Paragraph(f"TOTAL: Gs. {int(presupuesto.total):,}", total_style))
+    # ---- Total ----
+    total_label_style = ParagraphStyle('TotalLabel', fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=TA_RIGHT, textColor=colors.white)
+    total_value_style = ParagraphStyle('TotalValue', fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=TA_RIGHT, textColor=colors.white)
+    total_table = Table(
+        [[Paragraph('TOTAL', total_label_style), Paragraph(f"Gs. {int(presupuesto.total):,}", total_value_style)]],
+        colWidths=[ancho_util - 55 * mm, 55 * mm]
+    )
+    total_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), azul),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(total_table)
 
     if presupuesto.notas:
         elements.append(Spacer(1, 8 * mm))
         elements.append(Paragraph('NOTAS', seccion_style))
+        elements.append(Spacer(1, 1.5 * mm))
         elements.append(Paragraph(presupuesto.notas, normal_style))
 
-    elements.append(Spacer(1, 14 * mm))
-    footer_style = ParagraphStyle('Footer', fontName='Helvetica-Oblique', fontSize=8, textColor=gris)
+    elements.append(Spacer(1, 12 * mm))
+    elements.append(Table([['']], colWidths=[ancho_util], style=TableStyle([
+        ('LINEABOVE', (0, 0), (-1, 0), 0.5, colors.HexColor('#E5E7EB')),
+    ])))
+    elements.append(Spacer(1, 3 * mm))
+    footer_style = ParagraphStyle('Footer', fontName='Helvetica-Oblique', fontSize=7.5, leading=10, textColor=gris)
     elements.append(Paragraph(
         'Este documento es un presupuesto de referencia y no constituye una factura ni una venta confirmada. '
         'Precios sujetos a disponibilidad de stock al momento de la compra.',
