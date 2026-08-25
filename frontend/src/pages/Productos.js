@@ -23,7 +23,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import EntradaStockDialog from '../components/EntradaStockDialog';
+import SalidaStockDialog from '../components/SalidaStockDialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 import {
@@ -61,6 +63,9 @@ const Productos = () => {
   const [checkingCodigo, setCheckingCodigo] = useState(false);
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [resolvingConflict, setResolvingConflict] = useState(false);
+  const [entradaDialogOpen, setEntradaDialogOpen] = useState(false);
+  const [salidaDialogOpen, setSalidaDialogOpen] = useState(false);
+  const [selectedProductoId, setSelectedProductoId] = useState(null);
 
   const [formData, setFormData] = useState({
     nombre: '',
@@ -641,7 +646,7 @@ const Productos = () => {
                 <TableHead>Ganancia</TableHead>
                 <TableHead>Proveedor</TableHead>
                 <TableHead>Stock</TableHead>
-                <TableHead className="w-28">Acciones</TableHead>
+                <TableHead className="w-40">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -702,6 +707,26 @@ const Productos = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      {userPermisos.includes('stock.entrada') && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Entrada de stock"
+                          onClick={() => { setSelectedProductoId(producto.id); setEntradaDialogOpen(true); }}
+                        >
+                          <ArrowDownToLine className="h-4 w-4 text-green-600" />
+                        </Button>
+                      )}
+                      {userPermisos.includes('stock.salida') && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Salida de stock"
+                          onClick={() => { setSelectedProductoId(producto.id); setSalidaDialogOpen(true); }}
+                        >
+                          <ArrowUpFromLine className="h-4 w-4 text-red-600" />
+                        </Button>
+                      )}
                       {userPermisos.includes('productos.editar') && (
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(producto)}>
                           <Edit className="h-4 w-4" />
@@ -802,6 +827,19 @@ const Productos = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <EntradaStockDialog
+        open={entradaDialogOpen}
+        onOpenChange={setEntradaDialogOpen}
+        productoIdInicial={selectedProductoId}
+        onSuccess={fetchData}
+      />
+      <SalidaStockDialog
+        open={salidaDialogOpen}
+        onOpenChange={setSalidaDialogOpen}
+        productoIdInicial={selectedProductoId}
+        onSuccess={fetchData}
+      />
     </div>
   );
 };

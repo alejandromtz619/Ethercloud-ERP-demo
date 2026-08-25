@@ -27,6 +27,7 @@ import HistorialVentas from './pages/HistorialVentas';
 import Reportes from './pages/Reportes';
 import Gastos from './pages/Gastos';
 import BusinessIntelligence from './pages/BusinessIntelligence';
+import Presupuestos from './pages/Presupuestos';
 
 import './App.css';
 
@@ -153,8 +154,19 @@ const AppRoutes = () => {
         } 
       />
       
-      <Route 
-        path="/proveedores" 
+      <Route
+        path="/presupuestos"
+        element={
+          <ProtectedRoute permission="presupuestos.ver">
+            <Layout>
+              <Presupuestos />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/proveedores"
         element={
           <ProtectedRoute permission="proveedores.ver">
             <Layout>

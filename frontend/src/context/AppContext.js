@@ -31,6 +31,7 @@ const ROUTE_PERMISSIONS = {
   '/historial-ventas': 'ventas.ver_historial',
   '/reportes': 'reportes.ver',
   '/gastos': 'gastos.ver',
+  '/presupuestos': 'presupuestos.ver',
   '/business-intelligence': 'reportes.business_intelligence',
 };
 

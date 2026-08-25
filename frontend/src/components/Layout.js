@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
   Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers,
-  DollarSign, TrendingUp
+  DollarSign, TrendingUp, FileSpreadsheet
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -23,6 +23,7 @@ const allMenuItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/ventas', icon: ShoppingCart, label: 'Ventas' },
   { path: '/historial-ventas', icon: History, label: 'Historial Ventas' },
+  { path: '/presupuestos', icon: FileSpreadsheet, label: 'Presupuestos' },
   { path: '/delivery', icon: Truck, label: 'Delivery' },
   { path: '/laboratorio', icon: FlaskConical, label: 'Laboratorio' },
   { path: '/productos', icon: Package, label: 'Productos' },

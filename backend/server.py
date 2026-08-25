@@ -38,6 +38,7 @@ from models import (
     Categoria, Marca, Producto, MateriaLaboratorio, EstadoMateria,
     Almacen, StockActual, MovimientoStock, TipoMovimientoStock,
     Venta, VentaItem, EstadoVenta, TipoPago,
+    Presupuesto, PresupuestoItem,
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
@@ -59,6 +60,7 @@ from schemas import (
     EntradaStockHistorialResponse,
     VentaCreate, VentaUpdate, VentaResponse, VentaConDetalles, VentaItemResponse,
     FechaImpresionUpdate,
+    PresupuestoCreate, PresupuestoResponse, PresupuestoConDetalles, PresupuestoItemResponse,
     FuncionarioCreate, FuncionarioResponse,
     AdelantoSalarioCreate, AdelantoSalarioResponse,
     CicloSalarioCreate, CicloSalarioResponse,
@@ -2563,6 +2565,311 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
         error_detail = f"Error anulando venta: {str(e)}\n{traceback.format_exc()}"
         print(error_detail)  # Esto aparecerá en los logs
         raise HTTPException(status_code=500, detail=error_detail)
+
+# ==================== PRESUPUESTOS ====================
+# Cotizaciones comerciales para clientes. A diferencia de una venta pendiente,
+# un presupuesto NUNCA toca stock ni aparece en historial/reportes de ventas.
+
+def numero_presupuesto(presupuesto_id: int) -> str:
+    return f"presupuesto-{presupuesto_id:03d}"
+
+async def _presupuesto_a_response(presupuesto: Presupuesto, cliente_nombre: str, con_items: bool = False):
+    data = {
+        'id': presupuesto.id,
+        'numero': numero_presupuesto(presupuesto.id),
+        'empresa_id': presupuesto.empresa_id,
+        'cliente_id': presupuesto.cliente_id,
+        'usuario_id': presupuesto.usuario_id,
+        'cliente_nombre': cliente_nombre,
+        'subtotal': presupuesto.subtotal,
+        'total': presupuesto.total,
+        'notas': presupuesto.notas,
+        'creado_en': presupuesto.creado_en,
+    }
+    if con_items:
+        data['items'] = [PresupuestoItemResponse.model_validate(item) for item in presupuesto.items]
+        return PresupuestoConDetalles(**data)
+    return PresupuestoResponse(**data)
+
+@api_router.post("/presupuestos", response_model=PresupuestoConDetalles)
+async def crear_presupuesto(data: PresupuestoCreate, db: AsyncSession = Depends(get_db)):
+    if not data.items:
+        raise HTTPException(status_code=400, detail="El presupuesto debe tener al menos un producto")
+
+    cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
+    cliente = cliente_result.scalar_one_or_none()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    presupuesto = Presupuesto(
+        empresa_id=data.empresa_id,
+        cliente_id=data.cliente_id,
+        usuario_id=data.usuario_id,
+        notas=data.notas,
+        subtotal=0,
+        total=0
+    )
+    db.add(presupuesto)
+    await db.flush()
+
+    total = Decimal('0')
+    for item_data in data.items:
+        prod_result = await db.execute(select(Producto).where(Producto.id == item_data.producto_id))
+        producto = prod_result.scalar_one_or_none()
+        if not producto:
+            raise HTTPException(status_code=404, detail=f"Producto {item_data.producto_id} no encontrado")
+        if item_data.cantidad <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a cero")
+
+        subtotal_item = producto.precio_venta * item_data.cantidad
+        total += subtotal_item
+        db.add(PresupuestoItem(
+            presupuesto_id=presupuesto.id,
+            producto_id=producto.id,
+            nombre_producto=producto.nombre,
+            imagen_url=producto.imagen_url,
+            cantidad=item_data.cantidad,
+            precio_venta_unitario=producto.precio_venta,
+            subtotal=subtotal_item
+        ))
+
+    presupuesto.subtotal = total
+    presupuesto.total = total
+
+    await db.commit()
+
+    result = await db.execute(
+        select(Presupuesto).options(selectinload(Presupuesto.items)).where(Presupuesto.id == presupuesto.id)
+    )
+    presupuesto = result.scalar_one()
+    cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+    return await _presupuesto_a_response(presupuesto, cliente_nombre, con_items=True)
+
+@api_router.get("/presupuestos", response_model=List[PresupuestoResponse])
+async def listar_presupuestos(
+    empresa_id: int,
+    numero: Optional[str] = None,
+    cliente_id: Optional[int] = None,
+    monto_desde: Optional[float] = None,
+    monto_hasta: Optional[float] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    query = (
+        select(Presupuesto, Cliente)
+        .join(Cliente, Presupuesto.cliente_id == Cliente.id)
+        .where(Presupuesto.empresa_id == empresa_id)
+        .order_by(Presupuesto.creado_en.desc())
+    )
+
+    if numero:
+        digitos = ''.join(ch for ch in numero if ch.isdigit())
+        if digitos:
+            query = query.where(Presupuesto.id == int(digitos))
+        else:
+            # Sin dígitos válidos: no puede coincidir ningún presupuesto
+            query = query.where(Presupuesto.id == -1)
+    if cliente_id:
+        query = query.where(Presupuesto.cliente_id == cliente_id)
+    if monto_desde is not None:
+        query = query.where(Presupuesto.total >= monto_desde)
+    if monto_hasta is not None:
+        query = query.where(Presupuesto.total <= monto_hasta)
+    if fecha_desde:
+        query = query.where(Presupuesto.creado_en >= datetime.fromisoformat(fecha_desde))
+    if fecha_hasta:
+        query = query.where(Presupuesto.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+
+    result = await db.execute(query)
+    respuesta = []
+    for presupuesto, cliente in result.all():
+        cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+        respuesta.append(await _presupuesto_a_response(presupuesto, cliente_nombre))
+    return respuesta
+
+async def _get_presupuesto_con_cliente(presupuesto_id: int, db: AsyncSession):
+    result = await db.execute(
+        select(Presupuesto, Cliente, Empresa)
+        .join(Cliente, Presupuesto.cliente_id == Cliente.id)
+        .join(Empresa, Presupuesto.empresa_id == Empresa.id)
+        .options(selectinload(Presupuesto.items))
+        .where(Presupuesto.id == presupuesto_id)
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    return row
+
+@api_router.get("/presupuestos/{presupuesto_id}", response_model=PresupuestoConDetalles)
+async def obtener_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
+    cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+    return await _presupuesto_a_response(presupuesto, cliente_nombre, con_items=True)
+
+@api_router.delete("/presupuestos/{presupuesto_id}")
+async def eliminar_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Presupuesto).where(Presupuesto.id == presupuesto_id))
+    presupuesto = result.scalar_one_or_none()
+    if not presupuesto:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    await db.execute(delete(PresupuestoItem).where(PresupuestoItem.presupuesto_id == presupuesto_id))
+    await db.delete(presupuesto)
+    await db.commit()
+    return {"message": "Presupuesto eliminado"}
+
+def _resolver_imagen_local(imagen_url: Optional[str]):
+    """Devuelve la ruta local del archivo si imagen_url apunta a un upload propio, si no None."""
+    if not imagen_url or not imagen_url.startswith('/uploads/'):
+        return None
+    path = ROOT_DIR / imagen_url.lstrip('/')
+    return path if path.exists() else None
+
+def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa: Empresa) -> bytes:
+    """Genera el PDF A4 del presupuesto. Diseño moderno, deliberadamente distinto
+    de la boleta (matricial) y la factura (papel pre-impreso)."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm
+    )
+
+    elements = []
+
+    azul = colors.HexColor('#1E3A8A')
+    gris = colors.HexColor('#6B7280')
+
+    empresa_style = ParagraphStyle('Empresa', fontName='Helvetica-Bold', fontSize=18, textColor=azul, spaceAfter=2)
+    subtitulo_style = ParagraphStyle('SubtituloEmpresa', fontName='Helvetica', fontSize=9, textColor=gris)
+    titulo_doc_style = ParagraphStyle('TituloDoc', fontName='Helvetica-Bold', fontSize=20, alignment=TA_RIGHT, textColor=azul)
+    numero_style = ParagraphStyle('NumeroDoc', fontName='Helvetica', fontSize=10, alignment=TA_RIGHT, textColor=gris)
+    seccion_style = ParagraphStyle('Seccion', fontName='Helvetica-Bold', fontSize=9, textColor=gris, spaceAfter=4)
+    cliente_style = ParagraphStyle('Cliente', fontName='Helvetica-Bold', fontSize=12)
+    normal_style = ParagraphStyle('NormalP', fontName='Helvetica', fontSize=9, textColor=colors.HexColor('#374151'))
+
+    header_data = [[
+        [Paragraph(empresa.nombre or 'Luz Brill', empresa_style),
+         Paragraph(empresa.direccion or '', subtitulo_style),
+         Paragraph(f"RUC: {empresa.ruc}" if empresa.ruc else '', subtitulo_style),
+         Paragraph(empresa.telefono or '', subtitulo_style)],
+        [Paragraph('PRESUPUESTO', titulo_doc_style),
+         Paragraph(f"N° {numero_presupuesto(presupuesto.id)}", numero_style),
+         Paragraph(f"Fecha: {presupuesto.creado_en.strftime('%d/%m/%Y') if presupuesto.creado_en else ''}", numero_style)]
+    ]]
+    header_table = Table(header_data, colWidths=[100 * mm, 70 * mm])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 4 * mm))
+    elements.append(Table([['']], colWidths=[170 * mm], style=TableStyle([
+        ('LINEBELOW', (0, 0), (-1, 0), 1.2, azul),
+    ])))
+    elements.append(Spacer(1, 6 * mm))
+
+    elements.append(Paragraph('CLIENTE', seccion_style))
+    elements.append(Paragraph(f"{cliente.nombre} {cliente.apellido or ''}".strip(), cliente_style))
+    detalle_cliente = []
+    if cliente.ruc:
+        detalle_cliente.append(f"RUC: {cliente.ruc}")
+    if cliente.telefono:
+        detalle_cliente.append(f"Tel: {cliente.telefono}")
+    if cliente.direccion:
+        detalle_cliente.append(cliente.direccion)
+    if detalle_cliente:
+        elements.append(Paragraph(' · '.join(detalle_cliente), normal_style))
+    elements.append(Spacer(1, 8 * mm))
+
+    tabla_datos = [['', 'Producto', 'Cantidad', 'Precio Unit.', 'Subtotal']]
+    row_heights = [8 * mm]
+    for item in presupuesto.items:
+        imagen_path = _resolver_imagen_local(item.imagen_url)
+        celda_imagen = Image(str(imagen_path), width=14 * mm, height=14 * mm) if imagen_path else ''
+        tabla_datos.append([
+            celda_imagen,
+            Paragraph(item.nombre_producto, normal_style),
+            str(item.cantidad),
+            f"Gs. {int(item.precio_venta_unitario):,}",
+            f"Gs. {int(item.subtotal):,}"
+        ])
+        row_heights.append(16 * mm)
+
+    items_table = Table(tabla_datos, colWidths=[18 * mm, 82 * mm, 20 * mm, 25 * mm, 25 * mm], rowHeights=row_heights)
+    items_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), azul),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('ALIGN', (2, 0), (-1, -1), 'CENTER'),
+        ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F3F4F6')]),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.5, azul),
+        ('LINEBELOW', (0, -1), (-1, -1), 0.75, azul),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(items_table)
+    elements.append(Spacer(1, 6 * mm))
+
+    total_style = ParagraphStyle('Total', fontName='Helvetica-Bold', fontSize=13, alignment=TA_RIGHT, textColor=azul)
+    elements.append(Paragraph(f"TOTAL: Gs. {int(presupuesto.total):,}", total_style))
+
+    if presupuesto.notas:
+        elements.append(Spacer(1, 8 * mm))
+        elements.append(Paragraph('NOTAS', seccion_style))
+        elements.append(Paragraph(presupuesto.notas, normal_style))
+
+    elements.append(Spacer(1, 14 * mm))
+    footer_style = ParagraphStyle('Footer', fontName='Helvetica-Oblique', fontSize=8, textColor=gris)
+    elements.append(Paragraph(
+        'Este documento es un presupuesto de referencia y no constituye una factura ni una venta confirmada. '
+        'Precios sujetos a disponibilidad de stock al momento de la compra.',
+        footer_style
+    ))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
+
+@api_router.get("/presupuestos/{presupuesto_id}/pdf")
+async def descargar_pdf_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
+    pdf_bytes = generar_pdf_presupuesto(presupuesto, cliente, empresa)
+    filename = f"{numero_presupuesto(presupuesto.id)}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@api_router.get("/presupuestos/{presupuesto_id}/xlsx")
+async def descargar_xlsx_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
+
+    columnas = ['Producto', 'Cantidad', 'Precio Unitario', 'Subtotal']
+    datos = [
+        [item.nombre_producto, item.cantidad, float(item.precio_venta_unitario), float(item.subtotal)]
+        for item in presupuesto.items
+    ]
+    cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+    totales = ['', '', 'TOTAL:', float(presupuesto.total)]
+    subtitulo = f"Cliente: {cliente_nombre} | Fecha: {presupuesto.creado_en.strftime('%d/%m/%Y') if presupuesto.creado_en else ''}"
+
+    excel_bytes = crear_excel_reporte(numero_presupuesto(presupuesto.id).upper(), subtitulo, columnas, datos, totales)
+    filename = f"{numero_presupuesto(presupuesto.id)}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 # ==================== BOLETA Y FACTURA ====================
 @api_router.get("/ventas/{venta_id}/boleta")
@@ -6843,6 +7150,11 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         ("clientes.ver", "Ver clientes"),
         ("facturas.ver", "Ver facturas"),
         ("ventas.ver_historial", "Ver historial de ventas"),
+        # Presupuestos
+        ("presupuestos.ver", "Ver presupuestos"),
+        ("presupuestos.crear", "Crear presupuestos"),
+        ("presupuestos.editar", "Editar presupuestos"),
+        ("presupuestos.eliminar", "Eliminar presupuestos"),
     ]
     for clave, desc in permisos_data:
         db.add(Permiso(clave=clave, descripcion=desc))
@@ -6877,7 +7189,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "funcionarios.ver", "funcionarios.ver_salarios", "funcionarios.adelantos",
         "delivery.ver", "delivery.crear", "delivery.actualizar_estado",
         "flota.ver", "laboratorio.ver", "laboratorio.crear", "laboratorio.editar",
-        "reportes.ver", "reportes.exportar"
+        "reportes.ver", "reportes.exportar",
+        "presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"
     ]
     if gerente_rol:
         for perm_clave in gerente_permisos:
@@ -7018,25 +7331,42 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
             ("funcionarios.editar", "Editar funcionarios"),
             ("usuarios.gestionar", "Gestionar usuarios"),
             ("sistema.configurar", "Configurar sistema"),
+            ("presupuestos.ver", "Ver presupuestos"),
+            ("presupuestos.crear", "Crear presupuestos"),
+            ("presupuestos.editar", "Editar presupuestos"),
+            ("presupuestos.eliminar", "Eliminar presupuestos"),
         ]
+        permisos_creados = {}
         for clave, desc in permisos_data:
             permiso = Permiso(clave=clave, descripcion=desc, estado=True)
             db.add(permiso)
             await db.flush()
-            
+            permisos_creados[clave] = permiso
+
             # Assign all permissions to admin role
             rol_permiso = RolPermiso(rol_id=rol_admin.id, permiso_id=permiso.id)
             db.add(rol_permiso)
-        
+
         # Create other roles
-        for rol_nombre in ["GERENTE", "VENDEDOR", "DELIVERY"]:
+        rol_gerente = Rol(
+            empresa_id=empresa.id,
+            nombre="GERENTE",
+            descripcion="Rol GERENTE",
+            estado=True
+        )
+        db.add(rol_gerente)
+        await db.flush()
+        for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"):
+            db.add(RolPermiso(rol_id=rol_gerente.id, permiso_id=permisos_creados[clave].id))
+
+        for rol_nombre in ["VENDEDOR", "DELIVERY"]:
             db.add(Rol(
                 empresa_id=empresa.id,
                 nombre=rol_nombre,
                 descripcion=f"Rol {rol_nombre}",
                 estado=True
             ))
-        
+
         # Create categories
         categorias = ["Pinturas", "Herramientas", "Materiales", "Accesorios"]
         for cat in categorias:
@@ -7127,6 +7457,10 @@ async def ensure_permisos():
         ("delivery.eliminar", "Eliminar entregas"),
         ("laboratorio.editar", "Editar materias de laboratorio"),
         ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
+        ("presupuestos.ver", "Ver presupuestos"),
+        ("presupuestos.crear", "Crear presupuestos"),
+        ("presupuestos.editar", "Editar presupuestos"),
+        ("presupuestos.eliminar", "Eliminar presupuestos"),
     ]
     async with async_session_maker() as db:
         for clave, descripcion in permisos_required:

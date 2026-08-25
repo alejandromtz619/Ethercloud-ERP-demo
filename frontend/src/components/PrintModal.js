@@ -7,7 +7,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 import { Loader2, Printer, Receipt, FileText, Send, CalendarDays, RotateCcw } from 'lucide-react';
@@ -303,8 +302,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
 const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
   const { api, userPermisos } = useApp();
-  const [printBoleta, setPrintBoleta] = useState(true);
-  const [printFactura, setPrintFactura] = useState(false);
+  const [tipoDocumento, setTipoDocumento] = useState('BOLETA'); // 'BOLETA' | 'FACTURA'
   const [loading, setLoading] = useState(false);
   const [boletaData, setBoletaData] = useState(null);
   const [facturaData, setFacturaData] = useState(null);
@@ -368,8 +366,8 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
     
     try {
       const promises = [];
-      if (printBoleta) promises.push(api(`/ventas/${ventaId}/boleta`).then(d => setBoletaData(d)));
-      if (printFactura) promises.push(api(`/ventas/${ventaId}/factura`).then(d => setFacturaData(d)));
+      if (tipoDocumento === 'BOLETA') promises.push(api(`/ventas/${ventaId}/boleta`).then(d => setBoletaData(d)));
+      else if (tipoDocumento === 'FACTURA') promises.push(api(`/ventas/${ventaId}/factura`).then(d => setFacturaData(d)));
       await Promise.all(promises);
     } catch (e) {
       setError(e.message);
@@ -380,24 +378,24 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
   };
 
   const handlePrint = useCallback(async () => {
-    if (!printBoleta && !printFactura) {
-      toast.error('Seleccione al menos un documento');
+    if (!tipoDocumento) {
+      toast.error('Seleccione un documento');
       return;
     }
-    
+
     await fetchPrintData();
-    
+
     // Use a small delay to ensure data is loaded
     setTimeout(() => {
       const printContent = [];
-      
-      if (printBoleta && boletaRef.current) {
+
+      if (tipoDocumento === 'BOLETA' && boletaRef.current) {
         printContent.push(boletaRef.current.innerHTML);
       }
-      if (printFactura && facturaRef.current) {
+      if (tipoDocumento === 'FACTURA' && facturaRef.current) {
         printContent.push(facturaRef.current.innerHTML);
       }
-      
+
       if (printContent.length > 0) {
         const printWindow = window.open('', '_blank');
         if (printWindow) {
@@ -506,20 +504,17 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
         }
       }
     }, 500);
-  }, [printBoleta, printFactura, ventaId, onOpenChange, onPrintComplete]);
+  }, [tipoDocumento, ventaId, onOpenChange, onPrintComplete]);
 
   const handleSendWhatsApp = useCallback(async () => {
-    if (!printBoleta && !printFactura) {
-      toast.error('Seleccione al menos un documento');
+    if (!tipoDocumento) {
+      toast.error('Seleccione un documento');
       return;
     }
-    
+
     setLoading(true);
-    
+
     try {
-      // Determinar tipo de documento
-      const tipoDocumento = printBoleta ? 'BOLETA' : 'FACTURA';
-      
       // Llamar al backend para generar enlace
       const response = await api(`/ventas/${ventaId}/generar-enlace?tipo_documento=${tipoDocumento}`, {
         method: 'POST'
@@ -542,7 +537,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       }
       
       // Get data from whichever document is selected
-      const data = printBoleta ? boletaData : facturaData;
+      const data = tipoDocumento === 'BOLETA' ? boletaData : facturaData;
       
       if (!data) {
         toast.error('Error al cargar datos de venta');
@@ -572,7 +567,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       }
       
       // Generate message with download link
-      const docType = printBoleta ? 'Boleta' : 'Factura';
+      const docType = tipoDocumento === 'BOLETA' ? 'Boleta' : 'Factura';
       const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' });
       
       const message = `
@@ -606,7 +601,7 @@ Gracias por su compra! 🙏
     } finally {
       setLoading(false);
     }
-  }, [printBoleta, printFactura, ventaId, boletaData, facturaData, api, fetchPrintData]);
+  }, [tipoDocumento, ventaId, boletaData, facturaData, api, fetchPrintData]);
 
   // Fetch data when modal opens
   React.useEffect(() => {
@@ -622,8 +617,7 @@ Gracias por su compra! 🙏
       setBoletaData(null);
       setFacturaData(null);
       setError(null);
-      setPrintBoleta(true);
-      setPrintFactura(false);
+      setTipoDocumento('BOLETA');
       setFechas(null);
       setEditandoFecha(null);
       setFechaTemp('');
@@ -707,7 +701,7 @@ Gracias por su compra! 🙏
         
         <div className="space-y-4">
           <p className="text-muted-foreground text-sm">
-            Seleccione qué documento(s) desea imprimir para la venta #{ventaId}
+            Seleccione qué documento desea imprimir para la venta #{ventaId}
           </p>
           
           {error && (
@@ -717,18 +711,23 @@ Gracias por su compra! 🙏
           )}
           
           <div className="space-y-3">
-            <div className="border rounded-lg">
-              <div className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg">
-                <Checkbox
-                  id="boleta"
-                  checked={printBoleta}
-                  onCheckedChange={setPrintBoleta}
-                />
+            <div className={`border rounded-lg ${tipoDocumento === 'BOLETA' ? 'border-primary ring-1 ring-primary' : ''}`}>
+              <div
+                role="radio"
+                aria-checked={tipoDocumento === 'BOLETA'}
+                tabIndex={0}
+                onClick={() => setTipoDocumento('BOLETA')}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('BOLETA')}
+                className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+              >
+                <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'BOLETA' ? 'border-primary' : 'border-muted-foreground'}`}>
+                  {tipoDocumento === 'BOLETA' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                </div>
                 <div className="flex-1">
-                  <Label htmlFor="boleta" className="flex items-center gap-2 cursor-pointer">
+                  <span className="flex items-center gap-2">
                     <Receipt className="h-4 w-4" />
                     Boleta
-                  </Label>
+                  </span>
                   <p className="text-xs text-muted-foreground">
                     Documento simple para clientes sin RUC
                   </p>
@@ -739,18 +738,23 @@ Gracias por su compra! 🙏
             </div>
 
             {userPermisos.includes('ventas.imprimir_factura') && (
-              <div className="border rounded-lg">
-                <div className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg">
-                  <Checkbox
-                    id="factura"
-                    checked={printFactura}
-                    onCheckedChange={setPrintFactura}
-                  />
+              <div className={`border rounded-lg ${tipoDocumento === 'FACTURA' ? 'border-primary ring-1 ring-primary' : ''}`}>
+                <div
+                  role="radio"
+                  aria-checked={tipoDocumento === 'FACTURA'}
+                  tabIndex={0}
+                  onClick={() => setTipoDocumento('FACTURA')}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FACTURA')}
+                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+                >
+                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FACTURA' ? 'border-primary' : 'border-muted-foreground'}`}>
+                    {tipoDocumento === 'FACTURA' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                  </div>
                   <div className="flex-1">
-                    <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
+                    <span className="flex items-center gap-2">
                       <FileText className="h-4 w-4" />
                       Factura
-                    </Label>
+                    </span>
                     <p className="text-xs text-muted-foreground">
                       Documento fiscal con desglose de IVA (requiere RUC)
                     </p>
@@ -779,7 +783,7 @@ Gracias por su compra! 🙏
               <Button 
                 onClick={handleSendWhatsApp}
                 variant="outline"
-                disabled={loading || (!printBoleta && !printFactura)}
+                disabled={loading || !tipoDocumento}
                 className="bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 border-green-200"
                 title="Enviar resumen por WhatsApp (solo texto)"
               >
@@ -788,8 +792,8 @@ Gracias por su compra! 🙏
               </Button>
             )}
             <Button 
-              onClick={handlePrint} 
-              disabled={loading || (!printBoleta && !printFactura)}
+              onClick={handlePrint}
+              disabled={loading || !tipoDocumento}
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               <Printer className="mr-2 h-4 w-4" />

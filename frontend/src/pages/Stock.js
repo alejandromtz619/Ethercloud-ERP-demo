@@ -44,6 +44,8 @@ import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Tra
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { DatePickerInput } from '../components/ui/date-picker-input';
+import EntradaStockDialog from '../components/EntradaStockDialog';
+import SalidaStockDialog from '../components/SalidaStockDialog';
 
 const Stock = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -60,29 +62,11 @@ const Stock = () => {
   const [searchId, setSearchId] = useState('');
   const [searchCodigo, setSearchCodigo] = useState('');
   
-  const [entradaForm, setEntradaForm] = useState({
-    producto_id: '',
-    almacen_id: '',
-    cantidad: '',
-    proveedor_id: '',
-    costo_unitario: '',
-    condicion_pago: 'contado',
-    fecha_limite_pago: '',
-    notas: ''
-  });
-
   const [historialDialogOpen, setHistorialDialogOpen] = useState(false);
   const [historialProducto, setHistorialProducto] = useState(null);
   const [historialData, setHistorialData] = useState([]);
   const [historialLoading, setHistorialLoading] = useState(false);
   const [historialFiltroTipo, setHistorialFiltroTipo] = useState('TODOS'); // Filtro por tipo de movimiento
-
-  const [salidaForm, setSalidaForm] = useState({
-    producto_id: '',
-    almacen_id: '',
-    cantidad: '',
-    motivo: ''
-  });
 
   const [traspasoForm, setTraspasoForm] = useState({
     producto_id: '',
@@ -97,11 +81,7 @@ const Stock = () => {
   });
 
   // Popovers state for searchable product selectors
-  const [entradaPopoverOpen, setEntradaPopoverOpen] = useState(false);
-  const [salidaPopoverOpen, setSalidaPopoverOpen] = useState(false);
   const [traspasoPopoverOpen, setTraspasoPopoverOpen] = useState(false);
-  const [productoSearchEntrada, setProductoSearchEntrada] = useState('');
-  const [productoSearchSalida, setProductoSearchSalida] = useState('');
   const [productoSearchTraspaso, setProductoSearchTraspaso] = useState('');
   const [proveedores, setProveedores] = useState([]);
 
@@ -132,43 +112,6 @@ const Stock = () => {
   useEffect(() => {
     fetchData();
   }, [empresa?.id, selectedAlmacen]);
-
-  const handleEntrada = async (e) => {
-    e.preventDefault();
-    if (!entradaForm.producto_id || !entradaForm.almacen_id || !entradaForm.cantidad) {
-      toast.error('Complete todos los campos');
-      return;
-    }
-    if (entradaForm.condicion_pago === 'credito' && !entradaForm.proveedor_id) {
-      toast.error('Seleccione un proveedor para registrar la deuda a crédito');
-      return;
-    }
-
-    try {
-      const payload = {
-        producto_id: parseInt(entradaForm.producto_id),
-        almacen_id: parseInt(entradaForm.almacen_id),
-        cantidad: parseInt(entradaForm.cantidad),
-        tipo: 'ENTRADA',
-        proveedor_id: entradaForm.proveedor_id ? parseInt(entradaForm.proveedor_id) : null,
-        costo_unitario: entradaForm.costo_unitario ? parseFloat(entradaForm.costo_unitario) : null,
-        condicion_pago: entradaForm.condicion_pago || null,
-        fecha_limite_pago: entradaForm.fecha_limite_pago || null,
-        notas: entradaForm.notas || null
-      };
-      await api('/stock/entrada', { method: 'POST', body: JSON.stringify(payload) });
-      if (entradaForm.condicion_pago === 'credito' && entradaForm.proveedor_id) {
-        toast.success('Entrada registrada y deuda enviada al proveedor');
-      } else {
-        toast.success('Entrada registrada');
-      }
-      setDialogOpen(false);
-      setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
-      fetchData();
-    } catch (e) {
-      toast.error('Error al registrar entrada');
-    }
-  };
 
   const fetchHistorial = async (productoId, productoNombre) => {
     setHistorialProducto({ id: productoId, nombre: productoNombre });
@@ -220,32 +163,6 @@ const Stock = () => {
       fetchData();
     } catch (e) {
       toast.error(e.message || 'Error al realizar traspaso');
-    }
-  };
-
-  const handleSalida = async (e) => {
-    e.preventDefault();
-    if (!salidaForm.producto_id || !salidaForm.almacen_id || !salidaForm.cantidad) {
-      toast.error('Complete todos los campos');
-      return;
-    }
-
-    try {
-      await api('/stock/salida', {
-        method: 'POST',
-        body: JSON.stringify({
-          producto_id: parseInt(salidaForm.producto_id),
-          almacen_id: parseInt(salidaForm.almacen_id),
-          cantidad: parseInt(salidaForm.cantidad),
-          motivo: salidaForm.motivo || 'Salida manual'
-        })
-      });
-      toast.success('Salida registrada');
-      setSalidaDialogOpen(false);
-      setSalidaForm({ producto_id: '', almacen_id: '', cantidad: '', motivo: '' });
-      fetchData();
-    } catch (e) {
-      toast.error(e.message || 'Error al registrar salida');
     }
   };
 
@@ -454,293 +371,24 @@ const Stock = () => {
 
           {/* Entrada Stock */}
           {userPermisos.includes('stock.entrada') && (
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button data-testid="entrada-stock-btn">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Entrada
-                </Button>
-              </DialogTrigger>
-            <DialogContent>
-              <DialogDescription className="hidden">Formulario para registrar una entrada de stock</DialogDescription>
-              <DialogHeader>
-                <DialogTitle>Entrada de Stock</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleEntrada} className="space-y-4">
-                <div>
-                  <Label>Producto</Label>
-                  <Popover open={entradaPopoverOpen} onOpenChange={setEntradaPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={entradaPopoverOpen}
-                        className="w-full justify-between"
-                      >
-                        {entradaForm.producto_id
-                          ? productos.find((p) => p.id.toString() === entradaForm.producto_id)?.nombre
-                          : "Buscar producto..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[400px] p-0">
-                      <Command shouldFilter={false}>
-                        <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
-                          value={productoSearchEntrada}
-                          onValueChange={setProductoSearchEntrada}
-                        />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
-                        <CommandGroup className="max-h-64 overflow-auto">
-                          {productos
-                            .filter(p => 
-                              !productoSearchEntrada || 
-                              p.nombre.toLowerCase().includes(productoSearchEntrada.toLowerCase()) ||
-                              p.codigo_barra?.toLowerCase().includes(productoSearchEntrada.toLowerCase())
-                            )
-                            .map((p) => (
-                              <CommandItem
-                                key={p.id}
-                                value={p.nombre}
-                                onSelect={() => {
-                                  setEntradaForm({
-                                    ...entradaForm,
-                                    producto_id: p.id.toString(),
-                                    costo_unitario: p.precio_costo ? p.precio_costo.toString() : '',
-                                    proveedor_id: p.proveedor_id ? p.proveedor_id.toString() : entradaForm.proveedor_id
-                                  });
-                                  setEntradaPopoverOpen(false);
-                                  setProductoSearchEntrada('');
-                                }}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4",
-                                    entradaForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                <div className="flex flex-col">
-                                  <span>{p.nombre}</span>
-                                  {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div>
-                  <Label>Almacén</Label>
-                  <Select value={entradaForm.almacen_id} onValueChange={(v) => setEntradaForm({...entradaForm, almacen_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacén" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {almacenes.map(a => (
-                        <SelectItem key={a.id} value={a.id.toString()}>{a.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>Cantidad</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={entradaForm.cantidad}
-                      onChange={(e) => setEntradaForm({...entradaForm, cantidad: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label>Precio de Costo (Gs.)</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={entradaForm.costo_unitario}
-                      onChange={(e) => setEntradaForm({...entradaForm, costo_unitario: e.target.value})}
-                    />
-                  </div>
-                </div>
-                {entradaForm.costo_unitario && entradaForm.cantidad && (
-                  <div className="text-sm text-muted-foreground bg-muted/40 rounded px-3 py-2">
-                    Total compra: <span className="font-mono font-semibold">
-                      Gs. {(parseFloat(entradaForm.costo_unitario || 0) * parseInt(entradaForm.cantidad || 0)).toLocaleString('es-PY')}
-                    </span>
-                  </div>
-                )}
-                <div>
-                  <Label>Proveedor</Label>
-                  <Select value={entradaForm.proveedor_id} onValueChange={(v) => setEntradaForm({...entradaForm, proveedor_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar proveedor (opcional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {proveedores.map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Condición de Pago</Label>
-                  <div className="flex gap-2 mt-1">
-                    <Button
-                      type="button"
-                      variant={entradaForm.condicion_pago === 'contado' ? 'default' : 'outline'}
-                      className="flex-1 gap-2"
-                      onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'contado', fecha_limite_pago: ''})}
-                    >
-                      <ShoppingCart className="h-4 w-4" />
-                      Contado
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={entradaForm.condicion_pago === 'credito' ? 'default' : 'outline'}
-                      className="flex-1 gap-2"
-                      onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'credito'})}
-                    >
-                      <CreditCard className="h-4 w-4" />
-                      Crédito
-                    </Button>
-                  </div>
-                </div>
-                {entradaForm.condicion_pago === 'credito' && (
-                  <div>
-                    <Label>Fecha Límite de Pago</Label>
-                    <DatePickerInput
-                      value={entradaForm.fecha_limite_pago}
-                      onChange={(val) => setEntradaForm({...entradaForm, fecha_limite_pago: val})}
-                    />
-                  </div>
-                )}
-                <div>
-                  <Label>Notas (opcional)</Label>
-                  <Input
-                    placeholder="Ej: Factura #1234, lote especial..."
-                    value={entradaForm.notas}
-                    onChange={(e) => setEntradaForm({...entradaForm, notas: e.target.value})}
-                  />
-                </div>
-                <Button type="submit" className="w-full">Registrar Entrada</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+            <>
+              <Button data-testid="entrada-stock-btn" onClick={() => setDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Entrada
+              </Button>
+              <EntradaStockDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchData} />
+            </>
           )}
 
           {/* Salida Stock */}
           {userPermisos.includes('stock.salida') && (
-            <Dialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="destructive" data-testid="salida-stock-btn">
-                  <Minus className="mr-2 h-4 w-4" />
-                  Salida
-                </Button>
-              </DialogTrigger>
-            <DialogContent>
-              <DialogDescription className="hidden">Formulario para registrar una salida o eliminación de stock</DialogDescription>
-              <DialogHeader>
-                <DialogTitle>Salida/Eliminación de Stock</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSalida} className="space-y-4">
-                <div>
-                  <Label>Producto</Label>
-                  <Popover open={salidaPopoverOpen} onOpenChange={setSalidaPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={salidaPopoverOpen}
-                        className="w-full justify-between"
-                      >
-                        {salidaForm.producto_id
-                          ? productos.find((p) => p.id.toString() === salidaForm.producto_id)?.nombre
-                          : "Buscar producto..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[400px] p-0">
-                      <Command shouldFilter={false}>
-                        <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
-                          value={productoSearchSalida}
-                          onValueChange={setProductoSearchSalida}
-                        />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
-                        <CommandGroup className="max-h-64 overflow-auto">
-                          {productos
-                            .filter(p => 
-                              !productoSearchSalida || 
-                              p.nombre.toLowerCase().includes(productoSearchSalida.toLowerCase()) ||
-                              p.codigo_barra?.toLowerCase().includes(productoSearchSalida.toLowerCase())
-                            )
-                            .map((p) => (
-                              <CommandItem
-                                key={p.id}
-                                value={p.nombre}
-                                onSelect={() => {
-                                  setSalidaForm({...salidaForm, producto_id: p.id.toString()});
-                                  setSalidaPopoverOpen(false);
-                                  setProductoSearchSalida('');
-                                }}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4",
-                                    salidaForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                <div className="flex flex-col">
-                                  <span>{p.nombre}</span>
-                                  {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div>
-                  <Label>Almacén</Label>
-                  <Select value={salidaForm.almacen_id} onValueChange={(v) => setSalidaForm({...salidaForm, almacen_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacén" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {almacenes.map(a => (
-                        <SelectItem key={a.id} value={a.id.toString()}>{a.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Cantidad</Label>
-                  <Input
-                    type="number"
-                    min="1"
-                    value={salidaForm.cantidad}
-                    onChange={(e) => setSalidaForm({...salidaForm, cantidad: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <Label>Motivo</Label>
-                  <Input
-                    value={salidaForm.motivo}
-                    onChange={(e) => setSalidaForm({...salidaForm, motivo: e.target.value})}
-                    placeholder="Ej: Producto dañado, vencido, etc."
-                  />
-                </div>
-                <Button type="submit" variant="destructive" className="w-full">Registrar Salida</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+            <>
+              <Button variant="destructive" data-testid="salida-stock-btn" onClick={() => setSalidaDialogOpen(true)}>
+                <Minus className="mr-2 h-4 w-4" />
+                Salida
+              </Button>
+              <SalidaStockDialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen} onSuccess={fetchData} />
+            </>
           )}
         </div>
       </div>

@@ -424,6 +424,40 @@ class VentaItem(Base):
     producto = relationship("Producto", back_populates="venta_items")
     materia_laboratorio = relationship("MateriaLaboratorio", back_populates="venta_items")
 
+class Presupuesto(Base):
+    """Cotización comercial para un cliente. No afecta stock ni ventas/reportes."""
+    __tablename__ = "presupuestos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    subtotal = Column(Numeric(15, 2), default=0)
+    total = Column(Numeric(15, 2), default=0)
+    notas = Column(Text, nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
+    empresa = relationship("Empresa")
+    cliente = relationship("Cliente")
+    usuario = relationship("Usuario")
+    items = relationship("PresupuestoItem", back_populates="presupuesto", cascade="all, delete-orphan")
+
+class PresupuestoItem(Base):
+    __tablename__ = "presupuesto_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    presupuesto_id = Column(Integer, ForeignKey("presupuestos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=True)
+    # Snapshot de datos del producto al momento de cotizar (el producto puede cambiar después)
+    nombre_producto = Column(String(255), nullable=False)
+    imagen_url = Column(String(500), nullable=True)
+    cantidad = Column(Integer, nullable=False)
+    precio_venta_unitario = Column(Numeric(15, 2), nullable=False)
+    subtotal = Column(Numeric(15, 2), nullable=False)
+
+    presupuesto = relationship("Presupuesto", back_populates="items")
+    producto = relationship("Producto")
+
 class Funcionario(Base):
     __tablename__ = "funcionarios"
     

@@ -485,6 +485,44 @@ class VentaConDetalles(VentaResponse):
     cliente_nombre: Optional[str] = None
     cliente_ruc: Optional[str] = None
 
+# Presupuesto
+class PresupuestoItemCreate(BaseModel):
+    producto_id: int
+    cantidad: int
+
+class PresupuestoItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    producto_id: Optional[int] = None
+    nombre_producto: str
+    imagen_url: Optional[str] = None
+    cantidad: int
+    precio_venta_unitario: Decimal
+    subtotal: Decimal
+
+class PresupuestoCreate(BaseModel):
+    empresa_id: int
+    cliente_id: int
+    usuario_id: int
+    notas: Optional[str] = None
+    items: List[PresupuestoItemCreate]
+
+class PresupuestoResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    numero: str
+    empresa_id: int
+    cliente_id: int
+    usuario_id: int
+    cliente_nombre: Optional[str] = None
+    subtotal: Decimal
+    total: Decimal
+    notas: Optional[str] = None
+    creado_en: Optional[datetime] = None
+
+class PresupuestoConDetalles(PresupuestoResponse):
+    items: List[PresupuestoItemResponse] = []
+
 # Funcionario
 class FuncionarioBase(BaseModel):
     nombre: str
