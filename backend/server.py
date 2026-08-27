@@ -27,7 +27,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, cm, mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
@@ -2759,8 +2760,8 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
         pagesize=A4,
         leftMargin=18 * mm,
         rightMargin=18 * mm,
-        topMargin=16 * mm,
-        bottomMargin=16 * mm
+        topMargin=14 * mm,
+        bottomMargin=14 * mm
     )
     ancho_util = A4[0] - doc.leftMargin - doc.rightMargin
 
@@ -2828,11 +2829,11 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     elements.append(header_table)
-    elements.append(Spacer(1, 5 * mm))
+    elements.append(Spacer(1, 3 * mm))
     elements.append(Table([['']], colWidths=[ancho_util], style=TableStyle([
         ('LINEBELOW', (0, 0), (-1, 0), 1.2, azul),
     ])))
-    elements.append(Spacer(1, 7 * mm))
+    elements.append(Spacer(1, 4 * mm))
 
     # ---- Cliente ----
     elements.append(Paragraph('CLIENTE', seccion_style))
@@ -2847,7 +2848,7 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
         detalle_cliente.append(cliente.direccion)
     if detalle_cliente:
         elements.append(Paragraph('   ·   '.join(detalle_cliente), normal_style))
-    elements.append(Spacer(1, 9 * mm))
+    elements.append(Spacer(1, 5 * mm))
 
     # ---- Tabla de productos ----
     col_imagen = 20 * mm
@@ -2862,51 +2863,87 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
     precio_style = ParagraphStyle('Precio', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=texto)
     cant_style = ParagraphStyle('Cant', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_CENTER, textColor=texto)
 
-    tabla_datos = [[
-        '',
-        Paragraph('Producto', encabezado_style),
-        Paragraph('Cant.', encabezado_style_c),
-        Paragraph('Precio Unit.', encabezado_style_r),
-        Paragraph('Subtotal', encabezado_style_r),
-    ]]
-    row_heights = [9 * mm]
-    for item in presupuesto.items:
-        img_bytes = imagenes.get(item.id)
-        celda_imagen = ''
-        if img_bytes:
-            try:
-                celda_imagen = Image(io.BytesIO(img_bytes), width=15 * mm, height=15 * mm)
-            except Exception:
-                celda_imagen = ''
-        tabla_datos.append([
-            celda_imagen,
-            Paragraph(item.nombre_producto, item_nombre_style),
-            Paragraph(str(item.cantidad), cant_style),
-            Paragraph(f"Gs. {int(item.precio_venta_unitario):,}", precio_style),
-            Paragraph(f"Gs. {int(item.subtotal):,}", precio_style),
-        ])
-        row_heights.append(19 * mm)
+    # Fila con altura fija (imagen 15mm + padding reducido). El nombre del producto se
+    # trunca a como mucho 2 líneas para que ninguna fila pueda crecer más de lo previsto
+    # (nombres muy largos no deben poder "empujar" filas fuera de la hoja y romper el
+    # límite de 10 productos por página).
+    FILA_ALTURA = 17.5 * mm
+    FILA_PADDING_V = 3  # puntos, arriba y abajo
+    ITEM_MAX_LINEAS = 2
 
-    items_table = Table(
-        tabla_datos,
-        colWidths=[col_imagen, col_producto, col_cant, col_precio, col_subtotal],
-        rowHeights=row_heights
-    )
-    items_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), azul),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, gris_claro]),
-        ('LINEBELOW', (0, 0), (-1, 0), 0.75, azul),
-        ('LINEBELOW', (0, 1), (-1, -2), 0.5, colors.HexColor('#E5E7EB')),
-        ('LINEBELOW', (0, -1), (-1, -1), 1, azul),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('BOX', (0, 0), (-1, -1), 0.75, azul),
-    ]))
-    elements.append(items_table)
+    def _truncar_nombre(texto_item):
+        ancho_disponible = col_producto - 12  # resta LEFTPADDING+RIGHTPADDING (6pt c/u)
+        ancho_por_linea = ancho_disponible / max(1, stringWidth('M', 'Helvetica', 9.5))
+        max_chars = int(ancho_por_linea) * ITEM_MAX_LINEAS
+        if len(texto_item) <= max_chars:
+            return texto_item
+        return texto_item[:max(1, max_chars - 1)].rstrip() + '…'
+
+    def _construir_tabla_items(items_chunk):
+        tabla_datos = [[
+            '',
+            Paragraph('Producto', encabezado_style),
+            Paragraph('Cant.', encabezado_style_c),
+            Paragraph('Precio Unit.', encabezado_style_r),
+            Paragraph('Subtotal', encabezado_style_r),
+        ]]
+        row_heights = [9 * mm]
+        for item in items_chunk:
+            img_bytes = imagenes.get(item.id)
+            celda_imagen = ''
+            if img_bytes:
+                try:
+                    celda_imagen = Image(io.BytesIO(img_bytes), width=15 * mm, height=15 * mm)
+                except Exception:
+                    celda_imagen = ''
+            tabla_datos.append([
+                celda_imagen,
+                Paragraph(_truncar_nombre(item.nombre_producto), item_nombre_style),
+                Paragraph(str(item.cantidad), cant_style),
+                Paragraph(f"Gs. {int(item.precio_venta_unitario):,}", precio_style),
+                Paragraph(f"Gs. {int(item.subtotal):,}", precio_style),
+            ])
+            row_heights.append(FILA_ALTURA)
+
+        tabla = Table(
+            tabla_datos,
+            colWidths=[col_imagen, col_producto, col_cant, col_precio, col_subtotal],
+            rowHeights=row_heights
+        )
+        tabla.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), azul),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, gris_claro]),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.75, azul),
+            ('LINEBELOW', (0, 1), (-1, -2), 0.5, colors.HexColor('#E5E7EB')),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, azul),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), FILA_PADDING_V),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), FILA_PADDING_V),
+            ('BOX', (0, 0), (-1, -1), 0.75, azul),
+        ]))
+        return tabla
+
+    # Máximo 10 productos por hoja: coincide con el límite del carrito de Ventas,
+    # para que al convertir un presupuesto en venta el vendedor no se confunda
+    # viendo más ítems por página de los que puede cargar en una sola venta.
+    FILAS_POR_PAGINA = 10
+    items_lista = presupuesto.items
+    paginas = [items_lista[i:i + FILAS_POR_PAGINA] for i in range(0, len(items_lista), FILAS_POR_PAGINA)] or [[]]
+
+    continuacion_style = ParagraphStyle('Continuacion', fontName='Helvetica-Bold', fontSize=8.5, leading=11, textColor=gris)
+    for idx, pagina_items in enumerate(paginas):
+        if idx > 0:
+            elements.append(PageBreak())
+            elements.append(Paragraph(
+                f"PRESUPUESTO {numero_presupuesto(presupuesto.id)} — {cliente.nombre} {cliente.apellido or ''} "
+                f"(continuación, página {idx + 1} de {len(paginas)})",
+                continuacion_style
+            ))
+            elements.append(Spacer(1, 4 * mm))
+        elements.append(_construir_tabla_items(pagina_items))
     elements.append(Spacer(1, 5 * mm))
 
     # ---- Resumen: Subtotal / IVA incluido (precios ya incluyen IVA, igual que en Ventas) ----
