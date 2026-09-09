@@ -781,13 +781,19 @@ const Ventas = () => {
                       onClick={() => producto.stock_total > 0 && addToCart(producto, 'producto')}
                       data-testid={`producto-card-${producto.id}`}
                     >
-                      {/* Thumbnail */}
+                      {/* Thumbnail. Las imagenes apuntan a ~250 dominios de terceros;
+                          sin loading="lazy" se piden tambien los cientos que estan
+                          fuera de pantalla y muchos hosts cuelgan hasta el timeout. */}
                       <div className="w-8 h-8 rounded overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
                         {producto.imagen_url ? (
                           <img
                             src={producto.imagen_url}
                             alt={producto.nombre}
                             className="w-full h-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
                             onClick={(e) => {
                               e.stopPropagation();
                               window.open(producto.imagen_url, '_blank');

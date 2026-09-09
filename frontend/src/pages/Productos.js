@@ -663,7 +663,15 @@ const Productos = () => {
                             setImageDialogOpen(true);
                           }}
                         >
-                          <img src={producto.imagen_url} alt="" className="w-10 h-10 rounded object-cover" />
+                          <img
+                            src={producto.imagen_url}
+                            alt=""
+                            className="w-10 h-10 rounded object-cover"
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                          />
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
                             <Expand className="h-4 w-4 text-white" />
                           </div>

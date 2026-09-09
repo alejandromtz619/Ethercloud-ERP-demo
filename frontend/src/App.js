@@ -1,35 +1,45 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { Toaster } from './components/ui/sonner';
 import Layout from './components/Layout';
+import './App.css';
 
-// Pages
+// Login y Home van en el bundle inicial: son la primera pantalla y partirlas
+// solo anadiria una ida y vuelta mas antes de poder entrar.
 import Login from './pages/Login';
 import Home from './pages/Home';
-import Dashboard from './pages/Dashboard';
-import Ventas from './pages/Ventas';
-import Delivery from './pages/Delivery';
-import Laboratorio from './pages/Laboratorio';
-import Productos from './pages/Productos';
-import Proveedores from './pages/Proveedores';
-import Clientes from './pages/Clientes';
-import Funcionarios from './pages/Funcionarios';
-import Stock from './pages/Stock';
-import Flota from './pages/Flota';
-import Facturas from './pages/Facturas';
-import Usuarios from './pages/Usuarios';
-import Sistema from './pages/Sistema';
-import Marcas from './pages/Marcas';
-import Categorias from './pages/Categorias';
-import Permisos from './pages/Permisos';
-import HistorialVentas from './pages/HistorialVentas';
-import Reportes from './pages/Reportes';
-import Gastos from './pages/Gastos';
-import BusinessIntelligence from './pages/BusinessIntelligence';
-import Presupuestos from './pages/Presupuestos';
 
-import './App.css';
+// El resto de paginas se cargan bajo demanda. Antes las 22 viajaban en un unico
+// bundle de 1,38 MB que habia que descargar y parsear antes de pintar el login.
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Ventas = lazy(() => import('./pages/Ventas'));
+const Delivery = lazy(() => import('./pages/Delivery'));
+const Laboratorio = lazy(() => import('./pages/Laboratorio'));
+const Productos = lazy(() => import('./pages/Productos'));
+const Proveedores = lazy(() => import('./pages/Proveedores'));
+const Clientes = lazy(() => import('./pages/Clientes'));
+const Funcionarios = lazy(() => import('./pages/Funcionarios'));
+const Stock = lazy(() => import('./pages/Stock'));
+const Flota = lazy(() => import('./pages/Flota'));
+const Facturas = lazy(() => import('./pages/Facturas'));
+const Usuarios = lazy(() => import('./pages/Usuarios'));
+const Sistema = lazy(() => import('./pages/Sistema'));
+const Marcas = lazy(() => import('./pages/Marcas'));
+const Categorias = lazy(() => import('./pages/Categorias'));
+const Permisos = lazy(() => import('./pages/Permisos'));
+const HistorialVentas = lazy(() => import('./pages/HistorialVentas'));
+const Reportes = lazy(() => import('./pages/Reportes'));
+const Gastos = lazy(() => import('./pages/Gastos'));
+const BusinessIntelligence = lazy(() => import('./pages/BusinessIntelligence'));
+const Presupuestos = lazy(() => import('./pages/Presupuestos'));
+
+const PantallaCarga = () => (
+  <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+  </div>
+);
+
 
 // Protected Route Component
 const ProtectedRoute = ({ children, permission }) => {
@@ -330,7 +340,9 @@ function App() {
   return (
     <AppProvider>
       <BrowserRouter>
-        <AppRoutes />
+        <Suspense fallback={<PantallaCarga />}>
+          <AppRoutes />
+        </Suspense>
         <Toaster position="top-right" richColors />
       </BrowserRouter>
     </AppProvider>
