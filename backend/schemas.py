@@ -324,6 +324,13 @@ class MateriaLaboratorioResponse(MateriaLaboratorioBase):
     estado: EstadoMateria
     creado_en: Optional[datetime] = None
 
+class MateriaLaboratorioPage(BaseModel):
+    """Página de materias con el total sin paginar, para el contador del listado."""
+    items: List[MateriaLaboratorioResponse]
+    total: int
+    limit: int
+    offset: int
+
 # Almacen
 class AlmacenBase(BaseModel):
     nombre: str

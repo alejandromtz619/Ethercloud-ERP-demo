@@ -56,6 +56,7 @@ from schemas import (
     GastoCreate, GastoResponse, GastoUpdate,
     ProductoCreate, ProductoResponse, ProductoConStock, ProductoCodigoBarraConflicto,
     MateriaLaboratorioCreate, MateriaLaboratorioUpdate, MateriaLaboratorioResponse,
+    MateriaLaboratorioPage,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
     EntradaStockHistorialResponse,
@@ -1220,29 +1221,41 @@ async def limpiar_codigo_barra_producto(
 
 @api_router.get("/productos", response_model=List[ProductoConStock])
 async def listar_productos(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    # El stock se agrega en una subconsulta: antes se lanzaba un SELECT por
+    # producto dentro del bucle (1 + N consultas, ~1.400ms con 1.200 productos).
+    stock_sq = (
+        select(
+            StockActual.producto_id.label("producto_id"),
+            func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0).label("stock_total"),
+        )
+        .group_by(StockActual.producto_id)
+        .subquery()
+    )
+
     result = await db.execute(
-        select(Producto, Categoria, Marca, Proveedor)
+        select(
+            Producto,
+            Categoria.nombre,
+            Marca.nombre,
+            Proveedor.nombre,
+            func_sql.coalesce(stock_sq.c.stock_total, 0),
+        )
         .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
         .outerjoin(Marca, Producto.marca_id == Marca.id)
         .outerjoin(Proveedor, Producto.proveedor_id == Proveedor.id)
+        .outerjoin(stock_sq, stock_sq.c.producto_id == Producto.id)
         .where(Producto.empresa_id == empresa_id, Producto.activo == True)
     )
+
     productos = []
-    for row in result.all():
-        producto, categoria, marca, proveedor = row
-        stock_result = await db.execute(
-            select(func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0))
-            .where(StockActual.producto_id == producto.id)
-        )
-        stock_total = stock_result.scalar() or 0
-        
-        prod_dict = ProductoResponse.model_validate(producto).model_dump()
-        prod_dict['stock_total'] = stock_total
-        prod_dict['categoria_nombre'] = categoria.nombre if categoria else None
-        prod_dict['marca_nombre'] = marca.nombre if marca else None
-        prod_dict['proveedor_nombre'] = proveedor.nombre if proveedor else None
-        productos.append(ProductoConStock(**prod_dict))
-    
+    for producto, categoria_nombre, marca_nombre, proveedor_nombre, stock_total in result.all():
+        prod = ProductoConStock.model_validate(producto)
+        prod.stock_total = int(stock_total or 0)
+        prod.categoria_nombre = categoria_nombre
+        prod.marca_nombre = marca_nombre
+        prod.proveedor_nombre = proveedor_nombre
+        productos.append(prod)
+
     return productos
 
 @api_router.get("/productos/{producto_id}", response_model=ProductoConStock)
@@ -1408,12 +1421,49 @@ async def crear_materia_laboratorio(data: MateriaLaboratorioCreate, db: AsyncSes
     await db.refresh(materia)
     return materia
 
-@api_router.get("/materias-laboratorio", response_model=List[MateriaLaboratorioResponse])
-async def listar_materias_laboratorio(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(MateriaLaboratorio).where(MateriaLaboratorio.empresa_id == empresa_id)
+@api_router.get("/materias-laboratorio", response_model=MateriaLaboratorioPage)
+async def listar_materias_laboratorio(
+    empresa_id: int,
+    search: Optional[str] = None,
+    estado: Optional[EstadoMateria] = None,
+    orden: str = Query("newest", pattern="^(newest|oldest)$"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Listado paginado. El filtrado y el orden se resuelven en la base de datos:
+    antes se devolvían todas las materias de la empresa (miles de filas) y el
+    frontend las filtraba en memoria.
+    """
+    filtros = [MateriaLaboratorio.empresa_id == empresa_id]
+    if search:
+        filtros.append(MateriaLaboratorio.nombre.ilike(f"%{search.strip()}%"))
+    if estado is not None:
+        filtros.append(MateriaLaboratorio.estado == estado)
+
+    total = await db.scalar(
+        select(func_sql.count()).select_from(MateriaLaboratorio).where(*filtros)
     )
-    return result.scalars().all()
+
+    orden_col = (
+        MateriaLaboratorio.creado_en.desc() if orden == "newest"
+        else MateriaLaboratorio.creado_en.asc()
+    )
+    result = await db.execute(
+        select(MateriaLaboratorio)
+        .where(*filtros)
+        # id como desempate: creado_en se repite y sin él la paginación baila
+        .order_by(orden_col, MateriaLaboratorio.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return MateriaLaboratorioPage(
+        items=result.scalars().all(),
+        total=total or 0,
+        limit=limit,
+        offset=offset,
+    )
 
 @api_router.get("/materias-laboratorio/disponibles", response_model=List[MateriaLaboratorioResponse])
 async def listar_materias_disponibles(empresa_id: int, db: AsyncSession = Depends(get_db)):
@@ -7624,8 +7674,34 @@ async def migrate_documentos_temporales():
 @app.on_event("startup")
 async def startup():
     await init_db()
+    await ensure_indices()
     await ensure_permisos()
     logger.info("Database initialized")
+
+# Índices sobre las claves foráneas más consultadas. create_all() no los añade a
+# tablas que ya existen, así que se crean aquí de forma idempotente.
+INDICES_REQUERIDOS = [
+    ("ix_materias_laboratorio_empresa_id", "materias_laboratorio", "empresa_id"),
+    ("ix_materias_laboratorio_estado", "materias_laboratorio", "estado"),
+    ("ix_materias_laboratorio_creado_en", "materias_laboratorio", "creado_en"),
+    ("ix_productos_empresa_id", "productos", "empresa_id"),
+    ("ix_productos_activo", "productos", "activo"),
+    ("ix_stock_actual_producto_id", "stock_actual", "producto_id"),
+    ("ix_movimientos_stock_producto_id", "movimientos_stock", "producto_id"),
+    ("ix_clientes_empresa_id", "clientes", "empresa_id"),
+    ("ix_ventas_empresa_id", "ventas", "empresa_id"),
+    ("ix_venta_items_venta_id", "venta_items", "venta_id"),
+]
+
+async def ensure_indices():
+    """Crea los índices que faltan. CREATE INDEX IF NOT EXISTS funciona en PostgreSQL y SQLite."""
+    async with engine.begin() as conn:
+        for nombre, tabla, columna in INDICES_REQUERIDOS:
+            try:
+                await conn.execute(text(f"CREATE INDEX IF NOT EXISTS {nombre} ON {tabla} ({columna})"))
+            except Exception as e:
+                # Una tabla ausente no debe impedir el arranque
+                logger.warning(f"No se pudo crear el índice {nombre}: {e}")
 
 async def ensure_permisos():
     """Ensure all required permissions exist in the DB (handles migrations for existing installs)"""

@@ -175,7 +175,7 @@ class Cliente(Base):
     __tablename__ = "clientes"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     nombre = Column(String(255), nullable=False)
     apellido = Column(String(255))
     ruc = Column(String(50))
@@ -289,7 +289,7 @@ class Producto(Base):
     __tablename__ = "productos"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     categoria_id = Column(Integer, ForeignKey("categorias.id"))
     marca_id = Column(Integer, ForeignKey("marcas.id"))
     nombre = Column(String(255), nullable=False)
@@ -317,7 +317,7 @@ class MateriaLaboratorio(Base):
     __tablename__ = "materias_laboratorio"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     nombre = Column(String(255), nullable=False)
     descripcion = Column(Text)
     codigo_barra = Column(String(100), unique=True, nullable=True)
@@ -344,7 +344,7 @@ class StockActual(Base):
     __tablename__ = "stock_actual"
     
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False, index=True)
     almacen_id = Column(Integer, ForeignKey("almacenes.id"), nullable=False)
     cantidad = Column(Integer, default=0)
     alerta_minima = Column(Integer)
@@ -356,7 +356,7 @@ class MovimientoStock(Base):
     __tablename__ = "movimientos_stock"
     
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False, index=True)
     almacen_id = Column(Integer, ForeignKey("almacenes.id"), nullable=False)
     tipo = Column(Enum(TipoMovimientoStock), nullable=False)
     cantidad = Column(Integer, nullable=False)
@@ -380,7 +380,7 @@ class Venta(Base):
     __tablename__ = "ventas"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     representante_cliente_id = Column(Integer, ForeignKey("clientes.id"))
@@ -411,7 +411,7 @@ class VentaItem(Base):
     __tablename__ = "venta_items"
     
     id = Column(Integer, primary_key=True, index=True)
-    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False, index=True)
     producto_id = Column(Integer, ForeignKey("productos.id"))
     materia_laboratorio_id = Column(Integer, ForeignKey("materias_laboratorio.id"))
     cantidad = Column(Integer, nullable=False)
