@@ -18,6 +18,7 @@ import {
   DropdownMenuSeparator,
 } from '../components/ui/dropdown-menu';
 import { cn } from '../lib/utils';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const allMenuItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -75,7 +76,7 @@ const Layout = ({ children }) => {
         <div className="flex h-16 items-center justify-between px-4 border-b border-neutral-800">
           <div className="flex items-center gap-2">
             {empresa?.logo_url ? (
-              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain" />
+              <img src={resolverImagenUrl(empresa.logo_url)} alt={empresa.nombre} className="w-8 h-8 object-contain" />
             ) : (
               <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
                 <span className="font-bold text-white">

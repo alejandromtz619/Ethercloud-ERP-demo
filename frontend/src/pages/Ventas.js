@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { resolverImagenUrl } from '../lib/imagenes';
 import PrintModal from '../components/PrintModal';
 
 const Ventas = () => {
@@ -787,7 +788,7 @@ const Ventas = () => {
                       <div className="w-8 h-8 rounded overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
                         {producto.imagen_url ? (
                           <img
-                            src={producto.imagen_url}
+                            src={resolverImagenUrl(producto.imagen_url)}
                             alt={producto.nombre}
                             className="w-full h-full object-cover"
                             loading="lazy"
@@ -796,7 +797,7 @@ const Ventas = () => {
                             onError={(e) => { e.currentTarget.style.display = 'none'; }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              window.open(producto.imagen_url, '_blank');
+                              window.open(resolverImagenUrl(producto.imagen_url), '_blank');
                             }}
                           />
                         ) : (

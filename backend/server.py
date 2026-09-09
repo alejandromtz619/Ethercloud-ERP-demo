@@ -19,6 +19,9 @@ import bcrypt
 import jwt
 import uuid
 import shutil
+import asyncio
+import socket
+import ipaddress
 import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -1161,6 +1164,10 @@ async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db
             raise HTTPException(status_code=400, detail="Código de barra ya existe")
     if not dump.get('imagen_url') or not str(dump['imagen_url']).strip():
         dump['imagen_url'] = None
+    else:
+        # Si pegan una URL de un tercero, se trae a local en el momento: asi no
+        # se vuelve a llenar el catalogo de enlaces externos lentos o rotos.
+        dump['imagen_url'] = await _localizar_si_es_externa(str(dump['imagen_url']).strip())
     producto = Producto(**dump)
     db.add(producto)
     await db.commit()
@@ -1336,6 +1343,8 @@ async def actualizar_producto(producto_id: int, data: dict, db: AsyncSession = D
                     if existing.scalar_one_or_none():
                         raise HTTPException(status_code=400, detail="Código de barra ya existe")
                     value = value.strip()
+            elif key == 'imagen_url' and value:
+                value = await _localizar_si_es_externa(str(value).strip())
             setattr(producto, key, value)
     
     await db.commit()
@@ -1383,6 +1392,172 @@ async def subir_imagen_producto(producto_id: int, file: UploadFile = File(...), 
     await db.refresh(producto)
     
     return {"imagen_url": producto.imagen_url}
+
+# ==================== LOCALIZAR IMAGENES EXTERNAS ====================
+# Muchos productos tienen imagen_url apuntando a dominios de terceros (tiendas
+# ajenas, miniaturas de buscadores). Cada uno es un handshake nuevo desde el
+# navegador y muchos estan caidos o bloquean el hotlinking, lo que dejaba la
+# pantalla de ventas cargando indefinidamente. Estas utilidades traen esas
+# imagenes a uploads/productos para servirlas desde el propio backend.
+
+IMAGEN_MAX_BYTES = 5 * 1024 * 1024
+IMAGEN_TIMEOUT = 12.0
+IMAGEN_USER_AGENT = "Mozilla/5.0 (compatible; LuzBrillERP/1.0)"
+IMAGEN_EXTENSIONES = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/pjpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+}
+
+
+def _host_es_interno(host: str) -> bool:
+    """True si el host resuelve a una direccion de la red interna. Impide que una
+    URL escrita en el formulario de producto use al backend como proxy hacia
+    servicios privados (SSRF)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return True  # si no resuelve, no la tocamos
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return True
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return True
+    return False
+
+
+async def descargar_imagen_a_local(url: str, client: httpx.AsyncClient) -> Optional[str]:
+    """Descarga una imagen externa a uploads/productos y devuelve su ruta local
+    (/uploads/productos/...). Devuelve None si no se puede: el llamador conserva
+    entonces la URL original en lugar de perder la imagen."""
+    if not url or not url.startswith(('http://', 'https://')):
+        return None
+    try:
+        host = httpx.URL(url).host
+    except Exception:
+        return None
+    if not host or _host_es_interno(host):
+        return None
+
+    try:
+        async with client.stream('GET', url) as resp:
+            if resp.status_code != 200:
+                return None
+            tipo = resp.headers.get('content-type', '').split(';')[0].strip().lower()
+            if tipo not in IMAGEN_EXTENSIONES:
+                return None
+            datos = bytearray()
+            async for trozo in resp.aiter_bytes():
+                datos.extend(trozo)
+                if len(datos) > IMAGEN_MAX_BYTES:
+                    return None  # imagen desproporcionada: se deja como esta
+    except Exception:
+        return None
+
+    if not datos:
+        return None
+
+    filename = f"{uuid.uuid4()}.{IMAGEN_EXTENSIONES[tipo]}"
+    try:
+        (UPLOADS_DIR / filename).write_bytes(bytes(datos))
+    except Exception as e:
+        logger.warning(f"No se pudo guardar la imagen descargada de {url}: {e}")
+        return None
+    return f"/uploads/productos/{filename}"
+
+
+def _cliente_imagenes() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=IMAGEN_TIMEOUT,
+        follow_redirects=True,
+        headers={'User-Agent': IMAGEN_USER_AGENT},
+    )
+
+
+async def _localizar_si_es_externa(url: Optional[str]) -> Optional[str]:
+    """Devuelve la ruta local si consigue descargar la imagen; si no, la URL tal cual.
+    Nunca falla el guardado del producto por un problema de red."""
+    if not url or not url.startswith(('http://', 'https://')):
+        return url
+    try:
+        async with _cliente_imagenes() as client:
+            return await descargar_imagen_a_local(url, client) or url
+    except Exception as e:
+        logger.warning(f"No se pudo localizar la imagen {url}: {e}")
+        return url
+
+
+@api_router.post("/admin/localizar-imagenes-productos")
+async def localizar_imagenes_productos(
+    empresa_id: int,
+    limite: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+):
+    """Trae a local las imagenes de producto todavia alojadas en terceros.
+
+    Es idempotente y reanudable: solo mira los productos cuya imagen_url sigue
+    siendo http(s), asi que se puede llamar repetidamente en tandas hasta que
+    'restantes' llegue a 0. Los que fallan (enlace muerto, hotlink bloqueado)
+    conservan su URL original y se listan en la respuesta.
+    """
+    result = await db.execute(
+        select(Producto)
+        .where(
+            Producto.empresa_id == empresa_id,
+            Producto.imagen_url.is_not(None),
+            Producto.imagen_url.like('http%'),
+        )
+        .order_by(Producto.id)
+        .limit(limite)
+    )
+    productos = result.scalars().all()
+
+    semaforo = asyncio.Semaphore(8)  # no saturar la red ni los hosts remotos
+
+    async def procesar(producto):
+        async with semaforo:
+            return producto, await descargar_imagen_a_local(producto.imagen_url, client)
+
+    async with _cliente_imagenes() as client:
+        resultados = await asyncio.gather(*(procesar(p) for p in productos))
+
+    migradas = 0
+    fallidas = []
+    for producto, ruta_local in resultados:
+        if ruta_local:
+            producto.imagen_url = ruta_local
+            migradas += 1
+        else:
+            fallidas.append({"id": producto.id, "nombre": producto.nombre, "url": producto.imagen_url})
+    await db.commit()
+
+    restantes = await db.scalar(
+        select(func_sql.count())
+        .select_from(Producto)
+        .where(
+            Producto.empresa_id == empresa_id,
+            Producto.imagen_url.is_not(None),
+            Producto.imagen_url.like('http%'),
+        )
+    )
+
+    logger.info(f"Localizar imagenes: {migradas} migradas, {len(fallidas)} fallidas, {restantes} restantes")
+    return {
+        "procesadas": len(productos),
+        "migradas": migradas,
+        "fallidas": len(fallidas),
+        "restantes": restantes or 0,
+        "detalle_fallidas": fallidas,
+    }
 
 # ==================== MATERIAS LABORATORIO ====================
 import uuid as _uuid

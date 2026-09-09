@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const emptyItem = { producto_id: '', cantidad: '1', precio_unitario: '' };
 
@@ -367,7 +368,15 @@ const Presupuestos = () => {
                     return (
                       <div key={idx} className="flex items-start gap-2 border rounded-lg p-2">
                         {producto?.imagen_url ? (
-                          <img src={producto.imagen_url} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                          <img
+                            src={resolverImagenUrl(producto.imagen_url)}
+                            alt=""
+                            className="w-10 h-10 rounded object-cover shrink-0"
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                          />
                         ) : (
                           <div className="w-10 h-10 rounded bg-muted flex items-center justify-center shrink-0">
                             <Package className="h-5 w-5 text-muted-foreground" />

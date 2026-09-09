@@ -37,6 +37,7 @@ import {
   CommandList,
 } from '../components/ui/command';
 import { toast } from 'sonner';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const Productos = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -659,12 +660,12 @@ const Productos = () => {
                         <div 
                           className="relative w-10 h-10 cursor-pointer group"
                           onClick={() => {
-                            setSelectedImage(producto.imagen_url);
+                            setSelectedImage(resolverImagenUrl(producto.imagen_url));
                             setImageDialogOpen(true);
                           }}
                         >
                           <img
-                            src={producto.imagen_url}
+                            src={resolverImagenUrl(producto.imagen_url)}
                             alt=""
                             className="w-10 h-10 rounded object-cover"
                             loading="lazy"
