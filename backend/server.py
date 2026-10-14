@@ -19,6 +19,9 @@ import bcrypt
 import jwt
 import uuid
 import shutil
+import asyncio
+import socket
+import ipaddress
 import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -28,7 +31,9 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, cm, mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
@@ -39,11 +44,12 @@ from models import (
     Categoria, Marca, Producto, MateriaLaboratorio, EstadoMateria,
     Almacen, StockActual, MovimientoStock, TipoMovimientoStock,
     Venta, VentaItem, EstadoVenta, TipoPago,
+    Presupuesto, PresupuestoItem,
     Funcionario, AdelantoSalario, CicloSalario,
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
-    DocumentoTemporal, TipoDocumento,
-    Gasto,
+    DocumentoTemporal, TipoDocumento, Gasto,
+    FacturaGrupal, factura_grupal_ventas
 )
 from schemas import (
     EmpresaCreate, EmpresaUpdate, EmpresaResponse,
@@ -53,19 +59,23 @@ from schemas import (
     ProveedorCreate, ProveedorResponse, DeudaProveedorCreate, DeudaProveedorResponse,
     ProveedorProductoCreate, ProveedorProductoUpdate, ProveedorProductoResponse,
     CategoriaCreate, CategoriaResponse, MarcaCreate, MarcaResponse,
-    GastoCreate, GastoUpdate, GastoResponse,
-    ProductoCreate, ProductoResponse, ProductoConStock,
-    MateriaLaboratorioCreate, MateriaLaboratorioResponse,
+    GastoCreate, GastoResponse, GastoUpdate,
+    ProductoCreate, ProductoResponse, ProductoConStock, ProductoCodigoBarraConflicto,
+    MateriaLaboratorioCreate, MateriaLaboratorioUpdate, MateriaLaboratorioResponse,
+    MateriaLaboratorioPage,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
     EntradaStockHistorialResponse,
     VentaCreate, VentaUpdate, VentaResponse, VentaConDetalles, VentaItemResponse,
+    FechaImpresionUpdate,
+    PresupuestoCreate, PresupuestoResponse, PresupuestoConDetalles, PresupuestoItemResponse,
     FuncionarioCreate, FuncionarioResponse,
     AdelantoSalarioCreate, AdelantoSalarioResponse,
     CicloSalarioCreate, CicloSalarioResponse,
     VehiculoCreate, VehiculoResponse,
     EntregaCreate, EntregaResponse, EntregaConDetalles, AsignarEntrega,
     FacturaCreate, FacturaResponse,
+    FacturaGrupalCreate, FacturaGrupalResponse,
     PreferenciaUsuarioCreate, PreferenciaUsuarioResponse,
     DashboardStats, VentasPorHora, StockBajo, CotizacionDivisa, Alerta,
     DocumentoTemporalCreate, DocumentoTemporal as DocumentoTemporalSchema
@@ -91,6 +101,24 @@ def get_day_range_paraguay(date_obj):
     day_end = datetime.combine(date_obj, datetime.max.time()).replace(tzinfo=PARAGUAY_TZ)
     return day_start, day_end
 
+def fecha_documento(venta, tipo_documento: str = 'BOLETA'):
+    """Fecha que debe salir IMPRESA en el documento.
+
+    Toma creado_en en hora Paraguay y, si el usuario corrigio la fecha de impresion
+    (ventas.fecha_impresion_boleta / _factura), reemplaza solo el dia/mes/anio y
+    conserva la hora original. creado_en NUNCA se modifica.
+
+    Devuelve (datetime, bool modificada).
+    """
+    base = venta.creado_en
+    if base is None:
+        return now_paraguay(), False
+    base = base.astimezone(PARAGUAY_TZ) if base.tzinfo else base.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
+    override = venta.fecha_impresion_factura if tipo_documento == 'FACTURA' else venta.fecha_impresion_boleta
+    if override:
+        return base.replace(year=override.year, month=override.month, day=override.day), True
+    return base, False
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -99,9 +127,13 @@ UPLOADS_DIR = ROOT_DIR / 'uploads' / 'productos'
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # JWT Config
-JWT_SECRET = os.environ.get('JWT_SECRET', 'luzbrill-secret-key-change-in-production')
+JWT_SECRET = os.environ.get('JWT_SECRET', 'ethercloud-secret-key-change-in-production')
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 8
+JWT_EXPIRATION_HOURS = int(os.environ.get('JWT_EXPIRATION_HOURS', '12'))
+
+# Margen de ganancia fijo de las materias de laboratorio: su costo se registra como
+# precio * (1 - margen). Regulable por variable de entorno (0.30 = 30 %).
+LAB_MARGEN_GANANCIA = Decimal(os.environ.get('LAB_MARGEN_GANANCIA', '0.30'))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -116,7 +148,7 @@ MANUAL_CURRENCY_RATES = {
 }
 
 # Create FastAPI app
-app = FastAPI(title="Luz Brill ERP API", version="1.0.0")
+app = FastAPI(title="Ethercloud ERP API", version="1.0.0")
 
 # CORS Configuration
 cors_origins = os.environ.get('CORS_ORIGINS', '*')
@@ -209,6 +241,23 @@ async def get_current_usuario(
         )
     return usuario
 
+# Nombres del rol administrador: seed_data.py crea "Administrador" y el seed de la API "ADMIN"
+ROLES_ADMIN = ('ADMIN', 'Administrador')
+
+async def verificar_es_admin(
+    usuario: Usuario = Depends(get_current_usuario),
+    db: AsyncSession = Depends(get_db)
+) -> Usuario:
+    """Dependency that requires the current user to have the ADMIN role."""
+    result = await db.execute(
+        select(Rol)
+        .join(UsuarioRol, Rol.id == UsuarioRol.rol_id)
+        .where(UsuarioRol.usuario_id == usuario.id, Rol.nombre.in_(ROLES_ADMIN))
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Solo un administrador puede realizar esta acción")
+    return usuario
+
 def numero_a_letras(numero):
     """Convert number to Spanish words for receipts"""
     unidades = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve']
@@ -254,7 +303,7 @@ def numero_a_letras(numero):
 # ==================== ROOT ====================
 @api_router.get("/")
 async def root():
-    return {"message": "Luz Brill ERP API v1.0"}
+    return {"message": "Ethercloud ERP API v1.0"}
 
 @api_router.get("/health")
 async def health():
@@ -509,6 +558,31 @@ async def obtener_permisos_usuario(usuario_id: int, db: AsyncSession = Depends(g
 # ==================== CLIENTES ====================
 @api_router.post("/clientes", response_model=ClienteResponse)
 async def crear_cliente(data: ClienteCreate, db: AsyncSession = Depends(get_db)):
+    ruc = (data.ruc or "").strip()
+    cedula = (data.cedula or "").strip()
+
+    if ruc:
+        existing = await db.execute(
+            select(Cliente).where(
+                Cliente.empresa_id == data.empresa_id,
+                Cliente.estado == True,
+                Cliente.ruc == ruc,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con el RUC {ruc}")
+
+    if cedula:
+        existing = await db.execute(
+            select(Cliente).where(
+                Cliente.empresa_id == data.empresa_id,
+                Cliente.estado == True,
+                Cliente.cedula == cedula,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con la cédula {cedula}")
+
     cliente = Cliente(**data.model_dump())
     db.add(cliente)
     await db.commit()
@@ -536,7 +610,35 @@ async def actualizar_cliente(cliente_id: int, data: dict, db: AsyncSession = Dep
     cliente = result.scalar_one_or_none()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
-    
+
+    if 'ruc' in data:
+        ruc = (data['ruc'] or "").strip()
+        if ruc:
+            existing = await db.execute(
+                select(Cliente).where(
+                    Cliente.empresa_id == cliente.empresa_id,
+                    Cliente.estado == True,
+                    Cliente.ruc == ruc,
+                    Cliente.id != cliente_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con el RUC {ruc}")
+
+    if 'cedula' in data:
+        cedula = (data['cedula'] or "").strip()
+        if cedula:
+            existing = await db.execute(
+                select(Cliente).where(
+                    Cliente.empresa_id == cliente.empresa_id,
+                    Cliente.estado == True,
+                    Cliente.cedula == cedula,
+                    Cliente.id != cliente_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con la cédula {cedula}")
+
     for key, value in data.items():
         if hasattr(cliente, key) and key != 'id':
             setattr(cliente, key, value)
@@ -947,7 +1049,9 @@ async def eliminar_deuda(deuda_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Deuda no encontrada")
     await db.delete(deuda)
     await db.commit()
-    return {"message": "Deuda eliminada"}
+    return{"message": "Deuda eliminada"}
+
+
 
 # ==================== PROVEEDOR PRODUCTOS (Vinculación) ====================
 @api_router.get("/proveedores/{proveedor_id}/productos", response_model=List[ProveedorProductoResponse])
@@ -1121,6 +1225,11 @@ async def actualizar_marca(marca_id: int, data: dict, db: AsyncSession = Depends
     await db.refresh(marca)
     return marca
 
+# ==================== GASTOS ====================
+
+
+
+
 # ==================== PRODUCTOS ====================
 @api_router.post("/productos", response_model=ProductoResponse)
 async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db)):
@@ -1130,39 +1239,112 @@ async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db
         dump['codigo_barra'] = None
     else:
         dump['codigo_barra'] = str(dump['codigo_barra']).strip()
+        existing = await db.execute(
+            select(Producto).where(Producto.codigo_barra == dump['codigo_barra'])
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Código de barra ya existe")
     if not dump.get('imagen_url') or not str(dump['imagen_url']).strip():
         dump['imagen_url'] = None
+    else:
+        # Si pegan una URL de un tercero, se trae a local en el momento: asi no
+        # se vuelve a llenar el catalogo de enlaces externos lentos o rotos.
+        dump['imagen_url'] = await _localizar_si_es_externa(str(dump['imagen_url']).strip())
     producto = Producto(**dump)
     db.add(producto)
     await db.commit()
     await db.refresh(producto)
     return producto
 
+@api_router.get("/productos/verificar-codigo-barra", response_model=Optional[ProductoCodigoBarraConflicto])
+async def verificar_codigo_barra(
+    codigo_barra: str,
+    exclude_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Verifica si un código de barra ya está en uso por otro producto y devuelve sus detalles."""
+    codigo = codigo_barra.strip()
+    if not codigo:
+        return None
+    query = select(Producto).where(Producto.codigo_barra == codigo)
+    if exclude_id:
+        query = query.where(Producto.id != exclude_id)
+    result = await db.execute(query)
+    producto = result.scalar_one_or_none()
+    if not producto:
+        return None
+
+    tres_meses_atras = now_paraguay() - timedelta(days=90)
+    mov_result = await db.execute(
+        select(func_sql.count(MovimientoStock.id))
+        .where(
+            MovimientoStock.producto_id == producto.id,
+            MovimientoStock.creado_en >= tres_meses_atras
+        )
+    )
+    tuvo_movimientos = (mov_result.scalar() or 0) > 0
+
+    return ProductoCodigoBarraConflicto(
+        id=producto.id,
+        nombre=producto.nombre,
+        creado_en=producto.creado_en,
+        activo=producto.activo,
+        tuvo_movimientos_3_meses=tuvo_movimientos
+    )
+
+@api_router.patch("/productos/{producto_id}/limpiar-codigo-barra", response_model=ProductoResponse)
+async def limpiar_codigo_barra_producto(
+    producto_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: Usuario = Depends(verificar_es_admin)
+):
+    """Quita el código de barra de un producto en conflicto. Solo administradores."""
+    result = await db.execute(select(Producto).where(Producto.id == producto_id))
+    producto = result.scalar_one_or_none()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    producto.codigo_barra = None
+    await db.commit()
+    await db.refresh(producto)
+    return producto
+
 @api_router.get("/productos", response_model=List[ProductoConStock])
 async def listar_productos(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    # El stock se agrega en una subconsulta: antes se lanzaba un SELECT por
+    # producto dentro del bucle (1 + N consultas, ~1.400ms con 1.200 productos).
+    stock_sq = (
+        select(
+            StockActual.producto_id.label("producto_id"),
+            func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0).label("stock_total"),
+        )
+        .group_by(StockActual.producto_id)
+        .subquery()
+    )
+
     result = await db.execute(
-        select(Producto, Categoria, Marca, Proveedor)
+        select(
+            Producto,
+            Categoria.nombre,
+            Marca.nombre,
+            Proveedor.nombre,
+            func_sql.coalesce(stock_sq.c.stock_total, 0),
+        )
         .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
         .outerjoin(Marca, Producto.marca_id == Marca.id)
         .outerjoin(Proveedor, Producto.proveedor_id == Proveedor.id)
+        .outerjoin(stock_sq, stock_sq.c.producto_id == Producto.id)
         .where(Producto.empresa_id == empresa_id, Producto.activo == True)
     )
+
     productos = []
-    for row in result.all():
-        producto, categoria, marca, proveedor = row
-        stock_result = await db.execute(
-            select(func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0))
-            .where(StockActual.producto_id == producto.id)
-        )
-        stock_total = stock_result.scalar() or 0
-        
-        prod_dict = ProductoResponse.model_validate(producto).model_dump()
-        prod_dict['stock_total'] = stock_total
-        prod_dict['categoria_nombre'] = categoria.nombre if categoria else None
-        prod_dict['marca_nombre'] = marca.nombre if marca else None
-        prod_dict['proveedor_nombre'] = proveedor.nombre if proveedor else None
-        productos.append(ProductoConStock(**prod_dict))
-    
+    for producto, categoria_nombre, marca_nombre, proveedor_nombre, stock_total in result.all():
+        prod = ProductoConStock.model_validate(producto)
+        prod.stock_total = int(stock_total or 0)
+        prod.categoria_nombre = categoria_nombre
+        prod.marca_nombre = marca_nombre
+        prod.proveedor_nombre = proveedor_nombre
+        productos.append(prod)
+
     return productos
 
 @api_router.get("/productos/{producto_id}", response_model=ProductoConStock)
@@ -1243,6 +1425,8 @@ async def actualizar_producto(producto_id: int, data: dict, db: AsyncSession = D
                     if existing.scalar_one_or_none():
                         raise HTTPException(status_code=400, detail="Código de barra ya existe")
                     value = value.strip()
+            elif key == 'imagen_url' and value:
+                value = await _localizar_si_es_externa(str(value).strip())
             setattr(producto, key, value)
     
     await db.commit()
@@ -1291,6 +1475,172 @@ async def subir_imagen_producto(producto_id: int, file: UploadFile = File(...), 
     
     return {"imagen_url": producto.imagen_url}
 
+# ==================== LOCALIZAR IMAGENES EXTERNAS ====================
+# Muchos productos tienen imagen_url apuntando a dominios de terceros (tiendas
+# ajenas, miniaturas de buscadores). Cada uno es un handshake nuevo desde el
+# navegador y muchos estan caidos o bloquean el hotlinking, lo que dejaba la
+# pantalla de ventas cargando indefinidamente. Estas utilidades traen esas
+# imagenes a uploads/productos para servirlas desde el propio backend.
+
+IMAGEN_MAX_BYTES = 5 * 1024 * 1024
+IMAGEN_TIMEOUT = 12.0
+IMAGEN_USER_AGENT = "Mozilla/5.0 (compatible; EthercloudERP/1.0)"
+IMAGEN_EXTENSIONES = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/pjpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+}
+
+
+def _host_es_interno(host: str) -> bool:
+    """True si el host resuelve a una direccion de la red interna. Impide que una
+    URL escrita en el formulario de producto use al backend como proxy hacia
+    servicios privados (SSRF)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return True  # si no resuelve, no la tocamos
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return True
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return True
+    return False
+
+
+async def descargar_imagen_a_local(url: str, client: httpx.AsyncClient) -> Optional[str]:
+    """Descarga una imagen externa a uploads/productos y devuelve su ruta local
+    (/uploads/productos/...). Devuelve None si no se puede: el llamador conserva
+    entonces la URL original en lugar de perder la imagen."""
+    if not url or not url.startswith(('http://', 'https://')):
+        return None
+    try:
+        host = httpx.URL(url).host
+    except Exception:
+        return None
+    if not host or _host_es_interno(host):
+        return None
+
+    try:
+        async with client.stream('GET', url) as resp:
+            if resp.status_code != 200:
+                return None
+            tipo = resp.headers.get('content-type', '').split(';')[0].strip().lower()
+            if tipo not in IMAGEN_EXTENSIONES:
+                return None
+            datos = bytearray()
+            async for trozo in resp.aiter_bytes():
+                datos.extend(trozo)
+                if len(datos) > IMAGEN_MAX_BYTES:
+                    return None  # imagen desproporcionada: se deja como esta
+    except Exception:
+        return None
+
+    if not datos:
+        return None
+
+    filename = f"{uuid.uuid4()}.{IMAGEN_EXTENSIONES[tipo]}"
+    try:
+        (UPLOADS_DIR / filename).write_bytes(bytes(datos))
+    except Exception as e:
+        logger.warning(f"No se pudo guardar la imagen descargada de {url}: {e}")
+        return None
+    return f"/uploads/productos/{filename}"
+
+
+def _cliente_imagenes() -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=IMAGEN_TIMEOUT,
+        follow_redirects=True,
+        headers={'User-Agent': IMAGEN_USER_AGENT},
+    )
+
+
+async def _localizar_si_es_externa(url: Optional[str]) -> Optional[str]:
+    """Devuelve la ruta local si consigue descargar la imagen; si no, la URL tal cual.
+    Nunca falla el guardado del producto por un problema de red."""
+    if not url or not url.startswith(('http://', 'https://')):
+        return url
+    try:
+        async with _cliente_imagenes() as client:
+            return await descargar_imagen_a_local(url, client) or url
+    except Exception as e:
+        logger.warning(f"No se pudo localizar la imagen {url}: {e}")
+        return url
+
+
+@api_router.post("/admin/localizar-imagenes-productos")
+async def localizar_imagenes_productos(
+    empresa_id: int,
+    limite: int = Query(200, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(get_current_usuario),
+):
+    """Trae a local las imagenes de producto todavia alojadas en terceros.
+
+    Es idempotente y reanudable: solo mira los productos cuya imagen_url sigue
+    siendo http(s), asi que se puede llamar repetidamente en tandas hasta que
+    'restantes' llegue a 0. Los que fallan (enlace muerto, hotlink bloqueado)
+    conservan su URL original y se listan en la respuesta.
+    """
+    result = await db.execute(
+        select(Producto)
+        .where(
+            Producto.empresa_id == empresa_id,
+            Producto.imagen_url.is_not(None),
+            Producto.imagen_url.like('http%'),
+        )
+        .order_by(Producto.id)
+        .limit(limite)
+    )
+    productos = result.scalars().all()
+
+    semaforo = asyncio.Semaphore(8)  # no saturar la red ni los hosts remotos
+
+    async def procesar(producto):
+        async with semaforo:
+            return producto, await descargar_imagen_a_local(producto.imagen_url, client)
+
+    async with _cliente_imagenes() as client:
+        resultados = await asyncio.gather(*(procesar(p) for p in productos))
+
+    migradas = 0
+    fallidas = []
+    for producto, ruta_local in resultados:
+        if ruta_local:
+            producto.imagen_url = ruta_local
+            migradas += 1
+        else:
+            fallidas.append({"id": producto.id, "nombre": producto.nombre, "url": producto.imagen_url})
+    await db.commit()
+
+    restantes = await db.scalar(
+        select(func_sql.count())
+        .select_from(Producto)
+        .where(
+            Producto.empresa_id == empresa_id,
+            Producto.imagen_url.is_not(None),
+            Producto.imagen_url.like('http%'),
+        )
+    )
+
+    logger.info(f"Localizar imagenes: {migradas} migradas, {len(fallidas)} fallidas, {restantes} restantes")
+    return {
+        "procesadas": len(productos),
+        "migradas": migradas,
+        "fallidas": len(fallidas),
+        "restantes": restantes or 0,
+        "detalle_fallidas": fallidas,
+    }
+
 # ==================== MATERIAS LABORATORIO ====================
 import uuid as _uuid
 
@@ -1328,12 +1678,49 @@ async def crear_materia_laboratorio(data: MateriaLaboratorioCreate, db: AsyncSes
     await db.refresh(materia)
     return materia
 
-@api_router.get("/materias-laboratorio", response_model=List[MateriaLaboratorioResponse])
-async def listar_materias_laboratorio(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(MateriaLaboratorio).where(MateriaLaboratorio.empresa_id == empresa_id)
+@api_router.get("/materias-laboratorio", response_model=MateriaLaboratorioPage)
+async def listar_materias_laboratorio(
+    empresa_id: int,
+    search: Optional[str] = None,
+    estado: Optional[EstadoMateria] = None,
+    orden: str = Query("newest", pattern="^(newest|oldest)$"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Listado paginado. El filtrado y el orden se resuelven en la base de datos:
+    antes se devolvían todas las materias de la empresa (miles de filas) y el
+    frontend las filtraba en memoria.
+    """
+    filtros = [MateriaLaboratorio.empresa_id == empresa_id]
+    if search:
+        filtros.append(MateriaLaboratorio.nombre.ilike(f"%{search.strip()}%"))
+    if estado is not None:
+        filtros.append(MateriaLaboratorio.estado == estado)
+
+    total = await db.scalar(
+        select(func_sql.count()).select_from(MateriaLaboratorio).where(*filtros)
     )
-    return result.scalars().all()
+
+    orden_col = (
+        MateriaLaboratorio.creado_en.desc() if orden == "newest"
+        else MateriaLaboratorio.creado_en.asc()
+    )
+    result = await db.execute(
+        select(MateriaLaboratorio)
+        .where(*filtros)
+        # id como desempate: creado_en se repite y sin él la paginación baila
+        .order_by(orden_col, MateriaLaboratorio.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return MateriaLaboratorioPage(
+        items=result.scalars().all(),
+        total=total or 0,
+        limit=limit,
+        offset=offset,
+    )
 
 @api_router.get("/materias-laboratorio/disponibles", response_model=List[MateriaLaboratorioResponse])
 async def listar_materias_disponibles(empresa_id: int, db: AsyncSession = Depends(get_db)):
@@ -1344,6 +1731,32 @@ async def listar_materias_disponibles(empresa_id: int, db: AsyncSession = Depend
         )
     )
     return result.scalars().all()
+
+@api_router.put("/materias-laboratorio/{materia_id}", response_model=MateriaLaboratorioResponse)
+async def actualizar_materia_laboratorio(materia_id: int, data: MateriaLaboratorioUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if materia.estado != EstadoMateria.DISPONIBLE:
+        raise HTTPException(status_code=400, detail="Solo se pueden editar materias con estado DISPONIBLE")
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(materia, field, value)
+    await db.commit()
+    await db.refresh(materia)
+    return materia
+
+@api_router.delete("/materias-laboratorio/{materia_id}", status_code=204)
+async def eliminar_materia_laboratorio(materia_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == materia_id))
+    materia = result.scalar_one_or_none()
+    if not materia:
+        raise HTTPException(status_code=404, detail="Materia no encontrada")
+    if materia.estado != EstadoMateria.DISPONIBLE:
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar materias con estado DISPONIBLE")
+    await db.delete(materia)
+    await db.commit()
 
 # ==================== ALMACENES ====================
 @api_router.post("/almacenes", response_model=AlmacenResponse)
@@ -1358,6 +1771,10 @@ async def crear_almacen(data: AlmacenCreate, db: AsyncSession = Depends(get_db))
 async def listar_almacenes(empresa_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Almacen).where(Almacen.empresa_id == empresa_id))
     return result.scalars().all()
+
+# ==================== STOCK FIFO HELPERS ====================
+
+
 
 # ==================== STOCK ====================
 @api_router.post("/stock", response_model=StockActualResponse)
@@ -1399,6 +1816,7 @@ async def listar_stock(empresa_id: int, almacen_id: Optional[int] = None, db: As
         stock, producto, almacen = row
         stock_dict = StockActualResponse.model_validate(stock).model_dump()
         stock_dict['producto_nombre'] = producto.nombre
+        stock_dict['producto_codigo_barra'] = producto.codigo_barra
         stock_dict['almacen_nombre'] = almacen.nombre
         stocks.append(StockConDetalles(**stock_dict))
     
@@ -1615,7 +2033,7 @@ async def traspasar_stock(data: TraspasoStockCreate, db: AsyncSession = Depends(
 
 @api_router.post("/stock/salida")
 async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Depends(get_db)):
-    """Registra una salida/eliminación de stock"""
+    """Registra unasalida/eliminación de stock (rotura, robo, etc.)"""
     
     result = await db.execute(
         select(StockActual).where(
@@ -1634,12 +2052,15 @@ async def registrar_salida_stock(data: SalidaStockCreate, db: AsyncSession = Dep
             detail=f"Stock insuficiente. Disponible: {stock.cantidad}, solicitado: {data.cantidad}"
         )
     
+    # Consume from FIFO batches
+    await _consume_entrada_fifo(db, data.producto_id, data.almacen_id, data.cantidad)
+    
+    # Update stock quantity
     stock.cantidad -= data.cantidad
     
-    # Apply FIFO: consume from oldest active ENTRADA batches
-    await _consume_entrada_fifo(db, data.producto_id, data.almacen_id, data.cantidad)
+    # Recalculate average cost
     await _recalculate_precio_costo_fifo(db, data.producto_id)
-
+    
     # Register movement
     movimiento = MovimientoStock(
         producto_id=data.producto_id,
@@ -1757,7 +2178,7 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
         item_total = Decimal(str(item.cantidad)) * item.precio_unitario
         subtotal += item_total
 
-        # Fetch precio_costo for product items
+        # Fetch precio_costo: productos usan costo real, materias laboratorio usan precio * (1 - LAB_MARGEN_GANANCIA)
         precio_costo = Decimal('0')
         if item.producto_id:
             prod_costo_res = await db.execute(
@@ -1765,6 +2186,8 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
             )
             raw_costo = prod_costo_res.scalar_one_or_none()
             precio_costo = Decimal(str(raw_costo or 0))
+        elif item.materia_laboratorio_id:
+            precio_costo = item.precio_unitario * (Decimal('1') - LAB_MARGEN_GANANCIA)
         costo_total += Decimal(str(item.cantidad)) * precio_costo
 
         items_data.append({
@@ -1986,7 +2409,7 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
             item_total = Decimal(str(item.cantidad)) * item.precio_unitario
             subtotal += item_total
 
-            # Fetch precio_costo for product items
+            # Fetch precio_costo: productos usan costo real, materias laboratorio usan precio * (1 - LAB_MARGEN_GANANCIA)
             precio_costo = Decimal('0')
             if item.producto_id:
                 prod_costo_res = await db.execute(
@@ -1994,6 +2417,8 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
                 )
                 raw_costo = prod_costo_res.scalar_one_or_none()
                 precio_costo = Decimal(str(raw_costo or 0))
+            elif item.materia_laboratorio_id:
+                precio_costo = item.precio_unitario * (Decimal('1') - LAB_MARGEN_GANANCIA)
             costo_total += Decimal(str(item.cantidad)) * precio_costo
             
             venta_item = VentaItem(
@@ -2021,6 +2446,78 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
     await db.commit()
     await db.refresh(venta)
     return venta
+
+@api_router.get("/ventas/{venta_id}/fechas-impresion")
+async def obtener_fechas_impresion(venta_id: int, db: AsyncSession = Depends(get_db)):
+    """Fecha real de la venta + fechas de impresion corregidas (si las hay)"""
+    result = await db.execute(select(Venta).where(Venta.id == venta_id))
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    creado_en_py = None
+    if venta.creado_en:
+        creado_en_py = (
+            venta.creado_en.astimezone(PARAGUAY_TZ) if venta.creado_en.tzinfo
+            else venta.creado_en.replace(tzinfo=timezone.utc).astimezone(PARAGUAY_TZ)
+        )
+
+    return {
+        "venta_id": venta.id,
+        "fecha_original": creado_en_py.strftime('%Y-%m-%d') if creado_en_py else None,
+        "hora_original": creado_en_py.strftime('%I:%M %p') if creado_en_py else None,
+        "fecha_impresion_boleta": venta.fecha_impresion_boleta.isoformat() if venta.fecha_impresion_boleta else None,
+        "fecha_impresion_factura": venta.fecha_impresion_factura.isoformat() if venta.fecha_impresion_factura else None,
+    }
+
+@api_router.put("/ventas/{venta_id}/fecha-impresion")
+async def actualizar_fecha_impresion(venta_id: int, data: FechaImpresionUpdate, db: AsyncSession = Depends(get_db)):
+    """Cambia SOLO la fecha que se imprime en la boleta o factura.
+
+    La fecha real de la venta (creado_en) no se modifica: reportes, cierres,
+    filtros y stock siguen usando la fecha original.
+    """
+    tipo = (data.tipo_documento or '').upper()
+    if tipo not in ('BOLETA', 'FACTURA'):
+        raise HTTPException(status_code=400, detail="tipo_documento debe ser BOLETA o FACTURA")
+
+    result = await db.execute(select(Venta).where(Venta.id == venta_id))
+    venta = result.scalar_one_or_none()
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    if tipo == 'FACTURA':
+        venta.fecha_impresion_factura = data.fecha
+    else:
+        venta.fecha_impresion_boleta = data.fecha
+
+    # Invalidar el PDF ya generado para WhatsApp: si no, se reutiliza el viejo
+    # con la fecha anterior (generar_enlace_documento devuelve ya_existia=True).
+    docs_result = await db.execute(
+        select(DocumentoTemporal).where(
+            and_(
+                DocumentoTemporal.venta_id == venta_id,
+                DocumentoTemporal.tipo_documento == TipoDocumento[tipo]
+            )
+        )
+    )
+    for doc in docs_result.scalars().all():
+        try:
+            if doc.file_path and Path(doc.file_path).exists():
+                Path(doc.file_path).unlink()
+        except Exception as e:
+            logger.warning(f"No se pudo eliminar el PDF {doc.file_path}: {e}")
+        await db.delete(doc)
+
+    await db.commit()
+    await db.refresh(venta)
+
+    return {
+        "venta_id": venta.id,
+        "tipo_documento": tipo,
+        "fecha_impresion_boleta": venta.fecha_impresion_boleta.isoformat() if venta.fecha_impresion_boleta else None,
+        "fecha_impresion_factura": venta.fecha_impresion_factura.isoformat() if venta.fecha_impresion_factura else None,
+    }
 
 @api_router.post("/ventas/{venta_id}/confirmar-pendiente", response_model=VentaResponse)
 async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(get_db)):
@@ -2169,6 +2666,7 @@ async def listar_ventas(
     estado: Optional[str] = None,
     monto_min: Optional[float] = None,
     monto_max: Optional[float] = None,
+    limit: Optional[int] = 100,
     db: AsyncSession = Depends(get_db)
 ):
     query = (
@@ -2181,7 +2679,7 @@ async def listar_ventas(
     if fecha_desde:
         query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
-        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta))
+        query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
@@ -2195,6 +2693,9 @@ async def listar_ventas(
         query = query.where(Venta.total >= monto_min)
     if monto_max:
         query = query.where(Venta.total <= monto_max)
+    
+    if limit and limit > 0:
+        query = query.limit(limit)
     
     result = await db.execute(query)
     ventas = []
@@ -2347,10 +2848,14 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
                         cantidad=cantidad_devolver,
                         referencia_tipo="ANULACION_VENTA",
                         referencia_id=venta_id,
-                        cantidad_restante=cantidad_devolver,
+                        # Sin lote FIFO propio: las unidades ya se devolvieron a sus
+                        # lotes de origen con _restore_entrada_fifo (si no, se contarían dos veces)
+                        cantidad_restante=None,
                         creado_en=now_paraguay()
                     )
                     db.add(movimiento)
+
+                await _recalculate_precio_costo_fifo(db, item.producto_id)
             
             elif item.materia_laboratorio_id:
                 # Devolver materia de laboratorio a estado DISPONIBLE
@@ -2403,6 +2908,492 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
         print(error_detail)  # Esto aparecerá en los logs
         raise HTTPException(status_code=500, detail=error_detail)
 
+# ==================== PRESUPUESTOS ====================
+# Cotizaciones comerciales para clientes. A diferencia de una venta pendiente,
+# un presupuesto NUNCA toca stock ni aparece en historial/reportes de ventas.
+
+def numero_presupuesto(presupuesto_id: int) -> str:
+    return f"presupuesto-{presupuesto_id:03d}"
+
+async def _presupuesto_a_response(presupuesto: Presupuesto, cliente_nombre: str, con_items: bool = False):
+    data = {
+        'id': presupuesto.id,
+        'numero': numero_presupuesto(presupuesto.id),
+        'empresa_id': presupuesto.empresa_id,
+        'cliente_id': presupuesto.cliente_id,
+        'usuario_id': presupuesto.usuario_id,
+        'cliente_nombre': cliente_nombre,
+        'subtotal': presupuesto.subtotal,
+        'total': presupuesto.total,
+        'notas': presupuesto.notas,
+        'creado_en': presupuesto.creado_en,
+    }
+    if con_items:
+        data['items'] = [PresupuestoItemResponse.model_validate(item) for item in presupuesto.items]
+        return PresupuestoConDetalles(**data)
+    return PresupuestoResponse(**data)
+
+@api_router.post("/presupuestos", response_model=PresupuestoConDetalles)
+async def crear_presupuesto(data: PresupuestoCreate, db: AsyncSession = Depends(get_db)):
+    if not data.items:
+        raise HTTPException(status_code=400, detail="El presupuesto debe tener al menos un producto")
+
+    cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
+    cliente = cliente_result.scalar_one_or_none()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    presupuesto = Presupuesto(
+        empresa_id=data.empresa_id,
+        cliente_id=data.cliente_id,
+        usuario_id=data.usuario_id,
+        notas=data.notas,
+        subtotal=0,
+        total=0
+    )
+    db.add(presupuesto)
+    await db.flush()
+
+    total = Decimal('0')
+    for item_data in data.items:
+        prod_result = await db.execute(select(Producto).where(Producto.id == item_data.producto_id))
+        producto = prod_result.scalar_one_or_none()
+        if not producto:
+            raise HTTPException(status_code=404, detail=f"Producto {item_data.producto_id} no encontrado")
+        if item_data.cantidad <= 0:
+            raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a cero")
+        if item_data.precio_venta_unitario is not None and item_data.precio_venta_unitario < 0:
+            raise HTTPException(status_code=400, detail="El precio no puede ser negativo")
+
+        precio_unitario = item_data.precio_venta_unitario if item_data.precio_venta_unitario is not None else producto.precio_venta
+        subtotal_item = precio_unitario * item_data.cantidad
+        total += subtotal_item
+        db.add(PresupuestoItem(
+            presupuesto_id=presupuesto.id,
+            producto_id=producto.id,
+            nombre_producto=producto.nombre,
+            imagen_url=producto.imagen_url,
+            cantidad=item_data.cantidad,
+            precio_venta_unitario=precio_unitario,
+            subtotal=subtotal_item
+        ))
+
+    presupuesto.subtotal = total
+    presupuesto.total = total
+
+    await db.commit()
+
+    result = await db.execute(
+        select(Presupuesto).options(selectinload(Presupuesto.items)).where(Presupuesto.id == presupuesto.id)
+    )
+    presupuesto = result.scalar_one()
+    cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+    return await _presupuesto_a_response(presupuesto, cliente_nombre, con_items=True)
+
+@api_router.get("/presupuestos", response_model=List[PresupuestoResponse])
+async def listar_presupuestos(
+    empresa_id: int,
+    numero: Optional[str] = None,
+    cliente_id: Optional[int] = None,
+    monto_desde: Optional[float] = None,
+    monto_hasta: Optional[float] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    query = (
+        select(Presupuesto, Cliente)
+        .join(Cliente, Presupuesto.cliente_id == Cliente.id)
+        .where(Presupuesto.empresa_id == empresa_id)
+        .order_by(Presupuesto.creado_en.desc())
+    )
+
+    if numero:
+        digitos = ''.join(ch for ch in numero if ch.isdigit())
+        if digitos:
+            query = query.where(Presupuesto.id == int(digitos))
+        else:
+            # Sin dígitos válidos: no puede coincidir ningún presupuesto
+            query = query.where(Presupuesto.id == -1)
+    if cliente_id:
+        query = query.where(Presupuesto.cliente_id == cliente_id)
+    if monto_desde is not None:
+        query = query.where(Presupuesto.total >= monto_desde)
+    if monto_hasta is not None:
+        query = query.where(Presupuesto.total <= monto_hasta)
+    if fecha_desde:
+        query = query.where(Presupuesto.creado_en >= datetime.fromisoformat(fecha_desde))
+    if fecha_hasta:
+        query = query.where(Presupuesto.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+
+    result = await db.execute(query)
+    respuesta = []
+    for presupuesto, cliente in result.all():
+        cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+        respuesta.append(await _presupuesto_a_response(presupuesto, cliente_nombre))
+    return respuesta
+
+async def _get_presupuesto_con_cliente(presupuesto_id: int, db: AsyncSession):
+    result = await db.execute(
+        select(Presupuesto, Cliente, Empresa)
+        .join(Cliente, Presupuesto.cliente_id == Cliente.id)
+        .join(Empresa, Presupuesto.empresa_id == Empresa.id)
+        .options(selectinload(Presupuesto.items))
+        .where(Presupuesto.id == presupuesto_id)
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    return row
+
+@api_router.get("/presupuestos/{presupuesto_id}", response_model=PresupuestoConDetalles)
+async def obtener_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
+    cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+    return await _presupuesto_a_response(presupuesto, cliente_nombre, con_items=True)
+
+@api_router.delete("/presupuestos/{presupuesto_id}")
+async def eliminar_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Presupuesto).where(Presupuesto.id == presupuesto_id))
+    presupuesto = result.scalar_one_or_none()
+    if not presupuesto:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    await db.execute(delete(PresupuestoItem).where(PresupuestoItem.presupuesto_id == presupuesto_id))
+    await db.delete(presupuesto)
+    await db.commit()
+    return {"message": "Presupuesto eliminado"}
+
+async def _obtener_imagen_bytes(imagen_url: Optional[str]) -> Optional[bytes]:
+    """Obtiene los bytes de la imagen de un producto, sea un upload propio o una URL externa
+    (Productos.js permite cargar cualquiera de los dos como imagen_url)."""
+    if not imagen_url:
+        return None
+    if imagen_url.startswith('/uploads/'):
+        path = ROOT_DIR / imagen_url.lstrip('/')
+        if not path.exists():
+            return None
+        try:
+            return path.read_bytes()
+        except Exception:
+            return None
+    if imagen_url.startswith('http://') or imagen_url.startswith('https://'):
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(imagen_url)
+                if resp.status_code == 200:
+                    return resp.content
+        except Exception:
+            logger.warning(f"No se pudo descargar imagen de producto para presupuesto: {imagen_url}")
+        return None
+    return None
+
+# Logo por defecto del PDF de presupuesto cuando la empresa no cargó uno propio
+# (Sistema > Logo de la Empresa).
+LOGO_DEFAULT_PATH = ROOT_DIR / 'assets' / 'logo_ether_pdf.png'
+
+async def _obtener_logo_empresa(empresa: Empresa) -> Optional[bytes]:
+    logo = await _obtener_imagen_bytes(empresa.logo_url) if empresa.logo_url else None
+    if not logo and LOGO_DEFAULT_PATH.exists():
+        logo = LOGO_DEFAULT_PATH.read_bytes()
+    return logo
+
+def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa: Empresa, imagenes: dict,
+                            logo_bytes: Optional[bytes] = None) -> bytes:
+    """Genera el PDF A4 del presupuesto. Diseño moderno, deliberadamente distinto
+    de la boleta (matricial) y la factura (papel pre-impreso).
+    `imagenes` es un dict {presupuesto_item_id: bytes | None} ya resuelto de antemano
+    (la resolución de imágenes es async y esta función es sync)."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm
+    )
+    ancho_util = A4[0] - doc.leftMargin - doc.rightMargin
+
+    elements = []
+
+    azul = colors.HexColor('#1E3A8A')
+    gris = colors.HexColor('#6B7280')
+    gris_claro = colors.HexColor('#F3F4F6')
+    texto = colors.HexColor('#1F2937')
+
+    # Nota: cada ParagraphStyle fija su propio 'leading' explícitamente (ReportLab
+    # usa 12pt por defecto sin importar el fontSize, lo que solapaba líneas grandes).
+    empresa_style = ParagraphStyle('Empresa', fontName='Helvetica-Bold', fontSize=16, leading=19, textColor=azul)
+    subtitulo_style = ParagraphStyle('SubtituloEmpresa', fontName='Helvetica', fontSize=8.5, leading=13, textColor=gris)
+    titulo_doc_style = ParagraphStyle('TituloDoc', fontName='Helvetica-Bold', fontSize=18, leading=21, alignment=TA_RIGHT, textColor=azul)
+    numero_style = ParagraphStyle('NumeroDoc', fontName='Helvetica', fontSize=9.5, leading=14, alignment=TA_RIGHT, textColor=gris)
+    seccion_style = ParagraphStyle('Seccion', fontName='Helvetica-Bold', fontSize=8.5, leading=11, textColor=gris)
+    cliente_style = ParagraphStyle('Cliente', fontName='Helvetica-Bold', fontSize=12, leading=15, textColor=texto)
+    normal_style = ParagraphStyle('NormalP', fontName='Helvetica', fontSize=9, leading=13, textColor=texto)
+    item_nombre_style = ParagraphStyle('ItemNombre', fontName='Helvetica', fontSize=9.5, leading=13, textColor=texto)
+
+    # ---- Encabezado: logo + datos de la empresa a la izquierda, título a la derecha ----
+    logo_size = 35 * mm  # 20mm * 1.75
+    logo_col_gap = 4 * mm
+    logo_flowable = ''
+    if logo_bytes:
+        try:
+            # Encajar el logo en un cuadro de logo_size x logo_size sin deformarlo
+            ancho_img, alto_img = ImageReader(io.BytesIO(logo_bytes)).getSize()
+            escala = min(logo_size / ancho_img, logo_size / alto_img)
+            logo_flowable = Image(io.BytesIO(logo_bytes), width=ancho_img * escala, height=alto_img * escala)
+        except Exception:
+            logo_flowable = ''
+
+    datos_empresa = [
+        Paragraph(empresa.nombre or '', empresa_style),
+    ]
+    if empresa.direccion:
+        datos_empresa.append(Paragraph(empresa.direccion, subtitulo_style))
+    if empresa.ruc:
+        datos_empresa.append(Paragraph(f"RUC: {empresa.ruc}", subtitulo_style))
+    if empresa.telefono:
+        datos_empresa.append(Paragraph(f"Tel: {empresa.telefono}", subtitulo_style))
+
+    logo_col_width = logo_size + logo_col_gap
+    empresa_block = Table([[logo_flowable, datos_empresa]], colWidths=[logo_col_width, (ancho_util - 70 * mm) - logo_col_width])
+    empresa_block.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (0, 0), 0),
+        ('LEFTPADDING', (1, 0), (1, 0), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+
+    titulo_block = [
+        Paragraph('PRESUPUESTO', titulo_doc_style),
+        Spacer(1, 2 * mm),
+        Paragraph(f"N° {numero_presupuesto(presupuesto.id)}", numero_style),
+        Paragraph(f"Fecha: {presupuesto.creado_en.strftime('%d/%m/%Y') if presupuesto.creado_en else ''}", numero_style),
+    ]
+
+    header_table = Table([[empresa_block, titulo_block]], colWidths=[ancho_util - 70 * mm, 70 * mm])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(header_table)
+    elements.append(Spacer(1, 3 * mm))
+    elements.append(Table([['']], colWidths=[ancho_util], style=TableStyle([
+        ('LINEBELOW', (0, 0), (-1, 0), 1.2, azul),
+    ])))
+    elements.append(Spacer(1, 4 * mm))
+
+    # ---- Cliente ----
+    elements.append(Paragraph('CLIENTE', seccion_style))
+    elements.append(Spacer(1, 1.5 * mm))
+    elements.append(Paragraph(f"{cliente.nombre} {cliente.apellido or ''}".strip(), cliente_style))
+    detalle_cliente = []
+    if cliente.ruc:
+        detalle_cliente.append(f"RUC: {cliente.ruc}")
+    if cliente.telefono:
+        detalle_cliente.append(f"Tel: {cliente.telefono}")
+    if cliente.direccion:
+        detalle_cliente.append(cliente.direccion)
+    if detalle_cliente:
+        elements.append(Paragraph('   ·   '.join(detalle_cliente), normal_style))
+    elements.append(Spacer(1, 5 * mm))
+
+    # ---- Tabla de productos ----
+    col_imagen = 20 * mm
+    col_cant = 20 * mm
+    col_precio = 32 * mm
+    col_subtotal = 34 * mm
+    col_producto = ancho_util - col_imagen - col_cant - col_precio - col_subtotal
+
+    encabezado_style = ParagraphStyle('EncTabla', fontName='Helvetica-Bold', fontSize=9, leading=11, textColor=colors.white)
+    encabezado_style_r = ParagraphStyle('EncTablaR', parent=encabezado_style, alignment=TA_RIGHT)
+    encabezado_style_c = ParagraphStyle('EncTablaC', parent=encabezado_style, alignment=TA_CENTER)
+    precio_style = ParagraphStyle('Precio', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=texto)
+    cant_style = ParagraphStyle('Cant', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_CENTER, textColor=texto)
+
+    # Fila con altura fija (imagen 15mm + padding reducido). El nombre del producto se
+    # trunca a como mucho 2 líneas para que ninguna fila pueda crecer más de lo previsto
+    # (nombres muy largos no deben poder "empujar" filas fuera de la hoja y romper el
+    # límite de 10 productos por página).
+    FILA_ALTURA = 17.5 * mm
+    FILA_PADDING_V = 3  # puntos, arriba y abajo
+    ITEM_MAX_LINEAS = 2
+
+    def _truncar_nombre(texto_item):
+        ancho_disponible = col_producto - 12  # resta LEFTPADDING+RIGHTPADDING (6pt c/u)
+        ancho_por_linea = ancho_disponible / max(1, stringWidth('M', 'Helvetica', 9.5))
+        max_chars = int(ancho_por_linea) * ITEM_MAX_LINEAS
+        if len(texto_item) <= max_chars:
+            return texto_item
+        return texto_item[:max(1, max_chars - 1)].rstrip() + '…'
+
+    def _construir_tabla_items(items_chunk):
+        tabla_datos = [[
+            '',
+            Paragraph('Producto', encabezado_style),
+            Paragraph('Cant.', encabezado_style_c),
+            Paragraph('Precio Unit.', encabezado_style_r),
+            Paragraph('Subtotal', encabezado_style_r),
+        ]]
+        row_heights = [9 * mm]
+        for item in items_chunk:
+            img_bytes = imagenes.get(item.id)
+            celda_imagen = ''
+            if img_bytes:
+                try:
+                    celda_imagen = Image(io.BytesIO(img_bytes), width=15 * mm, height=15 * mm)
+                except Exception:
+                    celda_imagen = ''
+            tabla_datos.append([
+                celda_imagen,
+                Paragraph(_truncar_nombre(item.nombre_producto), item_nombre_style),
+                Paragraph(str(item.cantidad), cant_style),
+                Paragraph(f"Gs. {int(item.precio_venta_unitario):,}", precio_style),
+                Paragraph(f"Gs. {int(item.subtotal):,}", precio_style),
+            ])
+            row_heights.append(FILA_ALTURA)
+
+        tabla = Table(
+            tabla_datos,
+            colWidths=[col_imagen, col_producto, col_cant, col_precio, col_subtotal],
+            rowHeights=row_heights
+        )
+        tabla.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), azul),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, gris_claro]),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.75, azul),
+            ('LINEBELOW', (0, 1), (-1, -2), 0.5, colors.HexColor('#E5E7EB')),
+            ('LINEBELOW', (0, -1), (-1, -1), 1, azul),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), FILA_PADDING_V),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), FILA_PADDING_V),
+            ('BOX', (0, 0), (-1, -1), 0.75, azul),
+        ]))
+        return tabla
+
+    # Máximo 10 productos por hoja: coincide con el límite del carrito de Ventas,
+    # para que al convertir un presupuesto en venta el vendedor no se confunda
+    # viendo más ítems por página de los que puede cargar en una sola venta.
+    FILAS_POR_PAGINA = 10
+    items_lista = presupuesto.items
+    paginas = [items_lista[i:i + FILAS_POR_PAGINA] for i in range(0, len(items_lista), FILAS_POR_PAGINA)] or [[]]
+
+    continuacion_style = ParagraphStyle('Continuacion', fontName='Helvetica-Bold', fontSize=8.5, leading=11, textColor=gris)
+    for idx, pagina_items in enumerate(paginas):
+        if idx > 0:
+            elements.append(PageBreak())
+            elements.append(Paragraph(
+                f"PRESUPUESTO {numero_presupuesto(presupuesto.id)} — {cliente.nombre} {cliente.apellido or ''} "
+                f"(continuación, página {idx + 1} de {len(paginas)})",
+                continuacion_style
+            ))
+            elements.append(Spacer(1, 4 * mm))
+        elements.append(_construir_tabla_items(pagina_items))
+    elements.append(Spacer(1, 5 * mm))
+
+    # ---- Resumen: Subtotal / IVA incluido (precios ya incluyen IVA, igual que en Ventas) ----
+    iva_incluido = (presupuesto.total * Decimal('10') / Decimal('110')).quantize(Decimal('1'))
+    subtotal_sin_iva = presupuesto.total - iva_incluido
+    resumen_label_style = ParagraphStyle('ResumenLabel', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=gris)
+    resumen_value_style = ParagraphStyle('ResumenValue', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=texto)
+    resumen_table = Table(
+        [
+            [Paragraph('Subtotal (sin IVA)', resumen_label_style), Paragraph(f"Gs. {int(subtotal_sin_iva):,}", resumen_value_style)],
+            [Paragraph('IVA (10%, incluido)', resumen_label_style), Paragraph(f"Gs. {int(iva_incluido):,}", resumen_value_style)],
+        ],
+        colWidths=[ancho_util - 55 * mm, 55 * mm]
+    )
+    resumen_table.setStyle(TableStyle([
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(resumen_table)
+    elements.append(Spacer(1, 2 * mm))
+
+    # ---- Total ----
+    total_label_style = ParagraphStyle('TotalLabel', fontName='Helvetica-Bold', fontSize=11, leading=14, alignment=TA_RIGHT, textColor=colors.white)
+    total_value_style = ParagraphStyle('TotalValue', fontName='Helvetica-Bold', fontSize=14, leading=17, alignment=TA_RIGHT, textColor=colors.white)
+    total_table = Table(
+        [[Paragraph('TOTAL', total_label_style), Paragraph(f"Gs. {int(presupuesto.total):,}", total_value_style)]],
+        colWidths=[ancho_util - 55 * mm, 55 * mm]
+    )
+    total_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), azul),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(total_table)
+
+    if presupuesto.notas:
+        elements.append(Spacer(1, 8 * mm))
+        elements.append(Paragraph('NOTAS', seccion_style))
+        elements.append(Spacer(1, 1.5 * mm))
+        elements.append(Paragraph(presupuesto.notas, normal_style))
+
+    elements.append(Spacer(1, 12 * mm))
+    elements.append(Table([['']], colWidths=[ancho_util], style=TableStyle([
+        ('LINEABOVE', (0, 0), (-1, 0), 0.5, colors.HexColor('#E5E7EB')),
+    ])))
+    elements.append(Spacer(1, 3 * mm))
+    footer_style = ParagraphStyle('Footer', fontName='Helvetica-Oblique', fontSize=7.5, leading=10, textColor=gris)
+    elements.append(Paragraph(
+        'Este documento es un presupuesto de referencia y no constituye una factura ni una venta confirmada. '
+        'Precios sujetos a disponibilidad de stock al momento de la compra.',
+        footer_style
+    ))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.read()
+
+@api_router.get("/presupuestos/{presupuesto_id}/pdf")
+async def descargar_pdf_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
+    imagenes = {item.id: await _obtener_imagen_bytes(item.imagen_url) for item in presupuesto.items}
+    logo_bytes = await _obtener_logo_empresa(empresa)
+    pdf_bytes = generar_pdf_presupuesto(presupuesto, cliente, empresa, imagenes, logo_bytes)
+    filename = f"{numero_presupuesto(presupuesto.id)}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@api_router.get("/presupuestos/{presupuesto_id}/xlsx")
+async def descargar_xlsx_presupuesto(presupuesto_id: int, db: AsyncSession = Depends(get_db)):
+    presupuesto, cliente, empresa = await _get_presupuesto_con_cliente(presupuesto_id, db)
+
+    columnas = ['Producto', 'Cantidad', 'Precio Unitario', 'Subtotal']
+    datos = [
+        [item.nombre_producto, item.cantidad, float(item.precio_venta_unitario), float(item.subtotal)]
+        for item in presupuesto.items
+    ]
+    cliente_nombre = f"{cliente.nombre} {cliente.apellido or ''}".strip()
+    totales = ['', '', 'TOTAL:', float(presupuesto.total)]
+    subtitulo = f"Cliente: {cliente_nombre} | Fecha: {presupuesto.creado_en.strftime('%d/%m/%Y') if presupuesto.creado_en else ''}"
+
+    excel_bytes = crear_excel_reporte(numero_presupuesto(presupuesto.id).upper(), subtitulo, columnas, datos, totales)
+    filename = f"{numero_presupuesto(presupuesto.id)}.xlsx"
+    return Response(
+        content=excel_bytes,
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 # ==================== BOLETA Y FACTURA ====================
 @api_router.get("/ventas/{venta_id}/boleta")
 async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
@@ -2452,10 +3443,14 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 'total': float(item.total)
             })
         
+        # Fecha de impresion (respeta correccion manual, hora original intacta)
+        creado_en_py, fecha_modificada = fecha_documento(venta, 'BOLETA')
         return {
             'tipo': 'BOLETA',
             'numero': venta.id,
-            'fecha': venta.creado_en.strftime('%d/%m/%Y %I:%M %p'),
+            'fecha': creado_en_py.strftime('%d/%m/%Y %I:%M %p'),
+            'fecha_modificada': fecha_modificada,
+            'estado': venta.estado.value if venta.estado else 'BORRADOR',
             'tipo_pago': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
                 'nombre': empresa.nombre,
@@ -2487,7 +3482,7 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
 
 @api_router.get("/ventas/{venta_id}/factura")
 async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
-    """Generate factura data for printing"""
+    """Generate factura data for printing and mark the venta as facturada"""
     try:
         result = await db.execute(
             select(Venta, Cliente, Usuario, Empresa)
@@ -2506,7 +3501,7 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         # Check if client has RUC for factura
         if not cliente.ruc:
             raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
-        
+
         items_result = await db.execute(
             select(VentaItem, Producto, MateriaLaboratorio)
             .outerjoin(Producto, VentaItem.producto_id == Producto.id)
@@ -2538,10 +3533,13 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         base_imponible = float(venta.total) / 1.10
         iva_10 = float(venta.total) - base_imponible
         
+        # Fecha de impresion (respeta correccion manual, hora original intacta)
+        creado_en_py_f, fecha_modificada_f = fecha_documento(venta, 'FACTURA')
         return {
             'tipo': 'FACTURA',
             'numero': f"{venta.id:07d}",
-            'fecha': venta.creado_en.strftime('%d de %B de %Y'),
+            'fecha': creado_en_py_f.strftime('%d de %B de %Y'),
+            'fecha_modificada': fecha_modificada_f,
             'condicion': venta.tipo_pago.value if venta.tipo_pago else 'CONTADO',
             'empresa': {
                 'nombre': empresa.nombre,
@@ -2564,7 +3562,6 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
             'iva_10': round(iva_10, 0),
             'total': float(venta.total),
             'total_letras': numero_a_letras(int(venta.total)),
-            'creado_en': venta.creado_en.isoformat(),
             'liquidacion_iva': {
                 'iva_5': 0,
                 'iva_10': round(iva_10, 0),
@@ -2682,7 +3679,7 @@ async def generar_enlace_documento(
             
             if not cliente.ruc:
                 raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
-            
+
             pdf_content = await generar_pdf_factura(venta_obj, cliente, vendedor, empresa, db)
             filename_prefix = f"factura_{venta_id}"
         
@@ -2895,7 +3892,7 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
     )
 
     # Encabezado (usar nombre de la empresa si está disponible)
-    elements.append(Paragraph(empresa.nombre or 'Luz Brill', title_style))
+    elements.append(Paragraph(empresa.nombre or '', title_style))
     if empresa.telefono:
         elements.append(Paragraph(empresa.telefono, normal_style))
     elements.append(Spacer(1, 3*mm))
@@ -2911,8 +3908,8 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
         ['Dirección:', cliente.direccion or '0'],
         ['Telefono:', cliente.telefono or '0'],
         ['Ruc:', cliente.ruc or '0'],
-        ['Fecha de Venta:', venta.creado_en.strftime('%d/%m/%Y %I:%M %p')],
-        ['Tipo Comprob:', venta.tipo_pago.value if venta.tipo_pago else 'CONTADO']
+        ['Fecha de Venta:', fecha_documento(venta, 'BOLETA')[0].strftime('%d/%m/%Y %I:%M %p')],
+        ['Tipo Comprob:', 'SOLO PRESUPUESTO' if venta.estado and venta.estado.value == 'PENDIENTE' else (venta.tipo_pago.value if venta.tipo_pago else 'CONTADO')]
     ]
     
     # Ajuste de columnas para ancho de 75mm (rollo térmico)
@@ -3012,9 +4009,12 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
     elements.append(Paragraph('_' * 40, firma_style))
     elements.append(Paragraph('<b>Firma Cliente</b>', firma_style))
     elements.append(Spacer(1, 2*mm))
-    
+
     footer_style = ParagraphStyle('Footer', fontName='Courier', fontSize=7, alignment=TA_CENTER, fontStyle='italic')
-    elements.append(Paragraph('<b>Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.</b>', footer_style))
+    if venta.estado and venta.estado.value == 'PENDIENTE':
+        elements.append(Paragraph('<b>Este documento es solo una cotizacion, la venta no esta confirmada y no es valida en stock ni credito del cliente.</b>', footer_style))
+    else:
+        elements.append(Paragraph('<b>Favor Conferir Su Mercaderia !!! No Aceptamos Reclamos Posteriores.</b>', footer_style))
     
     # Calcular altura dinámica según cantidad de filas para rollo continuo
     rows_count = max(1, len(items_data))
@@ -3088,7 +4088,7 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
     # Header con empresa y número de factura
     header_data = [
         [
-            Paragraph(f'<b>{empresa.nombre or "Luz Brill S.A."}</b>', title_style),
+            Paragraph(f'<b>{empresa.nombre or ""}</b>', title_style),
             Paragraph('<b>FACTURA</b>', ParagraphStyle('FacturaTit', fontName='Courier-Bold', fontSize=14, alignment=TA_CENTER))
         ],
         [
@@ -3119,7 +4119,7 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
     cliente_data = [
         [
             f'Señor(es): {cliente.nombre} {cliente.apellido or ""}',
-            f'Fecha: {venta.creado_en.strftime("%d/%m/%Y")}'
+            f'Fecha: {fecha_documento(venta, "FACTURA")[0].strftime("%d/%m/%Y")}'
         ],
         [
             f'Dirección: {cliente.direccion or ""}',
@@ -3544,7 +4544,264 @@ async def listar_facturas(empresa_id: int, db: AsyncSession = Depends(get_db)):
     )
     return result.scalars().all()
 
-# ==================== PREFERENCIAS ====================
+@api_router.get("/facturas/clientes-pendientes")
+async def clientes_con_boletas_pendientes(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Clientes que tienen boletas CONFIRMADAS no facturadas"""
+    result = await db.execute(
+        select(
+            Cliente.id,
+            Cliente.nombre,
+            Cliente.apellido,
+            Cliente.ruc,
+            func_sql.count(Venta.id).label('boletas_count'),
+            func_sql.sum(Venta.total).label('total_pendiente')
+        )
+        .join(Venta, Venta.cliente_id == Cliente.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.facturada == False
+        )
+        .group_by(Cliente.id, Cliente.nombre, Cliente.apellido, Cliente.ruc)
+        .having(func_sql.count(Venta.id) > 0)
+        .order_by(Cliente.nombre)
+    )
+    rows = result.all()
+    return [
+        {
+            "cliente_id": r.id,
+            "nombre": f"{r.nombre} {r.apellido or ''}".strip(),
+            "ruc": r.ruc or '',
+            "boletas_count": r.boletas_count,
+            "total_pendiente": float(r.total_pendiente or 0)
+        }
+        for r in rows
+    ]
+
+@api_router.get("/facturas/boletas-pendientes/{cliente_id}")
+async def boletas_pendientes_cliente(cliente_id: int, empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Boletas CONFIRMADAS no facturadas de un cliente"""
+    result = await db.execute(
+        select(Venta)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.cliente_id == cliente_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.facturada == False
+        )
+        .order_by(Venta.creado_en.asc())
+    )
+    ventas = result.scalars().all()
+    return [
+        {
+            "id": v.id,
+            "total": float(v.total),
+            "tipo_pago": v.tipo_pago.value if v.tipo_pago else "EFECTIVO",
+            "creado_en": v.creado_en.isoformat() if v.creado_en else None
+        }
+        for v in ventas
+    ]
+
+@api_router.post("/facturas/grupal", response_model=FacturaGrupalResponse)
+async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Depends(get_db)):
+    """Crea una factura que engloba múltiples boletas de un cliente y las marca como facturadas"""
+    if not data.venta_ids:
+        raise HTTPException(status_code=400, detail="Seleccione al menos una boleta")
+
+    # Validate client has RUC
+    cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
+    cliente = cliente_result.scalar_one_or_none()
+    if not cliente:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if not cliente.ruc:
+        raise HTTPException(status_code=400, detail="El cliente no tiene RUC para emitir factura")
+
+    # Validate all ventas belong to client, are CONFIRMADA, and not yet facturada
+    result = await db.execute(
+        select(Venta)
+        .where(
+            Venta.id.in_(data.venta_ids),
+            Venta.empresa_id == data.empresa_id,
+            Venta.cliente_id == data.cliente_id,
+            Venta.estado == EstadoVenta.CONFIRMADA,
+            Venta.facturada == False
+        )
+    )
+    ventas = result.scalars().all()
+    if len(ventas) != len(data.venta_ids):
+        raise HTTPException(status_code=400, detail="Algunas boletas no son válidas o ya fueron facturadas")
+
+    # Si es factura a crédito (sin cobrar), todas las boletas deben ser CREDITO
+    if not data.cobrar_credito:
+        no_credito = [v.id for v in ventas if v.tipo_pago != TipoPago.CREDITO]
+        if no_credito:
+            raise HTTPException(
+                status_code=400,
+                detail="Para generar factura a crédito todas las boletas seleccionadas deben ser de tipo CRÉDITO. Separe las boletas de contado y fáctúrelas por separado."
+            )
+
+    # Calculate totals
+    total = sum(v.total for v in ventas)
+    base_imponible = total / Decimal('1.10')
+    iva = total - base_imponible
+
+    # Generate numero based on current count
+    count_result = await db.execute(select(func_sql.count(FacturaGrupal.id)))
+    count = count_result.scalar() or 0
+    numero = f"FG-{(count + 1):07d}"
+
+    # Create factura grupal
+    condicion = 'CREDITO' if not data.cobrar_credito else 'CONTADO'
+    factura = FacturaGrupal(
+        empresa_id=data.empresa_id,
+        cliente_id=data.cliente_id,
+        numero=numero,
+        condicion=condicion,
+        total=total,
+        iva=iva,
+        creado_en=now_paraguay()
+    )
+    db.add(factura)
+    await db.flush()
+
+    # Link ventas and mark as facturadas (insert directly to avoid async lazy-load)
+    for venta in ventas:
+        venta.facturada = True
+    await db.execute(
+        factura_grupal_ventas.insert(),
+        [{"factura_grupal_id": factura.id, "venta_id": v.id} for v in ventas]
+    )
+
+    # Cobrar créditos pendientes de las boletas con tipo_pago CREDITO (solo si se pidió cobrar)
+    if data.cobrar_credito:
+        venta_ids_credito = [v.id for v in ventas if v.tipo_pago == TipoPago.CREDITO]
+        if venta_ids_credito:
+            creditos_result = await db.execute(
+                select(CreditoCliente).where(
+                    CreditoCliente.venta_id.in_(venta_ids_credito),
+                    CreditoCliente.pagado == False
+                )
+            )
+            creditos_pendientes = creditos_result.scalars().all()
+            for credito in creditos_pendientes:
+                pago = PagoCredito(
+                    credito_id=credito.id,
+                    monto=credito.monto_pendiente,
+                    observacion=f"Cobrado al facturar {factura.numero}",
+                    fecha_pago=now_paraguay()
+                )
+                db.add(pago)
+                credito.monto_pendiente = Decimal('0')
+                credito.pagado = True
+
+    await db.commit()
+    await db.refresh(factura)
+    return factura
+
+@api_router.get("/facturas/grupal/{factura_id}/imprimir")
+async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(get_db)):
+    """Datos de impresión para una factura grupal"""
+    result = await db.execute(
+        select(FacturaGrupal)
+        .options(
+            selectinload(FacturaGrupal.ventas),
+            selectinload(FacturaGrupal.cliente),
+            selectinload(FacturaGrupal.empresa)
+        )
+        .where(FacturaGrupal.id == factura_id)
+    )
+    factura = result.scalar_one_or_none()
+    if not factura:
+        raise HTTPException(status_code=404, detail="Factura no encontrada")
+
+    ventas_sorted = sorted(factura.ventas, key=lambda v: v.id)
+    nums_boletas = [f"#{v.id}" for v in ventas_sorted]
+    total_general = float(factura.total)
+    NUMS_POR_LINEA = 6
+
+    items = []
+    # Fila principal: descripción + total agrupado
+    items.append({
+        'cantidad': 1,
+        'descripcion': 'Compras de insumos y materiales',
+        'precio_unitario': total_general,
+        'exenta': 0,
+        'iva_5': 0,
+        'iva_10': total_general
+    })
+    # Filas de continuación con los números de boletas agrupados
+    for i in range(0, len(nums_boletas), NUMS_POR_LINEA):
+        chunk = nums_boletas[i:i + NUMS_POR_LINEA]
+        prefix = 'Boletas: ' if i == 0 else ''
+        items.append({
+            'cantidad': '',
+            'descripcion': prefix + ' '.join(chunk),
+            'precio_unitario': None,
+            'exenta': None,
+            'iva_5': None,
+            'iva_10': None,
+            'es_continuacion': True
+        })
+
+    iva_10 = round(float(factura.iva), 0)
+    return {
+        'tipo': 'FACTURA',
+        'numero': factura.numero,
+        'fecha': factura.creado_en.strftime('%d de %B de %Y'),
+        'condicion': factura.condicion or 'CONTADO',
+        'empresa': {
+            'nombre': factura.empresa.nombre,
+            'ruc': factura.empresa.ruc,
+            'telefono': factura.empresa.telefono,
+            'direccion': factura.empresa.direccion
+        },
+        'cliente': {
+            'nombre': f"{factura.cliente.nombre} {factura.cliente.apellido or ''}".strip(),
+            'ruc': factura.cliente.ruc,
+            'direccion': factura.cliente.direccion or '',
+            'telefono': factura.cliente.telefono or ''
+        },
+        'items': items,
+        'subtotal_exenta': 0,
+        'subtotal_iva_5': 0,
+        'subtotal_iva_10': float(factura.total),
+        'descuento': 0,
+        'total': float(factura.total),
+        'total_letras': numero_a_letras(int(factura.total)),
+        'creado_en': factura.creado_en.isoformat(),
+        'liquidacion_iva': {
+            'iva_5': 0,
+            'iva_10': iva_10,
+            'total_iva': iva_10
+        }
+    }
+
+@api_router.get("/facturas/grupales")
+async def listar_facturas_grupales(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Lista facturas grupales emitidas"""
+    result = await db.execute(
+        select(FacturaGrupal)
+        .options(selectinload(FacturaGrupal.ventas), selectinload(FacturaGrupal.cliente))
+        .where(FacturaGrupal.empresa_id == empresa_id)
+        .order_by(FacturaGrupal.creado_en.desc())
+    )
+    facturas = result.scalars().all()
+    return [
+        {
+            "id": f.id,
+            "numero": f.numero,
+            "cliente_id": f.cliente_id,
+            "cliente_nombre": f"{f.cliente.nombre} {f.cliente.apellido or ''}".strip(),
+            "cliente_ruc": f.cliente.ruc or '',
+            "total": float(f.total),
+            "iva": float(f.iva),
+            "boletas_count": len(f.ventas),
+            "creado_en": f.creado_en.isoformat() if f.creado_en else None
+        }
+        for f in facturas
+    ]
+
+
 @api_router.post("/preferencias", response_model=PreferenciaUsuarioResponse)
 async def crear_actualizar_preferencias(data: PreferenciaUsuarioCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -4073,6 +5330,14 @@ async def obtener_ventas_por_periodo(
     
     return []
 
+# ==================== BUSINESS INTELLIGENCE ====================
+
+
+
+
+
+
+
 # ==================== ALERTAS ====================
 @api_router.get("/alertas", response_model=List[Alerta])
 async def obtener_alertas(empresa_id: int, db: AsyncSession = Depends(get_db)):
@@ -4207,7 +5472,7 @@ def crear_pdf_reporte(titulo, subtitulo, columnas, datos, totales=None, col_widt
     # Footer
     elements.append(Spacer(1, 20))
     footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
-    elements.append(Paragraph(f"Generado el {now_paraguay().strftime('%d/%m/%Y %H:%M')} - Luz Brill ERP", footer_style))
+    elements.append(Paragraph(f"Generado el {now_paraguay().strftime('%d/%m/%Y %H:%M')} - Ethercloud ERP", footer_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -4303,12 +5568,13 @@ async def reporte_ventas(
     tipo_pago: str = None,
     estado: str = None,
     cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de ventas por rango de fechas con filtros"""
     try:
-        fecha_ini = datetime.fromisoformat(fecha_desde)
-        fecha_fin = datetime.fromisoformat(fecha_hasta) + timedelta(days=1)
+        fecha_ini = datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ)
+        fecha_fin = (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ)
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
     
@@ -4326,14 +5592,12 @@ async def reporte_ventas(
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     
-    # Apply estado filter (default: CONFIRMADA)
-    if estado:
+    # Apply estado filter - None or 'TODOS' means all states; specific value filters by that state
+    if estado and estado != 'TODOS':
         try:
             query = query.where(Venta.estado == EstadoVenta[estado])
         except KeyError:
             raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
-    else:
-        query = query.where(Venta.estado == EstadoVenta.CONFIRMADA)
     
     # Apply tipo_pago filter - support CONTADO (all non-credit) and CREDITO
     if tipo_pago:
@@ -4415,12 +5679,13 @@ async def reporte_ventas_excel(
     tipo_pago: str = None,
     estado: str = None,
     cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de ventas por rango de fechas con filtros"""
     try:
-        fecha_ini = datetime.fromisoformat(fecha_desde)
-        fecha_fin = datetime.fromisoformat(fecha_hasta) + timedelta(days=1)
+        fecha_ini = datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ)
+        fecha_fin = (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ)
     except ValueError:
         raise HTTPException(status_code=400, detail="Formato de fecha inválido. Use YYYY-MM-DD")
 
@@ -4435,13 +5700,11 @@ async def reporte_ventas_excel(
     )
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
-    if estado:
+    if estado and estado != 'TODOS':
         try:
             query = query.where(Venta.estado == EstadoVenta[estado])
         except KeyError:
             raise HTTPException(status_code=400, detail=f"Estado '{estado}' no válido")
-    else:
-        query = query.where(Venta.estado == EstadoVenta.CONFIRMADA)
     if tipo_pago:
         if tipo_pago == 'CONTADO':
             query = query.where(Venta.tipo_pago.in_([TipoPago.EFECTIVO, TipoPago.TARJETA, TipoPago.TRANSFERENCIA, TipoPago.CHEQUE]))
@@ -4519,7 +5782,7 @@ async def reporte_historial_ventas(
     if fecha_desde:
         query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
-        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+        query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
@@ -4621,7 +5884,7 @@ async def reporte_historial_ventas_excel(
     if fecha_desde:
         query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
-        query = query.where(Venta.creado_en <= datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+        query = query.where(Venta.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
     if cliente_id:
         query = query.where(Venta.cliente_id == cliente_id)
     if usuario_id:
@@ -4691,6 +5954,7 @@ async def reporte_stock(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     solo_alertas: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de stock actual con filtros"""
@@ -4737,14 +6001,14 @@ async def reporte_stock(
                 f"{float(producto.precio_costo or 0):,.0f}"
             ])
         
+        if not datos:
+            raise HTTPException(status_code=404, detail="No se encontraron productos con los filtros seleccionados")
+
         # Build subtitle
         subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
         if solo_alertas == 'true':
             subtitle += " | Solo stock bajo"
-        if not datos:
-            subtitle += " | Sin registros"
-        else:
-            subtitle += f" | Total productos: {len(datos)}"
+        subtitle += f" | Total productos: {len(datos)}"
         
         pdf_bytes = crear_pdf_reporte(
             "Reporte de Stock Actual",
@@ -4770,6 +6034,7 @@ async def reporte_stock_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     solo_alertas: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de stock actual con filtros"""
@@ -4807,6 +6072,9 @@ async def reporte_stock_excel(
                 'Stock bajo' if es_alerta else 'OK'
             ])
 
+        if not datos:
+            raise HTTPException(status_code=404, detail="No se encontraron productos con los filtros seleccionados")
+
         subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
         if solo_alertas == 'true':
             subtitle += " | Solo stock bajo"
@@ -4830,6 +6098,7 @@ async def reporte_deudas_proveedores(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de deudas a proveedores con filtros"""
@@ -4873,32 +6142,8 @@ async def reporte_deudas_proveedores(
         result = await db.execute(query)
         deudas = result.all()
         
-        # If no data, return empty report instead of error
         if not deudas:
-            # Create empty report
-            columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
-            datos = []
-            totales = ['', '', '0', '', '']
-            
-            subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
-            if fecha_desde and fecha_hasta:
-                subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
-            if estado:
-                subtitle += f" | Estado: {estado}"
-            subtitle += " | Sin registros"
-            
-            pdf_bytes = crear_pdf_reporte(
-                "Reporte de Deudas a Proveedores",
-                subtitle,
-                columnas,
-                datos,
-                totales
-            )
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename=reporte_deudas_proveedores_{today_paraguay().isoformat()}.pdf"}
-            )
+            raise HTTPException(status_code=404, detail="No se encontraron deudas con los filtros seleccionados")
         
         columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento']
         datos = []
@@ -4949,6 +6194,7 @@ async def reporte_deudas_proveedores_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de deudas a proveedores con filtros"""
@@ -4982,6 +6228,9 @@ async def reporte_deudas_proveedores_excel(
         query = query.order_by(DeudaProveedor.fecha_limite)
         result = await db.execute(query)
         deudas = result.all()
+
+        if not deudas:
+            raise HTTPException(status_code=404, detail="No se encontraron deudas con los filtros seleccionados")
 
         columnas = ['Proveedor', 'Descripción', 'Monto', 'Emisión', 'Vencimiento', 'Estado']
         datos = []
@@ -5024,6 +6273,8 @@ async def reporte_creditos_clientes(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de créditos de clientes con filtros"""
@@ -5033,6 +6284,8 @@ async def reporte_creditos_clientes(
             .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
             .where(Cliente.empresa_id == empresa_id)
         )
+        if cliente_id:
+            query = query.where(CreditoCliente.cliente_id == cliente_id)
         
         # Filter by estado (default: PENDIENTE if not specified)
         if estado:
@@ -5067,32 +6320,8 @@ async def reporte_creditos_clientes(
         result = await db.execute(query)
         creditos = result.all()
         
-        # If no data, return empty report instead of error
         if not creditos:
-            # Create empty report
-            columnas = ['Cliente', 'Venta #', 'Original', 'Pagado', 'Pendiente', 'Fecha']
-            datos = []
-            totales = ['', 'TOTAL:', '0', '0', '0', '']
-            
-            subtitle = f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
-            if fecha_desde and fecha_hasta:
-                subtitle += f" | Período: {fecha_desde} al {fecha_hasta}"
-            if estado:
-                subtitle += f" | Estado: {estado}"
-            subtitle += " | Sin registros"
-            
-            pdf_bytes = crear_pdf_reporte(
-                "Reporte de Créditos de Clientes",
-                subtitle,
-                columnas,
-                datos,
-                totales
-            )
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.pdf"}
-            )
+            raise HTTPException(status_code=404, detail="No se encontraron créditos con los filtros seleccionados")
         
         columnas = ['Cliente', 'Venta #', 'Original', 'Pagado', 'Pendiente', 'Fecha']
         datos = []
@@ -5148,6 +6377,8 @@ async def reporte_creditos_clientes_excel(
     fecha_desde: str = None,
     fecha_hasta: str = None,
     estado: str = None,
+    cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de créditos de clientes con filtros"""
@@ -5157,6 +6388,8 @@ async def reporte_creditos_clientes_excel(
             .join(Cliente, CreditoCliente.cliente_id == Cliente.id)
             .where(Cliente.empresa_id == empresa_id)
         )
+        if cliente_id:
+            query = query.where(CreditoCliente.cliente_id == cliente_id)
         if estado:
             if estado == 'TODOS':
                 pass
@@ -5181,6 +6414,9 @@ async def reporte_creditos_clientes_excel(
         query = query.order_by(CreditoCliente.fecha_venta)
         result = await db.execute(query)
         creditos = result.all()
+
+        if not creditos:
+            raise HTTPException(status_code=404, detail="No se encontraron créditos con los filtros seleccionados")
 
         columnas = ['Cliente', 'Venta #', 'Monto Original', 'Pagado', 'Pendiente', 'Fecha']
         datos = []
@@ -5219,6 +6455,196 @@ async def reporte_creditos_clientes_excel(
         content=excel_bytes,
         media_type=EXCEL_MIME,
         headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.xlsx"}
+    )
+
+@api_router.get("/reportes/venta-items")
+async def reporte_venta_items(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    categoria_id: int = None,
+    producto_id: int = None,
+    cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte PDF de ventas de items agrupadas por producto/materia de laboratorio"""
+    from collections import defaultdict
+    query = (
+        select(VentaItem, Venta, Producto, Categoria, MateriaLaboratorio)
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
+        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA
+        )
+    )
+    if fecha_desde:
+        try:
+            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+    if fecha_hasta:
+        try:
+            query = query.where(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+    if categoria_id:
+        query = query.where(Producto.categoria_id == categoria_id)
+    if producto_id:
+        query = query.where(VentaItem.producto_id == producto_id)
+    if cliente_id:
+        query = query.where(Venta.cliente_id == cliente_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
+
+    agg = defaultdict(lambda: {'cantidad': 0, 'total': Decimal('0'), 'categoria': '-'})
+    for item, venta, producto, categoria, materia in rows:
+        if producto:
+            key = producto.nombre
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = categoria.nombre if categoria else 'Sin categoría'
+        elif materia:
+            key = f"[LAB] {materia.nombre}"
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = 'Laboratorio'
+
+    sorted_items = sorted(agg.items(), key=lambda x: x[1]['total'], reverse=True)
+
+    columnas = ['Producto / Item', 'Categoría', 'Cant. Vendida', 'Monto Total (Gs.)']
+    datos = []
+    total_cant = 0
+    total_monto = Decimal('0')
+    for nombre, data in sorted_items:
+        total_cant += data['cantidad']
+        total_monto += data['total']
+        datos.append([
+            nombre[:40],
+            data['categoria'],
+            str(data['cantidad']),
+            f"{float(data['total']):,.0f}"
+        ])
+
+    totales = ['TOTAL', '', str(total_cant), f"{float(total_monto):,.0f}"]
+
+    subtitle_parts = []
+    if fecha_desde and fecha_hasta:
+        subtitle_parts.append(f"Período: {fecha_desde} al {fecha_hasta}")
+    elif fecha_desde:
+        subtitle_parts.append(f"Desde: {fecha_desde}")
+    elif fecha_hasta:
+        subtitle_parts.append(f"Hasta: {fecha_hasta}")
+    subtitle_parts.append(f"Items distintos: {len(datos)}")
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+
+    pdf_bytes = crear_pdf_reporte("Reporte de Venta de Items", subtitle, columnas, datos, totales)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=reporte_venta_items_{today_paraguay().isoformat()}.pdf"}
+    )
+
+@api_router.get("/reportes/venta-items/excel")
+async def reporte_venta_items_excel(
+    empresa_id: int,
+    fecha_desde: str = None,
+    fecha_hasta: str = None,
+    categoria_id: int = None,
+    producto_id: int = None,
+    cliente_id: int = None,
+    current_user: Usuario = Depends(get_current_usuario),
+    db: AsyncSession = Depends(get_db)
+):
+    """Genera reporte Excel de ventas de items agrupadas por producto/materia de laboratorio"""
+    from collections import defaultdict
+    query = (
+        select(VentaItem, Venta, Producto, Categoria, MateriaLaboratorio)
+        .join(Venta, VentaItem.venta_id == Venta.id)
+        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
+        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+        .where(
+            Venta.empresa_id == empresa_id,
+            Venta.estado == EstadoVenta.CONFIRMADA
+        )
+    )
+    if fecha_desde:
+        try:
+            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+    if fecha_hasta:
+        try:
+            query = query.where(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+    if categoria_id:
+        query = query.where(Producto.categoria_id == categoria_id)
+    if producto_id:
+        query = query.where(VentaItem.producto_id == producto_id)
+    if cliente_id:
+        query = query.where(Venta.cliente_id == cliente_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
+
+    agg = defaultdict(lambda: {'cantidad': 0, 'total': Decimal('0'), 'categoria': '-'})
+    for item, venta, producto, categoria, materia in rows:
+        if producto:
+            key = producto.nombre
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = categoria.nombre if categoria else 'Sin categoría'
+        elif materia:
+            key = f"[LAB] {materia.nombre}"
+            agg[key]['cantidad'] += item.cantidad
+            agg[key]['total'] += item.total
+            agg[key]['categoria'] = 'Laboratorio'
+
+    sorted_items = sorted(agg.items(), key=lambda x: x[1]['total'], reverse=True)
+
+    columnas = ['Producto / Item', 'Categoría', 'Cant. Vendida', 'Monto Total (Gs.)']
+    datos = []
+    total_cant = 0
+    total_monto = Decimal('0')
+    for nombre, data in sorted_items:
+        total_cant += data['cantidad']
+        total_monto += data['total']
+        datos.append([
+            nombre,
+            data['categoria'],
+            data['cantidad'],
+            float(data['total'])
+        ])
+
+    totales = ['TOTAL', '', total_cant, float(total_monto)]
+
+    subtitle_parts = []
+    if fecha_desde and fecha_hasta:
+        subtitle_parts.append(f"Período: {fecha_desde} al {fecha_hasta}")
+    elif fecha_desde:
+        subtitle_parts.append(f"Desde: {fecha_desde}")
+    elif fecha_hasta:
+        subtitle_parts.append(f"Hasta: {fecha_hasta}")
+    subtitle_parts.append(f"Items distintos: {len(datos)}")
+    subtitle = " | ".join(subtitle_parts) if subtitle_parts else f"Fecha: {today_paraguay().strftime('%d/%m/%Y')}"
+
+    excel_bytes = crear_excel_reporte("Reporte de Venta de Items", subtitle, columnas, datos, totales)
+    return Response(
+        content=excel_bytes,
+        media_type=EXCEL_MIME,
+        headers={"Content-Disposition": f"attachment; filename=reporte_venta_items_{today_paraguay().isoformat()}.xlsx"}
     )
 
 # ==================== CICLOS DE SALARIO ====================
@@ -6298,6 +7724,11 @@ async def bi_aging_tandas(
                 MovimientoStock.cantidad_restante > 0,
                 MovimientoStock.cantidad_restante == None,
             ),
+            # Las devoluciones por anulación no son lotes: sus unidades vuelven a los lotes de origen
+            or_(
+                MovimientoStock.referencia_tipo == None,
+                MovimientoStock.referencia_tipo != "ANULACION_VENTA",
+            ),
         )
         .order_by(MovimientoStock.producto_id, MovimientoStock.creado_en.asc())
     )
@@ -6392,16 +7823,27 @@ async def bi_aging_tandas(
 
 
 # ==================== SYNC PERMISSIONS ====================
+# Permisos agregados después de la primera versión del sistema. Las instalaciones
+# existentes los reciben al arrancar (ensure_permisos) o desde Sistema > Sincronizar.
+PERMISOS_REQUERIDOS = [
+    ("dashboard.ver", "Ver dashboard"),
+    ("bi.ver", "Ver Business Intelligence"),
+    ("gastos.ver", "Ver gastos operativos"),
+    ("gastos.gestionar", "Gestionar gastos operativos"),
+    ("delivery.eliminar", "Eliminar entregas"),
+    ("laboratorio.editar", "Editar materias de laboratorio"),
+    ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
+    ("presupuestos.ver", "Ver presupuestos"),
+    ("presupuestos.crear", "Crear presupuestos"),
+    ("presupuestos.editar", "Editar presupuestos"),
+    ("presupuestos.eliminar", "Eliminar presupuestos"),
+]
+
 @api_router.post("/sistema/sync-permisos")
 async def sync_permisos(db: AsyncSession = Depends(get_db)):
     """Add any missing permissions and assign them to all ADMIN roles. Safe to run on production."""
-    all_permisos = [
-        ("gastos.ver", "Ver gastos operativos"),
-        ("gastos.gestionar", "Gestionar gastos operativos"),
-    ]
-
     added_perms = []
-    for clave, desc in all_permisos:
+    for clave, desc in PERMISOS_REQUERIDOS:
         existing = await db.execute(select(Permiso).where(Permiso.clave == clave))
         if not existing.scalar_one_or_none():
             perm = Permiso(clave=clave, descripcion=desc)
@@ -6409,14 +7851,15 @@ async def sync_permisos(db: AsyncSession = Depends(get_db)):
             await db.flush()
             added_perms.append(clave)
 
-    # Assign new permissions to all ADMIN roles
+    # Asignar a los roles ADMIN cualquier permiso requerido que les falte
+    # (los permisos pueden haber sido creados antes por ensure_permisos al arrancar)
     assigned = 0
-    for clave in added_perms:
+    for clave, _ in PERMISOS_REQUERIDOS:
         perm_result = await db.execute(select(Permiso).where(Permiso.clave == clave))
         perm = perm_result.scalar_one_or_none()
         if not perm:
             continue
-        admin_roles = await db.execute(select(Rol).where(Rol.nombre == "ADMIN"))
+        admin_roles = await db.execute(select(Rol).where(Rol.nombre.in_(ROLES_ADMIN)))
         for rol in admin_roles.scalars().all():
             existing_rp = await db.execute(
                 select(RolPermiso).where(RolPermiso.rol_id == rol.id, RolPermiso.permiso_id == perm.id)
@@ -6429,7 +7872,7 @@ async def sync_permisos(db: AsyncSession = Depends(get_db)):
     return {
         "permisos_added": added_perms,
         "rol_permisos_assigned": assigned,
-        "message": "Sincronización de permisos completada" if added_perms else "No hay permisos nuevos para agregar"
+        "message": "Sincronización de permisos completada" if (added_perms or assigned) else "No hay permisos nuevos para agregar"
     }
 
 
@@ -6442,18 +7885,18 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         return {"message": "Data already seeded"}
     
     empresa = Empresa(
-        nombre="Luz Brill S.A.",
-        ruc="80012345-6",
+        nombre="Ether Soluciones Tecnológicas",
+        ruc="5244360-4",
         direccion="Asunción, Paraguay",
-        telefono="021-123456",
-        email="contacto@luzbrill.com"
+        telefono="000000000",
+        email="contacto@empresa.com"
     )
     db.add(empresa)
     await db.flush()
     
     admin = Usuario(
         empresa_id=empresa.id,
-        email="admin@luzbrill.com",
+        email="admin@ether.com",
         password_hash=hash_password("admin123"),
         nombre="Administrador",
         apellido="Sistema"
@@ -6513,6 +7956,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         # Laboratorio
         ("laboratorio.crear", "Crear materias de laboratorio"),
         ("laboratorio.ver", "Ver materias de laboratorio"),
+        ("laboratorio.editar", "Editar materias de laboratorio"),
+        ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
         # Sistema
         ("usuarios.ver", "Ver usuarios"),
         ("usuarios.gestionar", "Gestionar usuarios"),
@@ -6531,6 +7976,11 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         # Gastos operativos
         ("gastos.ver", "Ver gastos operativos"),
         ("gastos.gestionar", "Gestionar gastos operativos"),
+        # Presupuestos
+        ("presupuestos.ver", "Ver presupuestos"),
+        ("presupuestos.crear", "Crear presupuestos"),
+        ("presupuestos.editar", "Editar presupuestos"),
+        ("presupuestos.eliminar", "Eliminar presupuestos"),
     ]
     for clave, desc in permisos_data:
         db.add(Permiso(clave=clave, descripcion=desc))
@@ -6564,10 +8014,11 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "proveedores.ver", "proveedores.gestionar_deudas",
         "funcionarios.ver", "funcionarios.ver_salarios", "funcionarios.adelantos",
         "delivery.ver", "delivery.crear", "delivery.actualizar_estado",
-        "flota.ver", "laboratorio.ver", "laboratorio.crear",
+        "flota.ver", "laboratorio.ver", "laboratorio.crear", "laboratorio.editar",
         "reportes.ver", "reportes.exportar",
         "bi.ver",
-        "gastos.ver", "gastos.gestionar"
+        "gastos.ver", "gastos.gestionar",
+        "presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"
     ]
     if gerente_rol:
         for perm_clave in gerente_permisos:
@@ -6585,7 +8036,8 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         "productos.ver", "stock.ver",
         "clientes.ver", "clientes.crear",
         "delivery.ver", "delivery.crear",
-        "laboratorio.ver"
+        "laboratorio.ver",
+        "presupuestos.ver", "presupuestos.crear", "presupuestos.editar"
     ]
     if vendedor_rol:
         for perm_clave in vendedor_permisos:
@@ -6652,12 +8104,11 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
         
         # Create default empresa
         empresa = Empresa(
-            ruc="12345678901",
-            razon_social="Luz Brill S.A.",
-            nombre_comercial="Luz Brill",
-            direccion="Av. Principal 123",
-            telefono="123456789",
-            email="contacto@luzbrill.com",
+            ruc="5244360-4",
+            nombre="Ether Soluciones Tecnológicas",
+            direccion="Dirección Principal 123",
+            telefono="000000000",
+            email="contacto@empresa.com",
             estado=True
         )
         db.add(empresa)
@@ -6676,7 +8127,7 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
         # Create admin user
         admin = Usuario(
             empresa_id=empresa.id,
-            email="admin@luzbrill.com",
+            email="admin@ether.com",
             password_hash=hash_password("admin123"),
             nombre="Admin",
             apellido="Sistema",
@@ -6710,25 +8161,52 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
             ("sistema.configurar", "Configurar sistema"),
             ("gastos.ver", "Ver gastos operativos"),
             ("gastos.gestionar", "Gestionar gastos operativos"),
+            ("presupuestos.ver", "Ver presupuestos"),
+            ("presupuestos.crear", "Crear presupuestos"),
+            ("presupuestos.editar", "Editar presupuestos"),
+            ("presupuestos.eliminar", "Eliminar presupuestos"),
         ]
+        permisos_creados = {}
         for clave, desc in permisos_data:
             permiso = Permiso(clave=clave, descripcion=desc, estado=True)
             db.add(permiso)
             await db.flush()
-            
+            permisos_creados[clave] = permiso
+
             # Assign all permissions to admin role
             rol_permiso = RolPermiso(rol_id=rol_admin.id, permiso_id=permiso.id)
             db.add(rol_permiso)
-        
+
         # Create other roles
-        for rol_nombre in ["GERENTE", "VENDEDOR", "DELIVERY"]:
-            db.add(Rol(
-                empresa_id=empresa.id,
-                nombre=rol_nombre,
-                descripcion=f"Rol {rol_nombre}",
-                estado=True
-            ))
-        
+        rol_gerente = Rol(
+            empresa_id=empresa.id,
+            nombre="GERENTE",
+            descripcion="Rol GERENTE",
+            estado=True
+        )
+        db.add(rol_gerente)
+        await db.flush()
+        for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"):
+            db.add(RolPermiso(rol_id=rol_gerente.id, permiso_id=permisos_creados[clave].id))
+
+        rol_vendedor = Rol(
+            empresa_id=empresa.id,
+            nombre="VENDEDOR",
+            descripcion="Rol VENDEDOR",
+            estado=True
+        )
+        db.add(rol_vendedor)
+        await db.flush()
+        for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar"):
+            db.add(RolPermiso(rol_id=rol_vendedor.id, permiso_id=permisos_creados[clave].id))
+
+        db.add(Rol(
+            empresa_id=empresa.id,
+            nombre="DELIVERY",
+            descripcion="Rol DELIVERY",
+            estado=True
+        ))
+
         # Create categories
         categorias = ["Pinturas", "Herramientas", "Materiales", "Accesorios"]
         for cat in categorias:
@@ -6758,7 +8236,7 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
             "status": "success",
             "message": "Base de datos reseteada y poblada exitosamente",
             "credentials": {
-                "email": "admin@luzbrill.com",
+                "email": "admin@ether.com",
                 "password": "admin123"
             },
             "empresa_id": empresa.id
@@ -6836,7 +8314,7 @@ async def startup():
                 db.add(bi_perm)
                 await db.flush()
                 # Assign to every ADMIN rol found
-                admin_roles = await db.execute(select(Rol).where(Rol.nombre == "ADMIN"))
+                admin_roles = await db.execute(select(Rol).where(Rol.nombre.in_(ROLES_ADMIN)))
                 for admin_rol in admin_roles.scalars().all():
                     db.add(RolPermiso(rol_id=admin_rol.id, permiso_id=bi_perm.id))
                 # Assign to every GERENTE rol found
@@ -6850,7 +8328,44 @@ async def startup():
     except Exception as e:
         logger.warning(f"BI permission migration warning: {e}")
 
+    await ensure_indices()
+    await ensure_permisos()
     logger.info("Database initialized")
+
+# Índices sobre las claves foráneas más consultadas. create_all() no los añade a
+# tablas que ya existen, así que se crean aquí de forma idempotente.
+INDICES_REQUERIDOS = [
+    ("ix_materias_laboratorio_empresa_id", "materias_laboratorio", "empresa_id"),
+    ("ix_materias_laboratorio_estado", "materias_laboratorio", "estado"),
+    ("ix_materias_laboratorio_creado_en", "materias_laboratorio", "creado_en"),
+    ("ix_productos_empresa_id", "productos", "empresa_id"),
+    ("ix_productos_activo", "productos", "activo"),
+    ("ix_stock_actual_producto_id", "stock_actual", "producto_id"),
+    ("ix_movimientos_stock_producto_id", "movimientos_stock", "producto_id"),
+    ("ix_clientes_empresa_id", "clientes", "empresa_id"),
+    ("ix_ventas_empresa_id", "ventas", "empresa_id"),
+    ("ix_venta_items_venta_id", "venta_items", "venta_id"),
+]
+
+async def ensure_indices():
+    """Crea los índices que faltan. CREATE INDEX IF NOT EXISTS funciona en PostgreSQL y SQLite."""
+    async with engine.begin() as conn:
+        for nombre, tabla, columna in INDICES_REQUERIDOS:
+            try:
+                await conn.execute(text(f"CREATE INDEX IF NOT EXISTS {nombre} ON {tabla} ({columna})"))
+            except Exception as e:
+                # Una tabla ausente no debe impedir el arranque
+                logger.warning(f"No se pudo crear el índice {nombre}: {e}")
+
+async def ensure_permisos():
+    """Ensure all required permissions exist in the DB (handles migrations for existing installs)"""
+    async with async_session_maker() as db:
+        for clave, descripcion in PERMISOS_REQUERIDOS:
+            existing = await db.execute(select(Permiso).where(Permiso.clave == clave))
+            if not existing.scalar_one_or_none():
+                db.add(Permiso(clave=clave, descripcion=descripcion))
+                logger.info(f"Created missing permission: {clave}")
+        await db.commit()
 
 @app.on_event("shutdown")
 async def shutdown():

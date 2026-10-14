@@ -1,7 +1,7 @@
-# Luz Brill ERP
+# Ethercloud ERP
 
 Sistema ERP full-stack para operaciones comerciales en Paraguay (moneda PYG, IVA 10%).  
-Desarrollado para **Luz Brill S.A.** — gestión de ventas, inventario, entregas, laboratorio y empleados.
+Desarrollado por **Ether Soluciones Tecnológicas** — gestión de ventas, inventario, entregas, laboratorio y empleados.
 
 ## Stack
 
@@ -66,4 +66,4 @@ El proyecto se despliega mediante **Docker** (Coolify). Cada servicio tiene su p
 
 ## Credenciales de Prueba
 
-`admin@luzbrill.com` / `admin123` (empresa_id: 1)
+`admin@ether.com` / `admin123` (empresa_id: 1)

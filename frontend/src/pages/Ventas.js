@@ -34,10 +34,11 @@ import {
 } from '../components/ui/table';
 import { 
   Search, Plus, Trash2, ShoppingCart, User, Barcode, 
-  CreditCard, Truck, Store, Loader2, Check, X, Package
+  CreditCard, Truck, Store, Loader2, Check, X, Package, Save
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { resolverImagenUrl } from '../lib/imagenes';
 import PrintModal from '../components/PrintModal';
 
 const Ventas = () => {
@@ -54,6 +55,7 @@ const Ventas = () => {
   const [clientes, setClientes] = useState([]);
   const [productos, setProductos] = useState([]);
   const [materias, setMaterias] = useState([]);
+  const [searchMaterias, setSearchMaterias] = useState('');
   const [vehiculos, setVehiculos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   
@@ -69,7 +71,6 @@ const Ventas = () => {
   
   const [searchCliente, setSearchCliente] = useState('');
   const [searchProducto, setSearchProducto] = useState('');
-  const [barcodeInput, setBarcodeInput] = useState('');
   
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +89,7 @@ const Ventas = () => {
   useEffect(() => {
     const fetchData = async () => {
       if (!empresa?.id) return;
-      
+
       try {
         const [clientesData, productosData, materiasData, vehiculosData, usuariosData] = await Promise.all([
           api(`/clientes?empresa_id=${empresa.id}`),
@@ -97,7 +98,7 @@ const Ventas = () => {
           api(`/vehiculos?empresa_id=${empresa.id}`),
           api(`/usuarios?empresa_id=${empresa.id}`)
         ]);
-        
+
         setClientes(clientesData);
         setProductos(productosData);
         setMaterias(materiasData);
@@ -110,9 +111,27 @@ const Ventas = () => {
         setLoading(false);
       }
     };
-    
+
     fetchData();
   }, [empresa?.id, api]);
+
+  // Silent background refresh of products/materials to pick up changes from other PCs
+  const refreshProductosAndMaterias = useCallback(async () => {
+    if (!empresa?.id) return;
+    try {
+      const [productosData, materiasData] = await Promise.all([
+        api(`/productos?empresa_id=${empresa.id}`),
+        api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`)
+      ]);
+      setProductos(productosData);
+      setMaterias(materiasData);
+    } catch (_) {}
+  }, [empresa?.id, api]);
+
+  useEffect(() => {
+    const id = setInterval(refreshProductosAndMaterias, 45000);
+    return () => clearInterval(id);
+  }, [refreshProductosAndMaterias]);
 
   // Load existing sale if editing
   useEffect(() => {
@@ -172,51 +191,7 @@ const Ventas = () => {
     }
   }, [editVentaId, empresa?.id, api, clientes, navigate]);
 
-  // Barcode scanner handler
-  const handleBarcodeSearch = useCallback(async (code) => {
-    if (!code.trim()) return;
-    
-    if (!selectedCliente) {
-      toast.error('Primero seleccione un cliente');
-      return;
-    }
-    
-    try {
-      // Try product first
-      const product = productos.find(p => p.codigo_barra === code);
-      if (product) {
-        addToCart(product, 'producto');
-        setBarcodeInput('');
-        return;
-      }
-      
-      // Try materia
-      const materia = materias.find(m => m.codigo_barra === code);
-      if (materia) {
-        addToCart(materia, 'materia');
-        setBarcodeInput('');
-        return;
-      }
-      
-      toast.error('Producto no encontrado');
-    } catch (e) {
-      toast.error('Error al buscar producto');
-    }
-  }, [productos, materias, selectedCliente]);
-
-  // Handle barcode input (USB scanner sends Enter key)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Enter' && barcodeInput) {
-        handleBarcodeSearch(barcodeInput);
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [barcodeInput, handleBarcodeSearch]);
-
-  const addToCart = (item, type) => {
+  const addToCart = useCallback((item, type) => {
     if (!selectedCliente) {
       toast.error('Primero seleccione un cliente');
       return;
@@ -239,13 +214,13 @@ const Ventas = () => {
         return;
       }
       
-      setCart([...cart, {
+      setCart([{
         materia_laboratorio_id: item.id,
         nombre: item.nombre,
         cantidad: 1,
         precio_unitario: parseFloat(item.precio),
         observaciones: ''
-      }]);
+      }, ...cart]);
       
       // Warning when approaching limit
       if (cart.length >= 7) {
@@ -277,7 +252,7 @@ const Ventas = () => {
           return;
         }
         
-        setCart([...cart, {
+        setCart([{
           producto_id: item.id,
           nombre: item.nombre,
           cantidad: 1,
@@ -285,7 +260,7 @@ const Ventas = () => {
           precio_costo: parseFloat(item.precio_costo) || 0,
           stock_disponible: item.stock_total,
           observaciones: ''
-        }]);
+        }, ...cart]);
         
         // Warning when approaching limit
         if (cart.length >= 7) {
@@ -295,7 +270,62 @@ const Ventas = () => {
     }
     
     toast.success(`${item.nombre} agregado al carrito`);
-  };
+  }, [cart, selectedCliente, hasPermission]);
+
+  // Barcode scanner handler
+  const handleBarcodeSearch = useCallback(async (code) => {
+    if (!code.trim()) return;
+
+    if (!selectedCliente) {
+      toast.error('Primero seleccione un cliente');
+      return;
+    }
+
+    try {
+      // Try local cache first
+      const product = productos.find(p => p.codigo_barra === code);
+      if (product) {
+        addToCart(product, 'producto');
+        setSearchProducto('');
+        return;
+      }
+
+      const materia = materias.find(m => m.codigo_barra === code);
+      if (materia) {
+        addToCart(materia, 'materia');
+        setSearchProducto('');
+        return;
+      }
+
+      // Not in cache — fetch fresh data (handles products added from another PC)
+      const [freshProductos, freshMaterias] = await Promise.all([
+        api(`/productos?empresa_id=${empresa.id}`),
+        api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`)
+      ]);
+      setProductos(freshProductos);
+      setMaterias(freshMaterias);
+
+      const freshProduct = freshProductos.find(p => p.codigo_barra === code);
+      if (freshProduct) {
+        addToCart(freshProduct, 'producto');
+        setSearchProducto('');
+        return;
+      }
+
+      const freshMateria = freshMaterias.find(m => m.codigo_barra === code);
+      if (freshMateria) {
+        addToCart(freshMateria, 'materia');
+        setSearchProducto('');
+        return;
+      }
+
+      toast.error('Producto no encontrado');
+    } catch (e) {
+      toast.error('Error al buscar producto');
+    }
+  }, [productos, materias, selectedCliente, addToCart, empresa?.id, api]);
+
+
 
   const updateCartItem = (index, field, value) => {
     const newCart = [...cart];
@@ -365,6 +395,43 @@ const Ventas = () => {
     }
   }, [montoPagado, total]);
 
+  // Guardar venta pendiente sin confirmar (se queda en la página para seguir editando)
+  const handleGuardarPendiente = async () => {
+    if (!selectedCliente) {
+      toast.error('Seleccione un cliente');
+      return;
+    }
+    if (cart.length === 0) {
+      toast.error('Agregue productos al carrito');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const updateData = {
+        cliente_id: selectedCliente.id,
+        representante_cliente_id: isRepresentante ? representante?.id : null,
+        tipo_pago: tipoPago,
+        es_delivery: esDelivery,
+        items: cart.map(item => ({
+          producto_id: item.producto_id || null,
+          materia_laboratorio_id: item.materia_laboratorio_id || null,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+          observaciones: item.observaciones || null
+        }))
+      };
+      await api(`/ventas/${editingVenta.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updateData)
+      });
+      toast.success('Cambios guardados - Venta sigue pendiente');
+    } catch (e) {
+      toast.error(e.message || 'Error al guardar cambios');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleConfirmarVentaClick = () => {
     if (!selectedCliente) {
       toast.error('Seleccione un cliente');
@@ -385,8 +452,8 @@ const Ventas = () => {
       toast.error('Este cliente no tiene crédito habilitado. Asigne un límite de crédito mayor a 0.');
       return;
     }
-    // If cash payment, open cash modal
-    if (tipoPago === 'EFECTIVO') {
+    // If cash payment and NOT pendiente, open cash modal
+    if (tipoPago === 'EFECTIVO' && !crearPendiente) {
       setMontoPagado('');
       setVuelto(0);
       setCashModalOpen(true);
@@ -411,7 +478,7 @@ const Ventas = () => {
     setCashModalOpen(false);
     
     try {
-      // Caso 1: EDITAR venta pendiente existente
+      // Caso 1: EDITAR venta pendiente existente → actualizar e inmediatamente confirmar
       if (isEditMode && editingVenta) {
         const updateData = {
           cliente_id: selectedCliente.id,
@@ -433,13 +500,9 @@ const Ventas = () => {
           body: JSON.stringify(updateData)
         });
         
-        // Ask if user wants to confirm the sale now
-        if (window.confirm('¿Desea confirmar esta venta ahora? (Se validará stock y crédito)')) {
-          await api(`/ventas/${editingVenta.id}/confirmar-pendiente`, { method: 'POST' });
-          toast.success('Venta actualizada y confirmada');
-        } else {
-          toast.success('Venta actualizada - Sigue pendiente');
-        }
+        // Confirmar directamente (validar stock y crédito)
+        await api(`/ventas/${editingVenta.id}/confirmar-pendiente`, { method: 'POST' });
+        toast.success('Venta confirmada exitosamente');
         
         // Redirect to historial
         navigate('/historial-ventas');
@@ -515,11 +578,24 @@ const Ventas = () => {
   };
 
   // Filter products
-  const filteredProductos = productos.filter(p => 
+  const filteredProductos = productos.filter(p =>
     p.nombre.toLowerCase().includes(searchProducto.toLowerCase()) ||
     p.codigo_barra?.toLowerCase().includes(searchProducto.toLowerCase()) ||
     p.id.toString() === searchProducto
   );
+
+  // When keyboard search finds nothing, refresh data after 500ms (picks up new products from other PCs)
+  useEffect(() => {
+    if (!searchProducto) return;
+    const hasLocal = productos.some(p =>
+      p.nombre.toLowerCase().includes(searchProducto.toLowerCase()) ||
+      p.codigo_barra?.toLowerCase().includes(searchProducto.toLowerCase()) ||
+      p.id.toString() === searchProducto
+    );
+    if (hasLocal) return;
+    const t = setTimeout(refreshProductosAndMaterias, 500);
+    return () => clearTimeout(t);
+  }, [searchProducto, productos, refreshProductosAndMaterias]);
 
   // Filter clients
   const filteredClientes = clientes.filter(c =>
@@ -661,34 +737,19 @@ const Ventas = () => {
           </CardContent>
         </Card>
 
-        {/* Barcode Scanner */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="relative">
-              <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Escanear código de barras..."
-                className="pl-9 font-mono"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                data-testid="barcode-input"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Products Grid */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle>Productos</CardTitle>
-              <div className="relative w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <div className="relative w-72">
+                <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar por nombre o ID..."
+                  placeholder="Buscar por nombre, ID o código de barras..."
                   className="pl-9"
                   value={searchProducto}
                   onChange={(e) => setSearchProducto(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && searchProducto) handleBarcodeSearch(searchProducto); }}
                   data-testid="search-producto"
                 />
               </div>
@@ -721,16 +782,22 @@ const Ventas = () => {
                       onClick={() => producto.stock_total > 0 && addToCart(producto, 'producto')}
                       data-testid={`producto-card-${producto.id}`}
                     >
-                      {/* Thumbnail */}
+                      {/* Thumbnail. Las imagenes apuntan a ~250 dominios de terceros;
+                          sin loading="lazy" se piden tambien los cientos que estan
+                          fuera de pantalla y muchos hosts cuelgan hasta el timeout. */}
                       <div className="w-8 h-8 rounded overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
                         {producto.imagen_url ? (
                           <img
-                            src={producto.imagen_url}
+                            src={resolverImagenUrl(producto.imagen_url)}
                             alt={producto.nombre}
                             className="w-full h-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              window.open(producto.imagen_url, '_blank');
+                              window.open(resolverImagenUrl(producto.imagen_url), '_blank');
                             }}
                           />
                         ) : (
@@ -779,9 +846,20 @@ const Ventas = () => {
               <>
                 <Separator className="my-4" />
                 <div>
-                  <h4 className="font-semibold mb-3">Materias de Laboratorio</h4>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold">Materias de Laboratorio</h4>
+                    <div className="relative w-48">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        className="pl-8 h-8 text-sm"
+                        placeholder="Buscar materia..."
+                        value={searchMaterias}
+                        onChange={(e) => setSearchMaterias(e.target.value)}
+                      />
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {materias.map((materia) => (
+                    {materias.filter(m => m.nombre.toLowerCase().includes(searchMaterias.toLowerCase())).map((materia) => (
                       <div
                         key={materia.id}
                         className="p-3 rounded-lg border border-dashed cursor-pointer hover:bg-secondary transition-colors"
@@ -937,11 +1015,16 @@ const Ventas = () => {
             <div className="space-y-3">
               <div>
                 <Label>Tipo de Pago</Label>
-                <Select value={tipoPago} onValueChange={setTipoPago}>
+                <Select value={crearPendiente ? 'PENDIENTE' : tipoPago} onValueChange={(val) => { if (val === 'PENDIENTE') { setCrearPendiente(true); } else { setCrearPendiente(false); setTipoPago(val); } }}>
                   <SelectTrigger data-testid="tipo-pago-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    {!isEditMode && (
+                      <SelectItem value="PENDIENTE" className="text-yellow-600 dark:text-yellow-400 font-semibold bg-yellow-50 dark:bg-yellow-950/40 focus:bg-yellow-100 dark:focus:bg-yellow-900/50">
+                        ⏳ Pendiente — Solo Presupuesto
+                      </SelectItem>
+                    )}
                     <SelectItem value="EFECTIVO">Efectivo</SelectItem>
                     <SelectItem value="TARJETA">Tarjeta</SelectItem>
                     <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
@@ -966,19 +1049,7 @@ const Ventas = () => {
                 )}
               </div>
 
-              {/* Crear como Pendiente Option - Solo visible en modo creación */}
-              {!isEditMode && (
-                <div className="flex items-center space-x-2 bg-yellow-50 dark:bg-yellow-950/30 p-2 rounded border border-yellow-200 dark:border-yellow-800">
-                  <Checkbox
-                    id="crearPendiente"
-                    checked={crearPendiente}
-                    onCheckedChange={setCrearPendiente}
-                  />
-                  <Label htmlFor="crearPendiente" className="text-sm text-yellow-900 dark:text-yellow-100">
-                    Crear como venta pendiente (sin confirmar pago)
-                  </Label>
-                </div>
-              )}
+
 
               {/* Delivery Option */}
               <div className="flex items-center space-x-2">
@@ -1002,31 +1073,61 @@ const Ventas = () => {
               )}
             </div>
 
-            {/* Submit Button */}
-            <Button 
-              className="w-full" 
-              size="lg"
-              disabled={!selectedCliente || cart.length === 0 || submitting}
-              onClick={handleConfirmarVentaClick}
-              data-testid="confirmar-venta-btn"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Procesando...
-                </>
-              ) : (
-                <>
-                  <Check className="mr-2 h-4 w-4" />
-                  {isEditMode ? 'Actualizar Venta Pendiente' : 'Confirmar Venta'}
-                </>
-              )}
-            </Button>
-            
-            {isEditMode && (
-              <p className="text-xs text-muted-foreground text-center mt-2">
-                Al actualizar, se preguntará si desea confirmar el pago
-              </p>
+            {/* Submit Button(s) */}
+            {isEditMode ? (
+              <div className="flex flex-col gap-2">
+                {/* Guardar sin confirmar — sigue pendiente */}
+                <Button
+                  variant="outline"
+                  className="w-full border-yellow-500 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40"
+                  size="lg"
+                  disabled={!selectedCliente || cart.length === 0 || submitting}
+                  onClick={handleGuardarPendiente}
+                >
+                  {submitting ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Guardando...</>
+                  ) : (
+                    <><Save className="mr-2 h-4 w-4" />Guardar Pendiente</>
+                  )}
+                </Button>
+                {/* Confirmar — valida stock y crédito */}
+                <Button
+                  className="w-full"
+                  size="lg"
+                  disabled={!selectedCliente || cart.length === 0 || submitting}
+                  onClick={handleConfirmarVentaClick}
+                  data-testid="confirmar-venta-btn"
+                >
+                  {submitting ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Procesando...</>
+                  ) : (
+                    <><Check className="mr-2 h-4 w-4" />Confirmar Venta</>
+                  )}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center">
+                  "Guardar Pendiente" mantiene la venta abierta para seguir editando
+                </p>
+              </div>
+            ) : (
+              <Button 
+                className="w-full" 
+                size="lg"
+                disabled={!selectedCliente || cart.length === 0 || submitting}
+                onClick={handleConfirmarVentaClick}
+                data-testid="confirmar-venta-btn"
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Procesando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Confirmar Venta
+                  </>
+                )}
+              </Button>
             )}
           </CardContent>
         </Card>

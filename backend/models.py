@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date
+    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -175,7 +175,7 @@ class Cliente(Base):
     __tablename__ = "clientes"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     nombre = Column(String(255), nullable=False)
     apellido = Column(String(255))
     ruc = Column(String(50))
@@ -291,7 +291,7 @@ class Producto(Base):
     __tablename__ = "productos"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     categoria_id = Column(Integer, ForeignKey("categorias.id"))
     marca_id = Column(Integer, ForeignKey("marcas.id"))
     nombre = Column(String(255), nullable=False)
@@ -304,7 +304,8 @@ class Producto(Base):
     fecha_vencimiento = Column(Date)
     activo = Column(Boolean, default=True)
     imagen_url = Column(String(500))
-    
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
     empresa = relationship("Empresa", back_populates="productos")
     categoria = relationship("Categoria", back_populates="productos")
     marca = relationship("Marca", back_populates="productos")
@@ -318,7 +319,7 @@ class MateriaLaboratorio(Base):
     __tablename__ = "materias_laboratorio"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     nombre = Column(String(255), nullable=False)
     descripcion = Column(Text)
     codigo_barra = Column(String(100), unique=True, nullable=True)
@@ -345,7 +346,7 @@ class StockActual(Base):
     __tablename__ = "stock_actual"
     
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False, index=True)
     almacen_id = Column(Integer, ForeignKey("almacenes.id"), nullable=False)
     cantidad = Column(Integer, default=0)
     alerta_minima = Column(Integer)
@@ -357,7 +358,7 @@ class MovimientoStock(Base):
     __tablename__ = "movimientos_stock"
     
     id = Column(Integer, primary_key=True, index=True)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False, index=True)
     almacen_id = Column(Integer, ForeignKey("almacenes.id"), nullable=False)
     tipo = Column(Enum(TipoMovimientoStock), nullable=False)
     cantidad = Column(Integer, nullable=False)
@@ -381,7 +382,7 @@ class Venta(Base):
     __tablename__ = "ventas"
     
     id = Column(Integer, primary_key=True, index=True)
-    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
     cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     representante_cliente_id = Column(Integer, ForeignKey("clientes.id"))
@@ -394,7 +395,12 @@ class Venta(Base):
     es_delivery = Column(Boolean, default=False)
     estado = Column(Enum(EstadoVenta), default=EstadoVenta.BORRADOR)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
-    
+    facturada = Column(Boolean, default=False)
+    # Fecha que se imprime en el documento (NO afecta creado_en ni ningun reporte).
+    # NULL = usar la fecha real de la venta.
+    fecha_impresion_boleta = Column(Date, nullable=True)
+    fecha_impresion_factura = Column(Date, nullable=True)
+
     empresa = relationship("Empresa", back_populates="ventas")
     cliente = relationship("Cliente", back_populates="ventas", foreign_keys=[cliente_id])
     representante = relationship("Cliente", foreign_keys=[representante_cliente_id])
@@ -407,7 +413,7 @@ class VentaItem(Base):
     __tablename__ = "venta_items"
     
     id = Column(Integer, primary_key=True, index=True)
-    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False, index=True)
     producto_id = Column(Integer, ForeignKey("productos.id"))
     materia_laboratorio_id = Column(Integer, ForeignKey("materias_laboratorio.id"))
     cantidad = Column(Integer, nullable=False)
@@ -419,6 +425,40 @@ class VentaItem(Base):
     venta = relationship("Venta", back_populates="items")
     producto = relationship("Producto", back_populates="venta_items")
     materia_laboratorio = relationship("MateriaLaboratorio", back_populates="venta_items")
+
+class Presupuesto(Base):
+    """Cotización comercial para un cliente. No afecta stock ni ventas/reportes."""
+    __tablename__ = "presupuestos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    subtotal = Column(Numeric(15, 2), default=0)
+    total = Column(Numeric(15, 2), default=0)
+    notas = Column(Text, nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
+    empresa = relationship("Empresa")
+    cliente = relationship("Cliente")
+    usuario = relationship("Usuario")
+    items = relationship("PresupuestoItem", back_populates="presupuesto", cascade="all, delete-orphan")
+
+class PresupuestoItem(Base):
+    __tablename__ = "presupuesto_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    presupuesto_id = Column(Integer, ForeignKey("presupuestos.id"), nullable=False)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=True)
+    # Snapshot de datos del producto al momento de cotizar (el producto puede cambiar después)
+    nombre_producto = Column(String(255), nullable=False)
+    imagen_url = Column(String(500), nullable=True)
+    cantidad = Column(Integer, nullable=False)
+    precio_venta_unitario = Column(Numeric(15, 2), nullable=False)
+    subtotal = Column(Numeric(15, 2), nullable=False)
+
+    presupuesto = relationship("Presupuesto", back_populates="items")
+    producto = relationship("Producto")
 
 class Funcionario(Base):
     __tablename__ = "funcionarios"
@@ -517,6 +557,31 @@ class DocumentoElectronico(Base):
     creado_en = Column(DateTime(timezone=True), server_default=func.now())
     
     factura = relationship("Factura", back_populates="documento")
+
+# Association table for FacturaGrupal <-> Venta (many-to-many)
+factura_grupal_ventas = Table(
+    'factura_grupal_ventas',
+    Base.metadata,
+    Column('factura_grupal_id', Integer, ForeignKey('facturas_grupales.id'), primary_key=True),
+    Column('venta_id', Integer, ForeignKey('ventas.id'), primary_key=True)
+)
+
+class FacturaGrupal(Base):
+    """Factura que engloba múltiples boletas de un mismo cliente"""
+    __tablename__ = "facturas_grupales"
+
+    id = Column(Integer, primary_key=True, index=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False)
+    numero = Column(String(50), nullable=False)
+    condicion = Column(String(10), nullable=False, default='CONTADO')  # CONTADO o CREDITO
+    total = Column(Numeric(15, 2), nullable=False)
+    iva = Column(Numeric(15, 2), nullable=False)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
+    empresa = relationship("Empresa")
+    cliente = relationship("Cliente")
+    ventas = relationship("Venta", secondary=factura_grupal_ventas)
 
 class PreferenciaUsuario(Base):
     __tablename__ = "preferencias_usuario"

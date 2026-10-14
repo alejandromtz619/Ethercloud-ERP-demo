@@ -1,5 +1,5 @@
 """
-Test suite for Luz Brill ERP - Permissions and Historial Ventas features
+Test suite for Ethercloud ERP - Permissions and Historial Ventas features
 Tests:
 1. Permission system - Admin sees all modules
 2. Permission system - User without role sees restricted modules
@@ -26,7 +26,7 @@ class TestPermissionSystem:
     def setup(self):
         """Login as admin and get token"""
         login_resp = requests.post(f"{BASE_URL}/auth/login", json={
-            "email": "admin@luzbrill.com",
+            "email": "admin@ether.com",
             "password": "admin123"
         })
         assert login_resp.status_code == 200, f"Admin login failed: {login_resp.text}"
@@ -55,7 +55,7 @@ class TestPermissionSystem:
     def test_user_without_role_has_no_permissions(self):
         """Test 2: User without role has no permissions"""
         # Create test user without role
-        test_email = f"TEST_norol_{os.urandom(4).hex()}@luzbrill.com"
+        test_email = f"TEST_norol_{os.urandom(4).hex()}@ether.com"
         create_resp = requests.post(f"{BASE_URL}/auth/register", json={
             "email": test_email,
             "password": "test123",
@@ -85,7 +85,7 @@ class TestHistorialVentas:
     def setup(self):
         """Login as admin and get token"""
         login_resp = requests.post(f"{BASE_URL}/auth/login", json={
-            "email": "admin@luzbrill.com",
+            "email": "admin@ether.com",
             "password": "admin123"
         })
         assert login_resp.status_code == 200
@@ -128,7 +128,7 @@ class TestPrintModal:
     def setup(self):
         """Login and ensure we have a venta to test"""
         login_resp = requests.post(f"{BASE_URL}/auth/login", json={
-            "email": "admin@luzbrill.com",
+            "email": "admin@ether.com",
             "password": "admin123"
         })
         assert login_resp.status_code == 200

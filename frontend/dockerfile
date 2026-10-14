@@ -6,18 +6,20 @@ WORKDIR /app
 # Build argument para la URL del backend (se inyecta en build time)
 ARG REACT_APP_BACKEND_URL=http://localhost:8000
 ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+ARG REACT_APP_CIUDAD_FACTURA=
+ENV REACT_APP_CIUDAD_FACTURA=$REACT_APP_CIUDAD_FACTURA
 
-# Copiar package.json y yarn.lock
-COPY package.json yarn.lock* ./
+# Copiar package.json
+COPY package.json ./
 
-# Instalar dependencias
-RUN yarn install --frozen-lockfile
+# Instalar dependencias (--legacy-peer-deps resuelve conflictos de react-scripts@5 + ajv)
+RUN npm install --legacy-peer-deps
 
 # Copiar código
 COPY . .
 
 # Build (REACT_APP_BACKEND_URL se embebe en el bundle estático)
-RUN yarn build
+RUN npm run build
 
 # Stage 2: Servidor de producción
 FROM node:20.18.0-alpine

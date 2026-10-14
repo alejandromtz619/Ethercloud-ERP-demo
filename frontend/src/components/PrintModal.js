@@ -7,104 +7,114 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../components/ui/dialog';
-import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
-import { Loader2, Printer, Receipt, FileText, Send } from 'lucide-react';
+import { DatePickerInput } from '../components/ui/date-picker-input';
+import { Loader2, Printer, Receipt, FileText, Send, CalendarDays, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Boleta Print Template
+// Ciudad que se imprime junto a la fecha en la factura pre-impresa
+const CIUDAD_FACTURA = process.env.REACT_APP_CIUDAD_FACTURA || 'Ciudad del Este';
+
+// Formatea "YYYY-MM-DD" como "dd/MM/yyyy" sin depender de la zona horaria del navegador
+const formatFechaISO = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+};
+
+// Boleta Print Template - Impresora matricial Epson (papel ~190mm x 170mm)
 const BoletaPrint = React.forwardRef(({ data }, ref) => {
   if (!data) return null;
-  
+
   return (
-    <div ref={ref} className="print-document boleta-print" style={{ 
-      fontFamily: 'Courier New, monospace', // Fuente monoespaciada para matriz de puntos
-      fontSize: '12px',
-      width: '100%', // Se adapta al tamaño del papel (A4, Carta, etc.)
-      maxWidth: '190mm', // Máximo seguro para A4 (210mm - márgenes impresora)
-      minHeight: '140mm', // Altura mínima papel boleta
-      padding: '2mm 5mm 5mm 5mm', // Márgenes internos del contenido
-      margin: '0 auto', // Centrado horizontal
+    <div ref={ref} className="print-document boleta-print" style={{
+      fontFamily: "'Courier New', Courier, monospace",
+      fontSize: '11px',
+      width: '100%',
+      padding: '0',
+      margin: '0',
       backgroundColor: 'white',
       color: 'black',
-      lineHeight: '1.4',
+      lineHeight: '1.2',
       boxSizing: 'border-box'
     }}>
-      <div style={{ textAlign: 'center', marginBottom: '8px', paddingTop: '2mm' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0', letterSpacing: '2px', textDecoration: 'underline' }}>LuzBrill</h1>
-        <p style={{ margin: '3px 0', fontSize: '11px', fontWeight: 'bold' }}>{data.empresa?.telefono || '061 572516 573408'}</p>
-        <p style={{ margin: '2px 0', fontSize: '11px', fontWeight: 'bold' }}>0983 628249 0973 598415</p>
+      {/* Encabezado */}
+      <div style={{ textAlign: 'center', marginBottom: '3px' }}>
+        <div style={{ fontSize: '15px', fontWeight: 'bold', letterSpacing: '3px' }}>{data.empresa?.nombre?.toUpperCase()}</div>
+        <div>{data.empresa?.ruc}</div>
+        <div>{data.empresa?.telefono}</div>
       </div>
-      
-      <div style={{ textAlign: 'right', marginBottom: '8px', fontSize: '13px' }}>
-        <span style={{ fontWeight: 'bold' }}>NOTA NRO: </span>
-        <span style={{ fontWeight: 'bold' }}>{data.numero}</span>
+
+      <div style={{ borderTop: '1px solid black', margin: '3px 0' }} />
+
+      {/* Datos de la nota y cliente */}
+      <div style={{ textAlign: 'right', marginBottom: '1px' }}>NOTA NRO: {data.numero}</div>
+      <div>Razon Social: {data.cliente?.nombre || 'OCACIONAL'}</div>
+      <div>Direccion: {data.cliente?.direccion || '-'}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>Ruc: {data.cliente?.ruc || '-'}</span>
+        <span>Telefono: {data.cliente?.telefono || '-'}</span>
       </div>
-      
-      <div style={{ borderTop: '2px solid black', borderBottom: '2px solid black', padding: '4px 0', marginBottom: '8px', fontSize: '11px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
-          <span><b>Razon Social:</b> {data.cliente?.nombre || 'OCACIONAL'}</span>
-          <span><b>Direccion:</b> {data.cliente?.direccion || '-'}</span>
-          <span><b>Cliente Tel:</b> {data.cliente?.telefono || '-'}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', margin: '2px 0' }}>
-          <span><b>RUC:</b> {data.cliente?.ruc || '-'}</span>
-          <span><b>Fecha:</b> {data.fecha}</span>
-          <span><b>Tipo Comprob:</b> {data.tipo_pago}</span>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <span>Fecha: {data.fecha}</span>
+        <span>Tipo Comprob: {data.estado === 'PENDIENTE' ? 'SOLO PRESUPUESTO' : data.tipo_pago}</span>
       </div>
-      
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '8px' }}>
-        <thead>
-          <tr style={{ borderBottom: '2px solid black', borderTop: '2px solid black' }}>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cod</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Cant</th>
-            <th style={{ textAlign: 'left', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Descripción</th>
-            <th style={{ textAlign: 'center', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>IVA</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Precio</th>
-            <th style={{ textAlign: 'right', fontSize: '10px', padding: '4px', fontWeight: 'bold' }}>Total</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.items?.map((item, idx) => (
-            <tr key={idx} style={{ borderBottom: '1px solid #ccc' }}>
-              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.codigo}</td>
-              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.cantidad?.toFixed(2)}</td>
-              <td style={{ fontSize: '10px', padding: '3px 4px' }}>{item.descripcion}</td>
-              <td style={{ textAlign: 'center', fontSize: '10px', padding: '3px 4px' }}>{item.iva}</td>
-              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.precio?.toLocaleString('es-PY')}</td>
-              <td style={{ textAlign: 'right', fontSize: '10px', padding: '3px 4px', fontWeight: 'bold' }}>{item.total?.toLocaleString('es-PY')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      
-      <div style={{ borderTop: '2px solid black', paddingTop: '6px', marginTop: '5px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-          <span style={{ fontWeight: 'bold' }}>Subtotal:</span>
-          <span style={{ fontWeight: 'bold' }}>{data.subtotal_sin_descuento?.toLocaleString('es-PY')}</span>
+
+      <div style={{ borderTop: '1px dashed black', margin: '3px 0' }} />
+
+      {/* Encabezado de columnas */}
+      <div style={{ display: 'flex', fontWeight: 'bold' }}>
+        <span style={{ width: '7ch', textAlign: 'right', paddingRight: '1ch' }}>Cant</span>
+        <span style={{ flex: 1 }}>Descripcion</span>
+        <span style={{ width: '4ch', textAlign: 'center' }}>IVA</span>
+        <span style={{ width: '10ch', textAlign: 'right' }}>Precio</span>
+        <span style={{ width: '11ch', textAlign: 'right' }}>Total</span>
+      </div>
+
+      <div style={{ borderTop: '1px dashed black', margin: '2px 0' }} />
+
+      {/* Filas de productos */}
+      {data.items?.map((item, idx) => (
+        <div key={idx} style={{ display: 'flex' }}>
+          <span style={{ width: '7ch', textAlign: 'right', paddingRight: '1ch' }}>{item.cantidad?.toFixed(2)}</span>
+          <span style={{ flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' }}>{item.descripcion}</span>
+          <span style={{ width: '4ch', textAlign: 'center' }}>{item.iva}</span>
+          <span style={{ width: '10ch', textAlign: 'right' }}>{item.precio?.toLocaleString('es-PY')}</span>
+          <span style={{ width: '11ch', textAlign: 'right' }}>{item.total?.toLocaleString('es-PY')}</span>
         </div>
-        {data.descuento > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-            <span style={{ fontWeight: 'bold' }}>Descuento ({data.descuento_porcentaje}%):</span>
-            <span style={{ fontWeight: 'bold' }}>-{data.descuento?.toLocaleString('es-PY')}</span>
-          </div>
+      ))}
+
+      <div style={{ borderTop: '1px dashed black', margin: '3px 0' }} />
+
+      {/* Descuento (si aplica) */}
+      {data.descuento > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>Descuento ({data.descuento_porcentaje}%):</span>
+          <span>-{data.descuento?.toLocaleString('es-PY')}</span>
+        </div>
+      )}
+
+      {/* En Letras y Total */}
+      <div style={{ marginBottom: '2px' }}>En Letras: {data.total_letras}</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+        <span>Total a Pagar:</span>
+        <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
+      </div>
+
+      <div style={{ borderTop: '1px solid black', margin: '5px 0 4px 0' }} />
+
+      {/* Firma */}
+      <div style={{ marginTop: '8px' }}>
+        <div style={{ marginBottom: '2px' }}>________________________________</div>
+        <div>Firma Cliente</div>
+        {data.estado === 'PENDIENTE' ? (
+          <div style={{ marginTop: '5px', fontSize: '9px' }}>Este documento es solo una cotizacion, la venta no esta confirmada y no es valida en stock ni credito del cliente.</div>
+        ) : (
+          <>
+            <div style={{ marginTop: '5px', fontSize: '9px' }}>Favor Confirmar Su Mercaderia al recibirla.</div>
+            <div style={{ fontSize: '9px' }}>No Aceptamos Reclamos Posteriores.</div>
+          </>
         )}
-        <div style={{ marginBottom: '6px', fontSize: '10px', borderTop: '1px solid black', paddingTop: '4px' }}>
-          <span style={{ fontWeight: 'bold' }}>En Letras: </span>
-          <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{data.total_letras}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '14px', marginTop: '5px', borderTop: '3px double black', paddingTop: '6px' }}>
-          <span>TOTAL A PAGAR:</span>
-          <span>Gs. {data.total?.toLocaleString('es-PY')}</span>
-        </div>
-      </div>
-      
-      <div style={{ marginTop: '12px', textAlign: 'center' }}>
-        <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>________________________________</p>
-        <p style={{ margin: '0', fontSize: '11px', fontWeight: 'bold' }}>Firma Cliente</p>
-        <p style={{ margin: '10px 0 0 0', fontSize: '9px', fontStyle: 'italic', fontWeight: 'bold' }}>
-        </p>
       </div>
     </div>
   );
@@ -156,7 +166,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
   return (
     <div ref={ref} className="print-document factura-print" style={{
       fontFamily: 'Courier New, monospace',
-      fontSize: '12px',
+      fontSize: '14px',
       fontWeight: 'bold',
       width: '240mm',
       height: '200mm',
@@ -174,69 +184,69 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       {/* Campos: Ciudad+día | mes | año | X Contado | X Crédito */}
       <div style={{ position: 'absolute', top: '38mm', left: '0', width: '240mm' }}>
         {/* Ciudad y día */}
-        <span style={{ position: 'absolute', left: '17mm', fontSize: '12px' }}>Ciudad del Este, {dia}</span>
+        <span style={{ position: 'absolute', left: '17mm', fontSize: '14px' }}>{CIUDAD_FACTURA}, {dia}</span>
         {/* Mes */}
-        <span style={{ position: 'absolute', left: '80mm', fontSize: '12px' }}>{mes}</span>
+        <span style={{ position: 'absolute', left: '80mm', fontSize: '14px' }}>{mes}</span>
         {/* Año */}
-        <span style={{ position: 'absolute', left: '120mm', fontSize: '12px' }}>{anio}</span>
+        <span style={{ position: 'absolute', left: '120mm', fontSize: '14px' }}>{anio}</span>
         {/* Marca X en Contado o Crédito */}
-        <span style={{ position: 'absolute', left: '183mm', fontSize: '14px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
-        <span style={{ position: 'absolute', left: '211mm', fontSize: '14px', fontWeight: '900' }}>{esCredito ? 'X' : ''}</span>
+        <span style={{ position: 'absolute', left: '183mm', fontSize: '16px', fontWeight: '900' }}>{!esCredito ? 'X' : ''}</span>
+        <span style={{ position: 'absolute', left: '211mm', fontSize: '16px', fontWeight: '900' }}>{esCredito ? 'XX' : ''}</span>
       </div>
 
       {/* ═══ NOMBRE DEL CLIENTE + CI/RUC ═══ */}
-      <div style={{ position: 'absolute', top: '46mm', left: '0', width: '240mm' }}>
-        <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
+      <div style={{ position: 'absolute', top: '45mm', left: '0', width: '240mm' }}>
+        <span style={{ position: 'absolute', left: '30mm', fontSize: '14px' }}>
           {data.cliente?.nombre || 'OCACIONAL'}
         </span>
-        <span style={{ position: 'absolute', left: '170mm', fontSize: '12px' }}>
+        <span style={{ position: 'absolute', left: '170mm', fontSize: '14px' }}>
           {data.cliente?.ruc || ''}
         </span>
       </div>
 
       {/* ═══ DIRECCIÓN + TELÉFONO ═══ */}
-      <div style={{ position: 'absolute', top: '50mm', left: '0', width: '240mm' }}>
-        <span style={{ position: 'absolute', left: '30mm', fontSize: '12px' }}>
+      <div style={{ position: 'absolute', top: '51mm', left: '0', width: '240mm' }}>
+        <span style={{ position: 'absolute', left: '30mm', fontSize: '14px' }}>
           {data.cliente?.direccion || ''}
         </span>
-        <span style={{ position: 'absolute', left: '180mm', fontSize: '12px' }}>
+        <span style={{ position: 'absolute', left: '180mm', fontSize: '14px' }}>
           {data.cliente?.telefono || ''}
         </span>
       </div>
 
       {/* ═══ TABLA DE PRODUCTOS (solo datos, sin encabezados) ═══ */}
       {/* Columnas: Cantidad | Descripción | P.Unitario | Exentas | 5% | 10% */}
-      <div style={{ position: 'absolute', top: '82mm', left: '15mm', width: '212mm' }}>
+      <div style={{ position: 'absolute', top: '82mm', left: '0', width: '227mm' }}>
         {data.items?.map((item, idx) => (
           <div key={idx} style={{
             position: 'relative',
-            height: '5.3mm',
-            fontSize: '11px',
-            lineHeight: '5.3mm'
+            height: '5.6mm',
+            fontSize: '13px',
+            lineHeight: '5.6mm'
           }}>
             {/* Cantidad */}
-            <span style={{ position: 'absolute', left: '-15mm', width: '14mm', textAlign: 'center' }}>
-              {item.cantidad}
+            <span style={{ position: 'absolute', left: '17mm', width: '14mm', textAlign: 'center' }}>
+              {item.es_continuacion ? '' : item.cantidad}
             </span>
             {/* Descripción */}
-            <span style={{ position: 'absolute', left: '16mm', width: '80mm', textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+            <span style={{ position: 'absolute', left: '31mm', width: '80mm', textAlign: 'left', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
               {item.descripcion}
             </span>
             {/* Precio Unitario */}
-            <span style={{ position: 'absolute', left: '87mm', width: '28mm', textAlign: 'right' }}>
-              {fmt(item.precio_unitario)}
+            <span style={{ position: 'absolute', left: '102mm', width: '28mm', textAlign: 'right' }}>
+              {item.es_continuacion ? '' : fmt(item.precio_unitario)}
             </span>
             {/* Exentas */}
-            <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
-              {item.exenta || 0}
+            <span style={{ position: 'absolute', left: '142mm', width: '24mm', textAlign: 'right' }}>
+              {item.es_continuacion ? '' : (item.exenta || 0)}
             </span>
             {/* 5% */}
-            <span style={{ position: 'absolute', left: '153mm', width: '24mm', textAlign: 'right' }}>
-              {item.iva_5 || 0}
+            <span style={{ position: 'absolute', left: '168mm', width: '24mm', textAlign: 'right' }}>
+              {item.es_continuacion ? '' : (item.iva_5 || 0)}
             </span>
             {/* 10% */}
-            <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
-              {fmt(item.iva_10)}
+            <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
+              {item.es_continuacion ? '' : fmt(item.iva_10)}
             </span>
           </div>
         ))}
@@ -244,47 +254,47 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
       {/* ═══ SUB-TOTALES ═══ */}
       {/* Valores en las 3 últimas columnas: Exentas | 5% | 10% */}
-      <div style={{ position: 'absolute', top: '150mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
-        <span style={{ position: 'absolute', left: '127mm', width: '24mm', textAlign: 'right' }}>
+      <div style={{ position: 'absolute', top: '150mm', left: '0', width: '227mm', fontSize: '13px' }}>
+        <span style={{ position: 'absolute', left: '142mm', width: '24mm', textAlign: 'right' }}>
           {data.subtotal_exenta || 0}
         </span>
-        <span style={{ position: 'absolute', left: '153mm', width: '24mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '168mm', width: '24mm', textAlign: 'right' }}>
           {data.subtotal_iva_5 || 0}
         </span>
-        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
           {fmt(data.subtotal_iva_10 || data.total)}
         </span>
       </div>
 
       {/* ═══ TOTAL A PAGAR (letras a la izquierda, número a la derecha) ═══ */}
-      <div style={{ position: 'absolute', top: '161mm', left: '15mm', width: '212mm' }}>
+      <div style={{ position: 'absolute', top: '160mm', left: '0', width: '227mm' }}>
         {/* Total en letras */}
         <span style={{
-          position: 'absolute', left: '8mm', fontSize: '10px',
+          position: 'absolute', left: '25mm', fontSize: '12px',
           textTransform: 'lowercase', maxWidth: '130mm',
           overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis'
         }}>
           {data.total_letras}--
         </span>
         {/* Total numérico */}
-        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right', fontSize: '11px' }}>
+        <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right', fontSize: '13px' }}>
           {fmt(data.total)}
         </span>
       </div>
 
       {/* ═══ LIQUIDACIÓN DEL IVA ═══ */}
       {/* Campos: IVA 5% | IVA 10% | Total IVA */}
-      <div style={{ position: 'absolute', top: '168mm', left: '15mm', width: '212mm', fontSize: '11px' }}>
+      <div style={{ position: 'absolute', top: '168mm', left: '0', width: '227mm', fontSize: '13px' }}>
         {/* Valor IVA 5% */}
-        <span style={{ position: 'absolute', left: '30mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '45mm', width: '28mm', textAlign: 'right' }}>
           {data.liquidacion_iva?.iva_5 || 0}
         </span>
         {/* Valor IVA 10% */}
-        <span style={{ position: 'absolute', left: '95mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '110mm', width: '28mm', textAlign: 'right' }}>
           {fmt(data.liquidacion_iva?.iva_10)}
         </span>
         {/* Total IVA */}
-        <span style={{ position: 'absolute', left: '179mm', width: '28mm', textAlign: 'right' }}>
+        <span style={{ position: 'absolute', left: '194mm', width: '28mm', textAlign: 'right' }}>
           {fmt(data.liquidacion_iva?.total_iva)}
         </span>
       </div>
@@ -295,15 +305,62 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
 const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
   const { api, userPermisos } = useApp();
-  const [printBoleta, setPrintBoleta] = useState(true);
-  const [printFactura, setPrintFactura] = useState(false);
+  const [tipoDocumento, setTipoDocumento] = useState('BOLETA'); // 'BOLETA' | 'FACTURA'
   const [loading, setLoading] = useState(false);
   const [boletaData, setBoletaData] = useState(null);
   const [facturaData, setFacturaData] = useState(null);
   const [error, setError] = useState(null);
-  
+  // Fecha de impresión editable (no modifica la fecha real de la venta)
+  const [fechas, setFechas] = useState(null);
+  const [editandoFecha, setEditandoFecha] = useState(null); // 'BOLETA' | 'FACTURA' | null
+  const [fechaTemp, setFechaTemp] = useState('');
+  const [guardandoFecha, setGuardandoFecha] = useState(false);
+
   const boletaRef = useRef(null);
   const facturaRef = useRef(null);
+
+  const getFechaImpresion = (tipo) => (
+    tipo === 'FACTURA' ? fechas?.fecha_impresion_factura : fechas?.fecha_impresion_boleta
+  );
+
+  const fetchFechas = async () => {
+    if (!ventaId) return;
+    try {
+      const data = await api(`/ventas/${ventaId}/fechas-impresion`);
+      setFechas(data);
+    } catch (e) {
+      // No bloquea la impresión: solo se pierde la opción de corregir la fecha
+      console.error('Error al cargar fechas de impresión', e);
+    }
+  };
+
+  const abrirEditorFecha = (tipo) => {
+    if (editandoFecha === tipo) {
+      setEditandoFecha(null);
+      return;
+    }
+    setFechaTemp(getFechaImpresion(tipo) || fechas?.fecha_original || '');
+    setEditandoFecha(tipo);
+  };
+
+  const guardarFecha = async (tipo, fecha) => {
+    setGuardandoFecha(true);
+    try {
+      await api(`/ventas/${ventaId}/fecha-impresion`, {
+        method: 'PUT',
+        body: JSON.stringify({ tipo_documento: tipo, fecha: fecha || null })
+      });
+      toast.success(fecha ? 'Fecha de impresión actualizada' : 'Se restauró la fecha original');
+      setEditandoFecha(null);
+      await fetchFechas();
+      await fetchPrintData();
+      onPrintComplete?.();
+    } catch (e) {
+      toast.error(e.message || 'Error al actualizar la fecha de impresión');
+    } finally {
+      setGuardandoFecha(false);
+    }
+  };
 
   const fetchPrintData = async () => {
     if (!ventaId) return;
@@ -312,8 +369,8 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
     
     try {
       const promises = [];
-      if (printBoleta) promises.push(api(`/ventas/${ventaId}/boleta`).then(d => setBoletaData(d)));
-      if (printFactura) promises.push(api(`/ventas/${ventaId}/factura`).then(d => setFacturaData(d)));
+      if (tipoDocumento === 'BOLETA') promises.push(api(`/ventas/${ventaId}/boleta`).then(d => setBoletaData(d)));
+      else if (tipoDocumento === 'FACTURA') promises.push(api(`/ventas/${ventaId}/factura`).then(d => setFacturaData(d)));
       await Promise.all(promises);
     } catch (e) {
       setError(e.message);
@@ -324,24 +381,24 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
   };
 
   const handlePrint = useCallback(async () => {
-    if (!printBoleta && !printFactura) {
-      toast.error('Seleccione al menos un documento');
+    if (!tipoDocumento) {
+      toast.error('Seleccione un documento');
       return;
     }
-    
+
     await fetchPrintData();
-    
+
     // Use a small delay to ensure data is loaded
     setTimeout(() => {
       const printContent = [];
-      
-      if (printBoleta && boletaRef.current) {
+
+      if (tipoDocumento === 'BOLETA' && boletaRef.current) {
         printContent.push(boletaRef.current.innerHTML);
       }
-      if (printFactura && facturaRef.current) {
+      if (tipoDocumento === 'FACTURA' && facturaRef.current) {
         printContent.push(facturaRef.current.innerHTML);
       }
-      
+
       if (printContent.length > 0) {
         const printWindow = window.open('', '_blank');
         if (printWindow) {
@@ -373,7 +430,6 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   .factura-print {
                     margin: 0;
                     padding: 0;
-                    page: factura;
                     page-break-after: always;
                   }
                   
@@ -390,56 +446,48 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
                   }
                   
                   @media print {
-                    /* Página por defecto (boletas, A4) */
                     @page {
                       size: auto;
                       margin: 15mm 8mm 10mm 8mm;
                     }
-                    
-                    /* Página para factura pre-impresa 240mm × 200mm */
+
+                    /* Boleta: papel continuo ~190mm x 170mm */
+                    @page boleta {
+                      size: 190mm 170mm;
+                      margin: 5mm 5mm;
+                    }
+
+                    /* Factura pre-impresa 240mm x 200mm */
                     @page factura {
                       size: 240mm 200mm;
                       margin: 0;
                     }
-                    
+
                     body {
                       margin: 0;
                       padding: 0;
                       -webkit-print-color-adjust: exact;
                       print-color-adjust: exact;
                     }
-                    
-                    .page-break { 
+
+                    .page-break {
                       page-break-after: always;
                       break-after: page;
                     }
-                    
-                    /* Boletas - se adapta al papel A4/Carta */
+
                     .boleta-print {
-                      width: 100% !important;
-                      max-width: 100% !important;
-                      min-height: auto;
-                      margin: 0 auto;
+                      page: boleta;
+                      width: 180mm !important;
+                      margin: 0 !important;
                       page-break-after: always;
                     }
-                    
-                    /* Facturas - tamaño exacto papel pre-impreso */
+
                     .factura-print {
                       width: 240mm !important;
                       height: 200mm !important;
                       margin: 0 !important;
                       padding: 0 !important;
                       page-break-after: always;
-                    }
-                    
-                    /* Evitar cortes de página indeseados */
-                    table, tr, td, th {
-                      page-break-inside: avoid;
-                    }
-                    
-                    /* Mejor contraste para matriz de puntos */
-                    strong, b, .bold {
-                      font-weight: 900 !important;
                     }
                   }
                 </style>
@@ -459,20 +507,17 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
         }
       }
     }, 500);
-  }, [printBoleta, printFactura, ventaId, onOpenChange, onPrintComplete]);
+  }, [tipoDocumento, ventaId, onOpenChange, onPrintComplete]);
 
   const handleSendWhatsApp = useCallback(async () => {
-    if (!printBoleta && !printFactura) {
-      toast.error('Seleccione al menos un documento');
+    if (!tipoDocumento) {
+      toast.error('Seleccione un documento');
       return;
     }
-    
+
     setLoading(true);
-    
+
     try {
-      // Determinar tipo de documento
-      const tipoDocumento = printBoleta ? 'BOLETA' : 'FACTURA';
-      
       // Llamar al backend para generar enlace
       const response = await api(`/ventas/${ventaId}/generar-enlace?tipo_documento=${tipoDocumento}`, {
         method: 'POST'
@@ -495,7 +540,7 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       }
       
       // Get data from whichever document is selected
-      const data = printBoleta ? boletaData : facturaData;
+      const data = tipoDocumento === 'BOLETA' ? boletaData : facturaData;
       
       if (!data) {
         toast.error('Error al cargar datos de venta');
@@ -525,11 +570,11 @@ const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete 
       }
       
       // Generate message with download link
-      const docType = printBoleta ? 'Boleta' : 'Factura';
-      const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY');
+      const docType = tipoDocumento === 'BOLETA' ? 'Boleta' : 'Factura';
+      const expirationDate = new Date(response.fecha_expiracion).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' });
       
       const message = `
-🧾 *${docType} - ${data.empresa?.nombre || 'Luz Brill'}*
+🧾 *${docType} - ${data.empresa?.nombre || ''}*
 
 📋 *Número:* ${data.numero}
 📅 *Fecha:* ${data.fecha}
@@ -559,12 +604,13 @@ Gracias por su compra! 🙏
     } finally {
       setLoading(false);
     }
-  }, [printBoleta, printFactura, ventaId, boletaData, facturaData, api, fetchPrintData]);
+  }, [tipoDocumento, ventaId, boletaData, facturaData, api, fetchPrintData]);
 
   // Fetch data when modal opens
   React.useEffect(() => {
     if (open && ventaId) {
       fetchPrintData();
+      fetchFechas();
     }
   }, [open, ventaId]);
 
@@ -574,10 +620,77 @@ Gracias por su compra! 🙏
       setBoletaData(null);
       setFacturaData(null);
       setError(null);
-      setPrintBoleta(true);
-      setPrintFactura(false);
+      setTipoDocumento('BOLETA');
+      setFechas(null);
+      setEditandoFecha(null);
+      setFechaTemp('');
     }
   }, [open]);
+
+  // Botón / badge de fecha de impresión al lado de cada documento
+  const renderBotonFecha = (tipo) => {
+    const modificada = getFechaImpresion(tipo);
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => abrirEditorFecha(tipo)}
+        title={modificada
+          ? `Fecha de impresión modificada: ${formatFechaISO(modificada)} (clic para cambiar o restaurar)`
+          : 'Cambiar la fecha que se imprime en este documento'}
+        className={modificada
+          ? 'shrink-0 h-auto py-1 px-2 text-xs font-medium bg-amber-100 text-amber-800 hover:bg-amber-200 hover:text-amber-900 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
+          : 'shrink-0 h-auto py-1 px-2 text-xs text-muted-foreground'}
+      >
+        <CalendarDays className="h-3.5 w-3.5 mr-1" />
+        {modificada ? formatFechaISO(modificada) : 'Fecha'}
+      </Button>
+    );
+  };
+
+  // Editor inline que se despliega debajo del documento seleccionado
+  const renderEditorFecha = (tipo) => {
+    if (editandoFecha !== tipo) return null;
+    const modificada = getFechaImpresion(tipo);
+    return (
+      <div className="px-3 pb-3 pt-1 space-y-2 border-t bg-muted/30">
+        <Label className="text-xs">Fecha a imprimir en {tipo === 'FACTURA' ? 'la factura' : 'la boleta'}</Label>
+        <DatePickerInput value={fechaTemp} onChange={setFechaTemp} />
+        <p className="text-xs text-muted-foreground">
+          Fecha real de la venta: {formatFechaISO(fechas?.fecha_original)}
+          {fechas?.hora_original ? ` ${fechas.hora_original}` : ''} — no se modifica.
+          {tipo === 'BOLETA' ? ' Se conserva la hora original.' : ''}
+        </p>
+        <div className="flex justify-end gap-2">
+          {modificada && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={guardandoFecha}
+              onClick={() => guardarFecha(tipo, null)}
+            >
+              <RotateCcw className="h-3.5 w-3.5 mr-1" />
+              Restaurar original
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" onClick={() => setEditandoFecha(null)}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={guardandoFecha || !fechaTemp}
+            onClick={() => guardarFecha(tipo, fechaTemp)}
+          >
+            {guardandoFecha && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
+            Guardar
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -591,7 +704,7 @@ Gracias por su compra! 🙏
         
         <div className="space-y-4">
           <p className="text-muted-foreground text-sm">
-            Seleccione qué documento(s) desea imprimir para la venta #{ventaId}
+            Seleccione qué documento desea imprimir para la venta #{ventaId}
           </p>
           
           {error && (
@@ -601,39 +714,57 @@ Gracias por su compra! 🙏
           )}
           
           <div className="space-y-3">
-            <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
-              <Checkbox 
-                id="boleta" 
-                checked={printBoleta} 
-                onCheckedChange={setPrintBoleta}
-              />
-              <div className="flex-1">
-                <Label htmlFor="boleta" className="flex items-center gap-2 cursor-pointer">
-                  <Receipt className="h-4 w-4" />
-                  Boleta
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Documento simple para clientes sin RUC
-                </p>
-              </div>
-            </div>
-            
-            {userPermisos.includes('ventas.imprimir_factura') && (
-              <div className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-secondary transition-colors">
-                <Checkbox 
-                  id="factura" 
-                  checked={printFactura} 
-                  onCheckedChange={setPrintFactura}
-                />
+            <div className={`border rounded-lg ${tipoDocumento === 'BOLETA' ? 'border-primary ring-1 ring-primary' : ''}`}>
+              <div
+                role="radio"
+                aria-checked={tipoDocumento === 'BOLETA'}
+                tabIndex={0}
+                onClick={() => setTipoDocumento('BOLETA')}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('BOLETA')}
+                className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+              >
+                <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'BOLETA' ? 'border-primary' : 'border-muted-foreground'}`}>
+                  {tipoDocumento === 'BOLETA' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                </div>
                 <div className="flex-1">
-                  <Label htmlFor="factura" className="flex items-center gap-2 cursor-pointer">
-                    <FileText className="h-4 w-4" />
-                    Factura
-                  </Label>
+                  <span className="flex items-center gap-2">
+                    <Receipt className="h-4 w-4" />
+                    Boleta
+                  </span>
                   <p className="text-xs text-muted-foreground">
-                    Documento fiscal con desglose de IVA (requiere RUC)
+                    Documento simple para clientes sin RUC
                   </p>
                 </div>
+                {renderBotonFecha('BOLETA')}
+              </div>
+              {renderEditorFecha('BOLETA')}
+            </div>
+
+            {userPermisos.includes('ventas.imprimir_factura') && (
+              <div className={`border rounded-lg ${tipoDocumento === 'FACTURA' ? 'border-primary ring-1 ring-primary' : ''}`}>
+                <div
+                  role="radio"
+                  aria-checked={tipoDocumento === 'FACTURA'}
+                  tabIndex={0}
+                  onClick={() => setTipoDocumento('FACTURA')}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FACTURA')}
+                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+                >
+                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FACTURA' ? 'border-primary' : 'border-muted-foreground'}`}>
+                    {tipoDocumento === 'FACTURA' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                  </div>
+                  <div className="flex-1">
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Factura
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Documento fiscal con desglose de IVA (requiere RUC)
+                    </p>
+                  </div>
+                  {renderBotonFecha('FACTURA')}
+                </div>
+                {renderEditorFecha('FACTURA')}
               </div>
             )}
           </div>
@@ -655,7 +786,7 @@ Gracias por su compra! 🙏
               <Button 
                 onClick={handleSendWhatsApp}
                 variant="outline"
-                disabled={loading || (!printBoleta && !printFactura)}
+                disabled={loading || !tipoDocumento}
                 className="bg-green-50 text-green-700 hover:bg-green-100 hover:text-green-800 border-green-200"
                 title="Enviar resumen por WhatsApp (solo texto)"
               >
@@ -664,8 +795,8 @@ Gracias por su compra! 🙏
               </Button>
             )}
             <Button 
-              onClick={handlePrint} 
-              disabled={loading || (!printBoleta && !printFactura)}
+              onClick={handlePrint}
+              disabled={loading || !tipoDocumento}
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               <Printer className="mr-2 h-4 w-4" />
@@ -684,4 +815,5 @@ Gracias por su compra! 🙏
   );
 };
 
+export { FacturaPrint };
 export default PrintModal;

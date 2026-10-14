@@ -40,11 +40,20 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../components/ui/popover';
-import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2, AlertTriangle, Calculator, Filter } from 'lucide-react';
+import { Warehouse, Plus, Loader2, Search, ArrowRight, Bell, Package, Minus, Trash2, Check, ChevronsUpDown, History, ShoppingCart, CreditCard, Building2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { DatePickerInput } from '../components/ui/date-picker-input';
-import { Alert, AlertDescription } from '../components/ui/alert';
+import EntradaStockDialog from '../components/EntradaStockDialog';
+import SalidaStockDialog from '../components/SalidaStockDialog';
+
+// Las ventas se registran como SALIDA con referencia_tipo 'venta'; el resto de
+// salidas son bajas manuales (rotura, robo, etc.).
+const clasificarMovimiento = (mov) => {
+  if (mov.tipo === 'VENTA' || (mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta')) return 'VENTA';
+  if (mov.tipo === 'SALIDA') return 'BAJA';
+  return mov.tipo;
+};
 
 const Stock = () => {
   const { api, empresa, userPermisos } = useApp();
@@ -54,39 +63,18 @@ const Stock = () => {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [salidaDialogOpen, setSalidaDialogOpen] = useState(false);
-  const [stockTotalMap, setStockTotalMap] = useState({});  // producto_id -> total qty across all almacenes
-  const [entradaProductoStock, setEntradaProductoStock] = useState(0); // current total stock of selected product
-  const [entradaProductoPrecioCosto, setEntradaProductoPrecioCosto] = useState(0); // original precio_costo before this entrada
-  const [entradaCPPAplicado, setEntradaCPPAplicado] = useState(null); // CPP value applied to product pricing (separate from real cost)
-  const [historialFilter, setHistorialFilter] = useState('ALL'); // 'ALL' | 'ENTRADA' | 'VENTA' | 'BAJA'
   const [traspasoDialogOpen, setTraspasoDialogOpen] = useState(false);
   const [almacenDialogOpen, setAlmacenDialogOpen] = useState(false);
   const [selectedAlmacen, setSelectedAlmacen] = useState('');
   const [search, setSearch] = useState('');
+  const [searchId, setSearchId] = useState('');
+  const [searchCodigo, setSearchCodigo] = useState('');
   
-  const [entradaForm, setEntradaForm] = useState({
-    producto_id: '',
-    almacen_id: '',
-    cantidad: '',
-    proveedor_id: '',
-    costo_unitario: '',
-    precio_venta: '',
-    condicion_pago: 'contado',
-    fecha_limite_pago: '',
-    notas: ''
-  });
-
   const [historialDialogOpen, setHistorialDialogOpen] = useState(false);
   const [historialProducto, setHistorialProducto] = useState(null);
   const [historialData, setHistorialData] = useState([]);
   const [historialLoading, setHistorialLoading] = useState(false);
-
-  const [salidaForm, setSalidaForm] = useState({
-    producto_id: '',
-    almacen_id: '',
-    cantidad: '',
-    motivo: ''
-  });
+  const [historialFiltroTipo, setHistorialFiltroTipo] = useState('TODOS'); // Filtro por tipo de movimiento
 
   const [traspasoForm, setTraspasoForm] = useState({
     producto_id: '',
@@ -101,11 +89,7 @@ const Stock = () => {
   });
 
   // Popovers state for searchable product selectors
-  const [entradaPopoverOpen, setEntradaPopoverOpen] = useState(false);
-  const [salidaPopoverOpen, setSalidaPopoverOpen] = useState(false);
   const [traspasoPopoverOpen, setTraspasoPopoverOpen] = useState(false);
-  const [productoSearchEntrada, setProductoSearchEntrada] = useState('');
-  const [productoSearchSalida, setProductoSearchSalida] = useState('');
   const [productoSearchTraspaso, setProductoSearchTraspaso] = useState('');
   const [proveedores, setProveedores] = useState([]);
 
@@ -115,25 +99,17 @@ const Stock = () => {
       let stockUrl = `/stock?empresa_id=${empresa.id}`;
       if (selectedAlmacen) stockUrl += `&almacen_id=${selectedAlmacen}`;
       
-      const [stockData, almacenesData, productosData, proveedoresData, allStockData] = await Promise.all([
+      const [stockData, almacenesData, productosData, proveedoresData] = await Promise.all([
         api(stockUrl),
         api(`/almacenes?empresa_id=${empresa.id}`),
         api(`/productos?empresa_id=${empresa.id}`),
-        api(`/proveedores?empresa_id=${empresa.id}`),
-        api(`/stock?empresa_id=${empresa.id}`)  // unfiltered, for CPP/warning calculations
+        api(`/proveedores?empresa_id=${empresa.id}`)
       ]);
       
       setStock(stockData);
       setAlmacenes(almacenesData);
       setProductos(productosData);
       setProveedores(proveedoresData);
-
-      // Build total stock map across all almacenes
-      const map = {};
-      for (const s of allStockData) {
-        map[s.producto_id] = (map[s.producto_id] || 0) + (s.cantidad || 0);
-      }
-      setStockTotalMap(map);
     } catch (e) {
       toast.error('Error al cargar datos');
     } finally {
@@ -145,52 +121,11 @@ const Stock = () => {
     fetchData();
   }, [empresa?.id, selectedAlmacen]);
 
-  const handleEntrada = async (e) => {
-    e.preventDefault();
-    if (!entradaForm.producto_id || !entradaForm.almacen_id || !entradaForm.cantidad) {
-      toast.error('Complete todos los campos');
-      return;
-    }
-    if (entradaForm.condicion_pago === 'credito' && !entradaForm.proveedor_id) {
-      toast.error('Seleccione un proveedor para registrar la deuda a crédito');
-      return;
-    }
-
-    try {
-      const payload = {
-        producto_id: parseInt(entradaForm.producto_id),
-        almacen_id: parseInt(entradaForm.almacen_id),
-        cantidad: parseInt(entradaForm.cantidad),
-        tipo: 'ENTRADA',
-        proveedor_id: entradaForm.proveedor_id ? parseInt(entradaForm.proveedor_id) : null,
-        costo_unitario: entradaForm.costo_unitario ? parseFloat(entradaForm.costo_unitario) : null,
-        costo_ponderado: entradaCPPAplicado,
-        precio_venta: entradaForm.precio_venta ? parseFloat(entradaForm.precio_venta) : null,
-        condicion_pago: entradaForm.condicion_pago || null,
-        fecha_limite_pago: entradaForm.fecha_limite_pago || null,
-        notas: entradaForm.notas || null
-      };
-      await api('/stock/entrada', { method: 'POST', body: JSON.stringify(payload) });
-      if (entradaForm.condicion_pago === 'credito' && entradaForm.proveedor_id) {
-        toast.success('Entrada registrada y deuda enviada al proveedor');
-      } else {
-        toast.success('Entrada registrada');
-      }
-      setDialogOpen(false);
-      setEntradaForm({ producto_id: '', almacen_id: '', cantidad: '', proveedor_id: '', costo_unitario: '', precio_venta: '', condicion_pago: 'contado', fecha_limite_pago: '', notas: '' });
-      setEntradaProductoStock(0);
-      setEntradaProductoPrecioCosto(0);
-      setEntradaCPPAplicado(null);
-      fetchData();
-    } catch (e) {
-      toast.error('Error al registrar entrada');
-    }
-  };
-
   const fetchHistorial = async (productoId, productoNombre) => {
     setHistorialProducto({ id: productoId, nombre: productoNombre });
     setHistorialDialogOpen(true);
     setHistorialLoading(true);
+    setHistorialFiltroTipo('TODOS'); // Reset filter when opening
     try {
       const data = await api(`/stock/historial/${productoId}`);
       setHistorialData(data);
@@ -239,32 +174,6 @@ const Stock = () => {
     }
   };
 
-  const handleSalida = async (e) => {
-    e.preventDefault();
-    if (!salidaForm.producto_id || !salidaForm.almacen_id || !salidaForm.cantidad) {
-      toast.error('Complete todos los campos');
-      return;
-    }
-
-    try {
-      await api('/stock/salida', {
-        method: 'POST',
-        body: JSON.stringify({
-          producto_id: parseInt(salidaForm.producto_id),
-          almacen_id: parseInt(salidaForm.almacen_id),
-          cantidad: parseInt(salidaForm.cantidad),
-          motivo: salidaForm.motivo || 'Salida manual'
-        })
-      });
-      toast.success('Salida registrada');
-      setSalidaDialogOpen(false);
-      setSalidaForm({ producto_id: '', almacen_id: '', cantidad: '', motivo: '' });
-      fetchData();
-    } catch (e) {
-      toast.error(e.message || 'Error al registrar salida');
-    }
-  };
-
   const handleCrearAlmacen = async (e) => {
     e.preventDefault();
     if (!almacenForm.nombre) {
@@ -296,9 +205,12 @@ const Stock = () => {
     }
   };
 
-  const filteredStock = stock.filter(s =>
-    s.producto_nombre?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredStock = stock.filter(s => {
+    const matchesName = !search || s.producto_nombre?.toLowerCase().includes(search.toLowerCase());
+    const matchesId = !searchId || s.producto_id?.toString() === searchId.trim();
+    const matchesCodigo = !searchCodigo || s.producto_codigo_barra?.toLowerCase().includes(searchCodigo.toLowerCase());
+    return matchesName && matchesId && matchesCodigo;
+  });
 
   if (loading) {
     return (
@@ -467,355 +379,24 @@ const Stock = () => {
 
           {/* Entrada Stock */}
           {userPermisos.includes('stock.entrada') && (
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button data-testid="entrada-stock-btn">
-                  <Plus className="mr-2 h-4 w-4" />
-                  Entrada
-                </Button>
-              </DialogTrigger>
-            <DialogContent>
-              <DialogDescription className="hidden">Formulario para registrar una entrada de stock</DialogDescription>
-              <DialogHeader>
-                <DialogTitle>Entrada de Stock</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleEntrada} className="space-y-4">
-                <div>
-                  <Label>Producto</Label>
-                  <Popover open={entradaPopoverOpen} onOpenChange={setEntradaPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={entradaPopoverOpen}
-                        className="w-full justify-between"
-                      >
-                        {entradaForm.producto_id
-                          ? productos.find((p) => p.id.toString() === entradaForm.producto_id)?.nombre
-                          : "Buscar producto..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[400px] p-0">
-                      <Command shouldFilter={false}>
-                        <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
-                          value={productoSearchEntrada}
-                          onValueChange={setProductoSearchEntrada}
-                        />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
-                        <CommandGroup className="max-h-64 overflow-auto">
-                          {productos
-                            .filter(p => 
-                              !productoSearchEntrada || 
-                              p.nombre.toLowerCase().includes(productoSearchEntrada.toLowerCase()) ||
-                              p.codigo_barra?.toLowerCase().includes(productoSearchEntrada.toLowerCase())
-                            )
-                            .map((p) => (
-                              <CommandItem
-                                key={p.id}
-                                value={p.nombre}
-                                onSelect={() => {
-                                  setEntradaForm({
-                                    ...entradaForm,
-                                    producto_id: p.id.toString(),
-                                    costo_unitario: p.precio_costo ? p.precio_costo.toString() : '',
-                                    precio_venta: p.precio_venta ? p.precio_venta.toString() : '',
-                                    proveedor_id: p.proveedor_id ? p.proveedor_id.toString() : entradaForm.proveedor_id
-                                  });
-                                  const totalStock = stockTotalMap[p.id] || 0;
-                                  setEntradaProductoStock(totalStock);
-                                  setEntradaProductoPrecioCosto(p.precio_costo ? parseFloat(p.precio_costo) : 0);
-                                  setEntradaCPPAplicado(null);
-                                  setEntradaPopoverOpen(false);
-                                  setProductoSearchEntrada('');
-                                }}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4",
-                                    entradaForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                <div className="flex flex-col">
-                                  <span>{p.nombre}</span>
-                                  {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div>
-                  <Label>Almacén</Label>
-                  <Select value={entradaForm.almacen_id} onValueChange={(v) => setEntradaForm({...entradaForm, almacen_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacén" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {almacenes.map(a => (
-                        <SelectItem key={a.id} value={a.id.toString()}>{a.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>Cantidad</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={entradaForm.cantidad}
-                      onChange={(e) => setEntradaForm({...entradaForm, cantidad: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <Label>Precio de Costo (Gs.)</Label>
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={entradaForm.costo_unitario}
-                      onChange={(e) => { setEntradaForm({...entradaForm, costo_unitario: e.target.value}); setEntradaCPPAplicado(null); }}
-                    />
-                  </div>
-                </div>
-                {/* Warning: product already has stock */}
-                {entradaForm.producto_id && entradaProductoStock > 0 && (
-                  <Alert variant="destructive" className="py-2">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertDescription className="text-xs">
-                      Este producto tiene <strong>{entradaProductoStock.toLocaleString('es-PY')} unidades</strong> en stock actualmente. ¿Estás seguro de que querés cargar una nueva tanda?
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {/* CPP button: shown when existing stock AND qty AND cost are all set */}
-                {entradaForm.producto_id && entradaProductoStock > 0 && entradaForm.cantidad && entradaForm.costo_unitario && (
-                  (() => {
-                    const currentStock = entradaProductoStock;
-                    const currentCosto = entradaProductoPrecioCosto;
-                    const newQty = parseInt(entradaForm.cantidad) || 0;
-                    const newCosto = parseFloat(entradaForm.costo_unitario) || 0;
-                    const cpp = newQty + currentStock > 0
-                      ? Math.round(((currentStock * currentCosto) + (newQty * newCosto)) / (currentStock + newQty))
-                      : newCosto;
-                    return (
-                      <div className="flex items-center gap-2 bg-muted/40 rounded px-3 py-2">
-                        <Calculator className="h-4 w-4 text-muted-foreground shrink-0" />
-                        <div className="flex-1 text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">CPP:</span>{' '}
-                          ({currentStock} × {currentCosto.toLocaleString('es-PY')} + {newQty} × {newCosto.toLocaleString('es-PY')}) ÷ {currentStock + newQty}{' '}
-                          = <span className="font-mono font-semibold text-foreground">Gs. {cpp.toLocaleString('es-PY')}</span>
-                        </div>
-                        {entradaCPPAplicado === cpp ? (
-                          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-semibold">
-                            ✓ Aplicado
-                            <button type="button" className="ml-1 opacity-60 hover:opacity-100" onClick={() => setEntradaCPPAplicado(null)}>✕</button>
-                          </span>
-                        ) : (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="text-xs h-7 shrink-0"
-                            onClick={() => setEntradaCPPAplicado(cpp)}
-                          >
-                            Aplicar
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })()
-                )}
-                <div>
-                  <Label>Precio de Venta (Gs.) <span className="text-muted-foreground text-xs font-normal">(opcional)</span></Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={entradaForm.precio_venta}
-                    onChange={(e) => setEntradaForm({...entradaForm, precio_venta: e.target.value})}
-                  />
-                </div>
-                {entradaForm.costo_unitario && entradaForm.cantidad && (
-                  <div className="text-sm text-muted-foreground bg-muted/40 rounded px-3 py-2">
-                    Total compra: <span className="font-mono font-semibold">
-                      Gs. {(parseFloat(entradaForm.costo_unitario || 0) * parseInt(entradaForm.cantidad || 0)).toLocaleString('es-PY')}
-                    </span>
-                  </div>
-                )}
-                <div>
-                  <Label>Proveedor</Label>
-                  <Select value={entradaForm.proveedor_id} onValueChange={(v) => setEntradaForm({...entradaForm, proveedor_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar proveedor (opcional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {proveedores.map(p => (
-                        <SelectItem key={p.id} value={p.id.toString()}>{p.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Condición de Pago</Label>
-                  <div className="flex gap-2 mt-1">
-                    <Button
-                      type="button"
-                      variant={entradaForm.condicion_pago === 'contado' ? 'default' : 'outline'}
-                      className="flex-1 gap-2"
-                      onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'contado', fecha_limite_pago: ''})}
-                    >
-                      <ShoppingCart className="h-4 w-4" />
-                      Contado
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={entradaForm.condicion_pago === 'credito' ? 'default' : 'outline'}
-                      className="flex-1 gap-2"
-                      onClick={() => setEntradaForm({...entradaForm, condicion_pago: 'credito'})}
-                    >
-                      <CreditCard className="h-4 w-4" />
-                      Crédito
-                    </Button>
-                  </div>
-                </div>
-                {entradaForm.condicion_pago === 'credito' && (
-                  <div>
-                    <Label>Fecha Límite de Pago</Label>
-                    <DatePickerInput
-                      value={entradaForm.fecha_limite_pago}
-                      onChange={(val) => setEntradaForm({...entradaForm, fecha_limite_pago: val})}
-                    />
-                  </div>
-                )}
-                <div>
-                  <Label>Notas (opcional)</Label>
-                  <Input
-                    placeholder="Ej: Factura #1234, lote especial..."
-                    value={entradaForm.notas}
-                    onChange={(e) => setEntradaForm({...entradaForm, notas: e.target.value})}
-                  />
-                </div>
-                <Button type="submit" className="w-full">Registrar Entrada</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+            <>
+              <Button data-testid="entrada-stock-btn" onClick={() => setDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Entrada
+              </Button>
+              <EntradaStockDialog open={dialogOpen} onOpenChange={setDialogOpen} onSuccess={fetchData} />
+            </>
           )}
 
           {/* Salida Stock */}
           {userPermisos.includes('stock.salida') && (
-            <Dialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen}>
-              <DialogTrigger asChild>
-                <Button variant="destructive" data-testid="salida-stock-btn">
-                  <Minus className="mr-2 h-4 w-4" />
-                  Salida
-                </Button>
-              </DialogTrigger>
-            <DialogContent>
-              <DialogDescription className="hidden">Formulario para registrar una salida o eliminación de stock</DialogDescription>
-              <DialogHeader>
-                <DialogTitle>Salida/Eliminación de Stock</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSalida} className="space-y-4">
-                <div>
-                  <Label>Producto</Label>
-                  <Popover open={salidaPopoverOpen} onOpenChange={setSalidaPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={salidaPopoverOpen}
-                        className="w-full justify-between"
-                      >
-                        {salidaForm.producto_id
-                          ? productos.find((p) => p.id.toString() === salidaForm.producto_id)?.nombre
-                          : "Buscar producto..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[400px] p-0">
-                      <Command shouldFilter={false}>
-                        <CommandInput 
-                          placeholder="Buscar por nombre o código..." 
-                          value={productoSearchSalida}
-                          onValueChange={setProductoSearchSalida}
-                        />
-                        <CommandEmpty>No se encontró el producto.</CommandEmpty>
-                        <CommandGroup className="max-h-64 overflow-auto">
-                          {productos
-                            .filter(p => 
-                              !productoSearchSalida || 
-                              p.nombre.toLowerCase().includes(productoSearchSalida.toLowerCase()) ||
-                              p.codigo_barra?.toLowerCase().includes(productoSearchSalida.toLowerCase())
-                            )
-                            .map((p) => (
-                              <CommandItem
-                                key={p.id}
-                                value={p.nombre}
-                                onSelect={() => {
-                                  setSalidaForm({...salidaForm, producto_id: p.id.toString()});
-                                  setSalidaPopoverOpen(false);
-                                  setProductoSearchSalida('');
-                                }}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4",
-                                    salidaForm.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                <div className="flex flex-col">
-                                  <span>{p.nombre}</span>
-                                  {p.codigo_barra && (
-                                    <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div>
-                  <Label>Almacén</Label>
-                  <Select value={salidaForm.almacen_id} onValueChange={(v) => setSalidaForm({...salidaForm, almacen_id: v})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar almacén" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {almacenes.map(a => (
-                        <SelectItem key={a.id} value={a.id.toString()}>{a.nombre}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Cantidad</Label>
-                  <Input
-                    type="number"
-                    min="1"
-                    value={salidaForm.cantidad}
-                    onChange={(e) => setSalidaForm({...salidaForm, cantidad: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <Label>Motivo</Label>
-                  <Input
-                    value={salidaForm.motivo}
-                    onChange={(e) => setSalidaForm({...salidaForm, motivo: e.target.value})}
-                    placeholder="Ej: Producto dañado, vencido, etc."
-                  />
-                </div>
-                <Button type="submit" variant="destructive" className="w-full">Registrar Salida</Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+            <>
+              <Button variant="destructive" data-testid="salida-stock-btn" onClick={() => setSalidaDialogOpen(true)}>
+                <Minus className="mr-2 h-4 w-4" />
+                Salida
+              </Button>
+              <SalidaStockDialog open={salidaDialogOpen} onOpenChange={setSalidaDialogOpen} onSuccess={fetchData} />
+            </>
           )}
         </div>
       </div>
@@ -853,19 +434,65 @@ const Stock = () => {
       {/* Stock Table */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Inventario {selectedAlmacen && `- ${almacenes.find(a => a.id.toString() === selectedAlmacen)?.nombre}`}
-            </CardTitle>
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar producto..."
-                className="pl-9"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                Inventario {selectedAlmacen && `- ${almacenes.find(a => a.id.toString() === selectedAlmacen)?.nombre}`}
+              </CardTitle>
+              <div className="relative w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar por nombre..."
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground font-medium">Filtros:</span>
+              <div className="relative">
+                <Input
+                  placeholder="ID..."
+                  className="pl-3 pr-7 h-8 w-24 text-sm font-mono"
+                  type="number"
+                  value={searchId}
+                  onChange={(e) => setSearchId(e.target.value)}
+                />
+                {searchId && (
+                  <button
+                    onClick={() => setSearchId('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  placeholder="Cód. barra..."
+                  className="pl-3 pr-7 h-8 w-44 text-sm font-mono"
+                  value={searchCodigo}
+                  onChange={(e) => setSearchCodigo(e.target.value)}
+                />
+                {searchCodigo && (
+                  <button
+                    onClick={() => setSearchCodigo('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              {(search || searchId || searchCodigo) && (
+                <button
+                  onClick={() => { setSearch(''); setSearchId(''); setSearchCodigo(''); }}
+                  className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
+                >
+                  <X className="h-3 w-3" /> Limpiar
+                </button>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -938,7 +565,7 @@ const Stock = () => {
         </CardContent>
       </Card>
       {/* Historial Dialog */}
-      <Dialog open={historialDialogOpen} onOpenChange={(open) => { setHistorialDialogOpen(open); if (!open) setHistorialFilter('ALL'); }}>
+      <Dialog open={historialDialogOpen} onOpenChange={setHistorialDialogOpen}>
         <DialogContent className="max-w-6xl max-h-[88vh] overflow-y-auto">
           <DialogDescription className="hidden">Historial de movimientos del producto</DialogDescription>
           <DialogHeader>
@@ -947,36 +574,39 @@ const Stock = () => {
               Historial &mdash; {historialProducto?.nombre}
             </DialogTitle>
           </DialogHeader>
-          {/* Filter buttons */}
+          
+          {/* Filtro por tipo de movimiento */}
           {!historialLoading && historialData.length > 0 && (
-            <div className="flex gap-2 flex-wrap">
-              {[
-                { key: 'ALL', label: 'Todos' },
-                { key: 'ENTRADA', label: 'Entradas' },
-                { key: 'VENTA', label: 'Ventas' },
-                { key: 'BAJA', label: 'Bajas' },
-              ].map(f => (
-                <Button
-                  key={f.key}
-                  type="button"
-                  size="sm"
-                  variant={historialFilter === f.key ? 'default' : 'outline'}
-                  className="h-7 text-xs"
-                  onClick={() => setHistorialFilter(f.key)}
-                >
-                  {f.label}
-                </Button>
-              ))}
+            <div className="flex items-center gap-3 pb-3 border-b">
+              <Label className="text-sm font-medium">Filtrar por tipo:</Label>
+              <Select value={historialFiltroTipo} onValueChange={setHistorialFiltroTipo}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="TODOS">Todos los movimientos</SelectItem>
+                  <SelectItem value="ENTRADA">Entradas</SelectItem>
+                  <SelectItem value="VENTA">Ventas</SelectItem>
+                  <SelectItem value="BAJA">Bajas</SelectItem>
+                  <SelectItem value="TRASPASO">Traspasos</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-sm text-muted-foreground ml-auto">
+                {historialFiltroTipo === 'TODOS' 
+                  ? `${historialData.length} movimientos totales`
+                  : `${historialData.filter(m => clasificarMovimiento(m) === historialFiltroTipo).length} de ${historialData.length}`
+                }
+              </span>
             </div>
           )}
+
           {historialLoading ? (
             <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin" />
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : historialData.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <History className="h-10 w-10 mx-auto mb-3 opacity-40" />
-              No hay movimientos registrados para este producto.
+            <div className="py-12 text-center text-muted-foreground">
+              No hay movimientos registrados para este producto
             </div>
           ) : (
             <Table>
@@ -984,115 +614,107 @@ const Stock = () => {
                 <TableRow>
                   <TableHead>Fecha</TableHead>
                   <TableHead>Tipo</TableHead>
-                  <TableHead>Estado</TableHead>
                   <TableHead>Almacén</TableHead>
                   <TableHead className="text-right">Cantidad</TableHead>
-                  <TableHead className="text-right">Restante</TableHead>
-                  <TableHead className="text-right">Costo Compra</TableHead>
-                  <TableHead className="text-right">CPP Pond.</TableHead>
+                  <TableHead className="text-right">Cant. Restante</TableHead>
+                  <TableHead className="text-right">Costo Unit.</TableHead>
+                  <TableHead className="text-right">CPP</TableHead>
                   <TableHead className="text-right">Total Compra</TableHead>
                   <TableHead>Condición</TableHead>
                   <TableHead>Proveedor</TableHead>
+                  <TableHead>Estado</TableHead>
                   <TableHead>Notas</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {historialData
-                  .filter(mov => {
-                    if (historialFilter === 'ALL') return true;
-                    if (historialFilter === 'ENTRADA') return mov.tipo === 'ENTRADA';
-                    if (historialFilter === 'VENTA') return mov.tipo === 'VENTA' || (mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta');
-                    if (historialFilter === 'BAJA') return mov.tipo === 'SALIDA' && mov.referencia_tipo !== 'venta';
-                    if (historialFilter === 'TRASPASO') return mov.tipo === 'TRASPASO';
-                    return true;
-                  })
+                  .filter(mov => historialFiltroTipo === 'TODOS' || clasificarMovimiento(mov) === historialFiltroTipo)
                   .map((mov) => {
-                  const esVenta = mov.tipo === 'VENTA' || (mov.tipo === 'SALIDA' && mov.referencia_tipo === 'venta');
-                  const esBaja = mov.tipo === 'SALIDA' && mov.referencia_tipo !== 'venta';
-                  const tipoColorResolved = esVenta
-                    ? 'text-amber-500 dark:text-amber-400'
-                    : esBaja
-                    ? 'text-red-600 dark:text-red-400'
-                    : mov.tipo === 'ENTRADA'
-                    ? 'text-green-600 dark:text-green-400'
-                    : mov.tipo === 'TRASPASO'
-                    ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-muted-foreground';
-                  const tipoLabelResolved = esVenta ? 'Venta'
-                    : esBaja ? 'Baja'
-                    : mov.tipo === 'ENTRADA' ? 'Entrada'
-                    : mov.tipo === 'TRASPASO' ? 'Traspaso'
-                    : mov.tipo;
-                  return (
-                    <TableRow key={mov.id}>
-                      <TableCell className="text-xs whitespace-nowrap">
-                        {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
-                          day: '2-digit', month: '2-digit', year: 'numeric',
-                          hour: '2-digit', minute: '2-digit'
-                        }) : '-'}
-                      </TableCell>
-                      <TableCell className={cn('font-semibold text-xs', tipoColorResolved)}>
-                        {tipoLabelResolved}
-                      </TableCell>
-                      <TableCell>
-                        {mov.tipo === 'ENTRADA' && mov.estado ? (
-                          <Badge
-                            className={cn('text-xs', mov.estado === 'Activo'
-                              ? 'badge-success'
-                              : 'bg-muted text-muted-foreground'
-                            )}
-                          >
-                            {mov.estado}
-                          </Badge>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
-                      <TableCell className="text-right font-mono font-bold">
-                        {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {mov.tipo === 'ENTRADA'
-                          ? mov.cantidad_restante != null
-                            ? <span className={mov.cantidad_restante === 0 ? 'text-muted-foreground line-through' : 'text-green-500 dark:text-green-400 font-semibold'}>{mov.cantidad_restante}</span>
-                            : <span className="text-muted-foreground text-[10px]">sin FIFO</span>
-                          : <span className="text-muted-foreground">-</span>}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs">
-                        {mov.tipo === 'ENTRADA' && mov.costo_ponderado != null
-                          ? <span className="text-amber-500 dark:text-amber-400">{formatCurrency(mov.costo_ponderado)}</span>
-                          : <span className="text-muted-foreground">-</span>}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-xs font-semibold">
-                        {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {mov.condicion_pago ? (
-                          <Badge variant={mov.condicion_pago === 'credito' ? 'outline' : 'secondary'} className="text-xs capitalize">
-                            {mov.condicion_pago === 'credito' ? (
-                              <><CreditCard className="h-3 w-3 mr-1" />Crédito</>
-                            ) : (
-                              <><ShoppingCart className="h-3 w-3 mr-1" />Contado</>
-                            )}
-                          </Badge>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {mov.proveedor_nombre ? (
-                          <span className="flex items-center gap-1">
-                            <Building2 className="h-3 w-3 opacity-60" />
-                            {mov.proveedor_nombre}
-                          </span>
-                        ) : '-'}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
-                        {mov.notas || '-'}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                    const tipoColor = {
+                      ENTRADA: 'text-green-600 dark:text-green-400',
+                      BAJA: 'text-red-600 dark:text-red-400',
+                      TRASPASO: 'text-blue-600 dark:text-blue-400',
+                      VENTA: 'text-amber-500 dark:text-amber-400',
+                    };
+                    const tipoLabel = {
+                      ENTRADA: 'Entrada',
+                      BAJA: 'Baja',
+                      TRASPASO: 'Traspaso',
+                      VENTA: 'Venta',
+                    };
+                    const tipoMov = clasificarMovimiento(mov);
+                    
+                    // Determinar estado FIFO
+                    const cantidadRestante = mov.cantidad_restante ?? null;
+                    const isAgotado = cantidadRestante !== null && cantidadRestante === 0;
+                    const isActivo = cantidadRestante !== null && cantidadRestante > 0;
+                    
+                    return (
+                      <TableRow key={mov.id} className={isAgotado ? 'opacity-60' : ''}>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          {mov.creado_en ? new Date(mov.creado_en).toLocaleDateString('es-PY', {
+                            day: '2-digit', month: '2-digit', year: 'numeric',
+                            hour: '2-digit', minute: '2-digit',
+                            timeZone: 'America/Asuncion'
+                          }) : '-'}
+                        </TableCell>
+                        <TableCell className={cn('font-semibold text-xs', tipoColor[tipoMov])}>
+                          {tipoLabel[tipoMov] || mov.tipo}
+                        </TableCell>
+                        <TableCell className="text-xs">{mov.almacen_nombre || '-'}</TableCell>
+                        <TableCell className="text-right font-mono font-bold">
+                          {mov.cantidad > 0 ? `+${mov.cantidad}` : mov.cantidad}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold">
+                          {cantidadRestante !== null ? (
+                            <span className={isActivo ? 'text-green-600' : 'text-muted-foreground line-through'}>
+                              {cantidadRestante}
+                            </span>
+                          ) : mov.tipo === 'ENTRADA' && mov.referencia_tipo !== 'ANULACION_VENTA' ? (
+                            <span className="text-muted-foreground text-[10px] font-normal" title="Entrada anterior al seguimiento FIFO">sin FIFO</span>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {mov.costo_unitario != null ? formatCurrency(mov.costo_unitario) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs font-semibold text-blue-600">
+                          {mov.costo_ponderado != null ? formatCurrency(mov.costo_ponderado) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs font-semibold">
+                          {mov.total_compra != null ? formatCurrency(mov.total_compra) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {mov.condicion_pago ? (
+                            <Badge variant={mov.condicion_pago === 'credito' ? 'outline' : 'secondary'} className="text-xs capitalize">
+                              {mov.condicion_pago === 'credito' ? (
+                                <><CreditCard className="h-3 w-3 mr-1" />Crédito</>
+                              ) : (
+                                <><ShoppingCart className="h-3 w-3 mr-1" />Contado</>
+                              )}
+                            </Badge>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {mov.proveedor_nombre ? (
+                            <span className="flex items-center gap-1">
+                              <Building2 className="h-3 w-3 opacity-60" />
+                              {mov.proveedor_nombre}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {cantidadRestante !== null && mov.tipo === 'ENTRADA' ? (
+                            <Badge variant={isActivo ? 'default' : 'secondary'} className="text-xs">
+                              {isActivo ? 'Activo' : 'Agotado'}
+                            </Badge>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">
+                          {mov.notas || '-'}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
           )}

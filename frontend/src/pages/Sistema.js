@@ -10,6 +10,7 @@ import { Badge } from '../components/ui/badge';
 import { Settings, Sun, Moon, Palette, Phone, User, DollarSign, RefreshCw, Loader2, ShieldCheck, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const colorOptions = [
   { id: 'blue', name: 'Azul', hex: '#0044CC' },
@@ -148,6 +149,8 @@ const Sistema = () => {
       const data = await api('/sistema/sync-permisos', { method: 'POST' });
       if (data.permisos_added?.length > 0) {
         toast.success(`Permisos actualizados: ${data.permisos_added.join(', ')}`);
+      } else if (data.rol_permisos_assigned > 0) {
+        toast.success(`${data.rol_permisos_assigned} permisos asignados al rol ADMIN`);
       } else {
         toast.info('Todo al día — no había permisos faltantes');
       }
@@ -162,7 +165,7 @@ const Sistema = () => {
     <div className="space-y-6 max-w-2xl" data-testid="sistema-page">
       <div>
         <h1 className="text-2xl font-bold">Configuración del Sistema</h1>
-        <p className="text-muted-foreground">Personaliza tu experiencia en Luz Brill ERP</p>
+        <p className="text-muted-foreground">Personaliza tu experiencia en Ethercloud ERP</p>
       </div>
 
       {/* Theme Settings */}
@@ -284,7 +287,7 @@ const Sistema = () => {
                   </Badge>
                   {cotizacion?.fecha_actualizacion && (
                     <span className="text-xs text-muted-foreground">
-                      Actualizado: {new Date(cotizacion.fecha_actualizacion).toLocaleString('es-PY')}
+                      Actualizado: {new Date(cotizacion.fecha_actualizacion).toLocaleString('es-PY', { timeZone: 'America/Asuncion' })}
                     </span>
                   )}
                 </div>
@@ -373,7 +376,7 @@ const Sistema = () => {
             <div className="w-16 h-16 rounded-xl bg-primary flex items-center justify-center overflow-hidden shrink-0">
               {logoUrl && !logoPreviewError ? (
                 <img
-                  src={logoUrl}
+                  src={resolverImagenUrl(logoUrl)}
                   alt="Vista previa"
                   className="w-full h-full object-contain p-1"
                   onError={() => setLogoPreviewError(true)}
@@ -387,7 +390,7 @@ const Sistema = () => {
             <div className="flex-1">
               <Label>URL del logo</Label>
               <Input
-                placeholder="https://luzbrill.storage.ethercloud.co/index.php/s/.../download?path=%2F&files=logo.png"
+                placeholder="https://storage.ethercloud.co/index.php/s/.../download?path=%2F&files=logo.png"
                 value={logoUrl}
                 onChange={(e) => { setLogoUrl(e.target.value); setLogoPreviewError(false); }}
                 className="mt-1 font-mono text-xs"
@@ -476,7 +479,7 @@ const Sistema = () => {
             </div>
             <Separator className="my-2" />
             <p className="text-xs text-muted-foreground text-center">
-              Luz Brill ERP © 2024 - Sistema de Gestión Empresarial
+              Ethercloud ERP © 2026 - Sistema de Gestión Empresarial
             </p>
           </div>
         </CardContent>

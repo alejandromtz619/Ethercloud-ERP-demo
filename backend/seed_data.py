@@ -20,13 +20,13 @@ async def seed_database():
     
     async with async_session_maker() as session:
         # 1. Crear Empresa
-        result = await session.execute(select(Empresa).where(Empresa.ruc == "00000000001"))
+        result = await session.execute(select(Empresa).where(Empresa.ruc == "5244360-4"))
         empresa = result.scalar_one_or_none()
         
         if not empresa:
             empresa = Empresa(
-                ruc="00000000001",
-                nombre="Mi Empresa",
+                ruc="5244360-4",
+                nombre="Ether Soluciones Tecnológicas",
                 direccion="Dirección Principal 123",
                 telefono="000000000",
                 email="contacto@empresa.com",
@@ -160,6 +160,13 @@ async def seed_database():
             # Laboratorio
             ("laboratorio.crear", "Crear materias de laboratorio"),
             ("laboratorio.ver", "Ver materias de laboratorio"),
+            ("laboratorio.editar", "Editar materias de laboratorio"),
+            ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
+            # Presupuestos
+            ("presupuestos.ver", "Ver presupuestos"),
+            ("presupuestos.crear", "Crear presupuestos"),
+            ("presupuestos.editar", "Editar presupuestos"),
+            ("presupuestos.eliminar", "Eliminar presupuestos"),
             # Dashboard
             ("dashboard.ver", "Ver dashboard"),
             # Sistema
@@ -170,6 +177,8 @@ async def seed_database():
             # Reportes
             ("reportes.ver", "Ver reportes"),
             ("reportes.exportar", "Exportar reportes"),
+            # Business Intelligence
+            ("bi.ver", "Ver Business Intelligence"),
             # Facturas
             ("facturas.ver", "Ver facturas"),
         ]

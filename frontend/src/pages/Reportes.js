@@ -26,7 +26,7 @@ import {
 } from '../components/ui/popover';
 import { 
   FileText, Download, Loader2, Package, Users, Building2, 
-  DollarSign, Calendar, Search, X, Check, FileSpreadsheet
+  DollarSign, Calendar, Search, X, Check, FileSpreadsheet, ShoppingCart
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
@@ -51,8 +51,6 @@ const Reportes = () => {
   const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
   
   // Filters for Stock report
-  const [stockFechaDesde, setStockFechaDesde] = useState('');
-  const [stockFechaHasta, setStockFechaHasta] = useState('');
   const [stockSoloAlertas, setStockSoloAlertas] = useState('NO');
   
   // Filters for Deudas Proveedores
@@ -64,6 +62,24 @@ const Reportes = () => {
   const [creditosFechaDesde, setCreditosFechaDesde] = useState('');
   const [creditosFechaHasta, setCreditosFechaHasta] = useState('');
   const [creditosEstado, setCreditosEstado] = useState('PENDIENTE');
+  const [creditosClienteId, setCreditosClienteId] = useState(null);
+  const [creditosClienteSearch, setCreditosClienteSearch] = useState('');
+  const [creditosClientePopoverOpen, setCreditosClientePopoverOpen] = useState(false);
+
+  // Filters for Venta Items report
+  const [itemsFechaDesde, setItemsFechaDesde] = useState('');
+  const [itemsFechaHasta, setItemsFechaHasta] = useState('');
+  const [itemsCategoriaId, setItemsCategoriaId] = useState('todos');
+  const [itemsProductoId, setItemsProductoId] = useState(null);
+  const [itemsProductoSearch, setItemsProductoSearch] = useState('');
+  const [itemsProductoPopoverOpen, setItemsProductoPopoverOpen] = useState(false);
+  const [itemsClienteId, setItemsClienteId] = useState(null);
+  const [itemsClienteSearch, setItemsClienteSearch] = useState('');
+  const [itemsClientePopoverOpen, setItemsClientePopoverOpen] = useState(false);
+
+  // Data for Venta Items report
+  const [categorias, setCategorias] = useState([]);
+  const [productos, setProductos] = useState([]);
 
   // Load clientes
   useEffect(() => {
@@ -81,8 +97,64 @@ const Reportes = () => {
     fetchClientes();
   }, [empresa?.id, api]);
 
+  // Load categorias and productos for Venta Items report
+  useEffect(() => {
+    const fetchItemsData = async () => {
+      if (!empresa?.id) return;
+      try {
+        const [cats, prods] = await Promise.all([
+          api(`/categorias?empresa_id=${empresa.id}`),
+          api(`/productos?empresa_id=${empresa.id}`)
+        ]);
+        setCategorias(cats);
+        setProductos(prods);
+      } catch (e) {
+        console.error('Error loading items report data:', e);
+      }
+    };
+    fetchItemsData();
+  }, [empresa?.id, api]);
+
   // Get selected cliente
   const selectedCliente = ventasClienteId ? clientes.find(c => c.id === ventasClienteId) : null;
+
+  // Get selected creditos cliente
+  const selectedCreditosCliente = creditosClienteId ? clientes.find(c => c.id === creditosClienteId) : null;
+
+  // Filter creditos clientes by search
+  const filteredCreditosClientes = clientes.filter(c => {
+    const s = creditosClienteSearch.toLowerCase();
+    return (
+      c.nombre.toLowerCase().includes(s) ||
+      (c.apellido && c.apellido.toLowerCase().includes(s)) ||
+      c.id.toString() === creditosClienteSearch ||
+      (c.ruc && c.ruc.toLowerCase().includes(s))
+    );
+  });
+
+  // Get selected items report values
+  const selectedItemsProducto = itemsProductoId ? productos.find(p => p.id === itemsProductoId) : null;
+  const selectedItemsCliente = itemsClienteId ? clientes.find(c => c.id === itemsClienteId) : null;
+
+  // Filter productos by search
+  const filteredProductos = productos.filter(p => {
+    const s = itemsProductoSearch.toLowerCase();
+    return (
+      p.nombre.toLowerCase().includes(s) ||
+      (p.codigo_barra && p.codigo_barra.toLowerCase().includes(s))
+    );
+  });
+
+  // Filter items clientes by search
+  const filteredItemsClientes = clientes.filter(c => {
+    const s = itemsClienteSearch.toLowerCase();
+    return (
+      c.nombre.toLowerCase().includes(s) ||
+      (c.apellido && c.apellido.toLowerCase().includes(s)) ||
+      c.id.toString() === itemsClienteSearch ||
+      (c.ruc && c.ruc.toLowerCase().includes(s))
+    );
+  });
 
   // Filter clientes by search
   const filteredClientes = clientes.filter(c => {
@@ -102,15 +174,17 @@ const Reportes = () => {
     }
     
     const loadingKey = format === 'excel' ? `${tipo}_excel` : tipo;
-    setLoading({ ...loading, [loadingKey]: true });
+    setLoading(prev => ({ ...prev, [loadingKey]: true }));
     
     try {
       const endpoint = format === 'excel' ? `${tipo}/excel` : tipo;
       let url = `${API_URL}/reportes/${endpoint}?empresa_id=${empresa.id}`;
       
-      // Add extra params
+      // Add extra params (skip null/undefined/empty)
       Object.entries(params).forEach(([key, value]) => {
-        if (value) url += `&${key}=${value}`;
+        if (value !== undefined && value !== null && value !== '') {
+          url += `&${key}=${encodeURIComponent(value)}`;
+        }
       });
       
       const response = await fetch(url, {
@@ -124,7 +198,7 @@ const Reportes = () => {
           errorMessage = errorData.detail || errorData.message || errorMessage;
         } catch (e) {
           if (response.status === 404) {
-            errorMessage = 'No se encontraron datos para este reporte';
+            errorMessage = 'No se encontraron datos con los filtros seleccionados';
           } else if (response.status === 403) {
             errorMessage = 'No tiene permisos para generar este reporte';
           } else if (response.status === 500) {
@@ -161,7 +235,7 @@ const Reportes = () => {
       console.error('Error downloading report:', e);
       toast.error(e.message || 'Error al descargar reporte. Verifique su conexión e inténtelo nuevamente.');
     } finally {
-      setLoading({ ...loading, [loadingKey]: false });
+      setLoading(prev => ({ ...prev, [loadingKey]: false }));
     }
   };
 
@@ -188,7 +262,7 @@ const Reportes = () => {
           setter: setVentasTipoPago,
           options: [
             { value: 'TODOS', label: 'Todas las ventas' },
-            { value: 'CONTADO', label: 'Contado (Efectivo/Tarjeta/Transferencia/Cheque)' },
+            { value: 'CONTADO', label: 'Contado (Efectivo / Tarjeta / Cheque)' },
             { value: 'CREDITO', label: 'Crédito' }
           ]
         },
@@ -227,15 +301,6 @@ const Reportes = () => {
       bgColor: 'bg-blue-50 dark:bg-blue-950',
       filters: [
         {
-          type: 'dateRange',
-          label: 'Movimientos desde',
-          fromState: stockFechaDesde,
-          toState: stockFechaHasta,
-          fromSetter: setStockFechaDesde,
-          toSetter: setStockFechaHasta,
-          optional: true
-        },
-        {
           type: 'select',
           label: 'Filtrar por',
           state: stockSoloAlertas,
@@ -247,8 +312,6 @@ const Reportes = () => {
         }
       ],
       getParams: () => ({
-        fecha_desde: stockFechaDesde || undefined,
-        fecha_hasta: stockFechaHasta || undefined,
         solo_alertas: stockSoloAlertas === 'SI' ? 'true' : undefined
       })
     },
@@ -314,12 +377,43 @@ const Reportes = () => {
             { value: 'PENDIENTE', label: 'Solo Pendientes' },
             { value: 'PAGADO', label: 'Solo Pagados' }
           ]
-        }
+        },
+        { type: 'creditosClienteSearch', label: 'Cliente (Opcional)' }
       ],
       getParams: () => ({
         fecha_desde: creditosFechaDesde || undefined,
         fecha_hasta: creditosFechaHasta || undefined,
-        estado: creditosEstado !== 'TODOS' ? creditosEstado : undefined
+        estado: creditosEstado !== 'TODOS' ? creditosEstado : undefined,
+        cliente_id: creditosClienteId || undefined
+      })
+    },
+    {
+      id: 'venta-items',
+      titulo: 'Venta de Items',
+      descripcion: 'Cantidad y monto vendido por producto en un período',
+      icon: ShoppingCart,
+      color: 'text-teal-500',
+      bgColor: 'bg-teal-50 dark:bg-teal-950',
+      filters: [
+        {
+          type: 'dateRange',
+          label: 'Período',
+          fromState: itemsFechaDesde,
+          toState: itemsFechaHasta,
+          fromSetter: setItemsFechaDesde,
+          toSetter: setItemsFechaHasta,
+          optional: true
+        },
+        { type: 'categoriaSelect', label: 'Categoría (Opcional)' },
+        { type: 'productoSearch', label: 'Producto (Opcional)' },
+        { type: 'itemsClienteSearch', label: 'Cliente (Opcional)' }
+      ],
+      getParams: () => ({
+        fecha_desde: itemsFechaDesde || undefined,
+        fecha_hasta: itemsFechaHasta || undefined,
+        categoria_id: itemsCategoriaId !== 'todos' ? parseInt(itemsCategoriaId) : undefined,
+        producto_id: itemsProductoId || undefined,
+        cliente_id: itemsClienteId || undefined
       })
     }
   ];
@@ -337,13 +431,13 @@ const Reportes = () => {
           return (
             <Card key={reporte.id} className="overflow-hidden">
               <CardHeader className={`${reporte.bgColor}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg bg-background ${reporte.color}`}>
+                <div className="flex items-start gap-3">
+                  <div className={`p-2 rounded-lg bg-background ${reporte.color} shrink-0`}>
                     <Icon className="h-6 w-6" />
                   </div>
-                  <div>
-                    <CardTitle className="text-lg">{reporte.titulo}</CardTitle>
-                    <CardDescription>{reporte.descripcion}</CardDescription>
+                  <div className="min-w-0">
+                    <CardTitle className="text-lg leading-tight">{reporte.titulo}</CardTitle>
+                    <CardDescription className="mt-0.5 line-clamp-2">{reporte.descripcion}</CardDescription>
                   </div>
                 </div>
               </CardHeader>
@@ -359,7 +453,7 @@ const Reportes = () => {
                                 {filter.label} {filter.optional && '(Opcional)'}
                               </Label>
                             )}
-                            <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-2">
                               <div>
                                 <Label className="text-xs mb-1 block">Desde</Label>
                                 <DatePicker
@@ -441,8 +535,8 @@ const Reportes = () => {
                                     Buscar por ID o nombre...
                                   </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="w-[300px] p-0" align="start">
-                                  <Command>
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
+                                  <Command shouldFilter={false}>
                                     <CommandInput
                                       placeholder="ID, nombre o RUC..."
                                       value={ventasClienteSearch}
@@ -488,12 +582,168 @@ const Reportes = () => {
                         );
                       }
                       
+                      if (filter.type === 'categoriaSelect') {
+                        return (
+                          <div key={idx}>
+                            <Label className="text-xs mb-1 block">{filter.label}</Label>
+                            <Select value={itemsCategoriaId} onValueChange={setItemsCategoriaId}>
+                              <SelectTrigger className="text-sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="todos">Todas las categorías</SelectItem>
+                                {categorias.map(cat => (
+                                  <SelectItem key={cat.id} value={String(cat.id)}>{cat.nombre}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        );
+                      }
+
+                      if (filter.type === 'productoSearch') {
+                        return (
+                          <div key={idx}>
+                            <Label className="text-xs mb-1 block">{filter.label}</Label>
+                            {selectedItemsProducto ? (
+                              <div className="flex items-center justify-between p-2 bg-secondary rounded-md text-sm">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium truncate">{selectedItemsProducto.nombre}</p>
+                                  {selectedItemsProducto.codigo_barra && (
+                                    <p className="text-xs text-muted-foreground truncate">Cód: {selectedItemsProducto.codigo_barra}</p>
+                                  )}
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setItemsProductoId(null); setItemsProductoSearch(''); }}>
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Popover open={itemsProductoPopoverOpen} onOpenChange={setItemsProductoPopoverOpen}>
+                                <PopoverTrigger asChild>
+                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
+                                    <Search className="mr-2 h-3 w-3" />
+                                    Buscar por nombre...
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
+                                  <Command shouldFilter={false}>
+                                    <CommandInput placeholder="Nombre o código..." value={itemsProductoSearch} onValueChange={setItemsProductoSearch} />
+                                    <CommandEmpty>No se encontraron productos</CommandEmpty>
+                                    <CommandGroup className="max-h-64 overflow-auto">
+                                      {filteredProductos.slice(0, 50).map((prod) => (
+                                        <CommandItem key={prod.id} value={prod.id.toString()} onSelect={() => { setItemsProductoId(prod.id); setItemsProductoPopoverOpen(false); setItemsProductoSearch(''); }} className="text-sm">
+                                          <Check className={cn('mr-2 h-3 w-3', itemsProductoId === prod.id ? 'opacity-100' : 'opacity-0')} />
+                                          <div className="flex-1 min-w-0">
+                                            <p className="font-medium truncate">{prod.nombre}</p>
+                                            {prod.codigo_barra && <p className="text-xs text-muted-foreground truncate">Cód: {prod.codigo_barra}</p>}
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      if (filter.type === 'itemsClienteSearch') {
+                        return (
+                          <div key={idx}>
+                            <Label className="text-xs mb-1 block">{filter.label}</Label>
+                            {selectedItemsCliente ? (
+                              <div className="flex items-center justify-between p-2 bg-secondary rounded-md text-sm">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium truncate">{selectedItemsCliente.nombre} {selectedItemsCliente.apellido || ''}</p>
+                                  <p className="text-xs text-muted-foreground truncate">ID: {selectedItemsCliente.id} | RUC: {selectedItemsCliente.ruc || 'N/A'}</p>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setItemsClienteId(null); setItemsClienteSearch(''); }}>
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Popover open={itemsClientePopoverOpen} onOpenChange={setItemsClientePopoverOpen}>
+                                <PopoverTrigger asChild>
+                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
+                                    <Search className="mr-2 h-3 w-3" />
+                                    Buscar por ID o nombre...
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
+                                  <Command shouldFilter={false}>
+                                    <CommandInput placeholder="ID, nombre o RUC..." value={itemsClienteSearch} onValueChange={setItemsClienteSearch} />
+                                    <CommandEmpty>{clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}</CommandEmpty>
+                                    <CommandGroup className="max-h-64 overflow-auto">
+                                      {filteredItemsClientes.slice(0, 50).map((cliente) => (
+                                        <CommandItem key={cliente.id} value={cliente.id.toString()} onSelect={() => { setItemsClienteId(cliente.id); setItemsClientePopoverOpen(false); setItemsClienteSearch(''); }} className="text-sm">
+                                          <Check className={cn('mr-2 h-3 w-3', itemsClienteId === cliente.id ? 'opacity-100' : 'opacity-0')} />
+                                          <div className="flex-1 min-w-0">
+                                            <p className="font-medium truncate">{cliente.nombre} {cliente.apellido || ''}</p>
+                                            <p className="text-xs text-muted-foreground truncate">ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}</p>
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      if (filter.type === 'creditosClienteSearch') {
+                        return (
+                          <div key={idx}>
+                            <Label className="text-xs mb-1 block">{filter.label}</Label>
+                            {selectedCreditosCliente ? (
+                              <div className="flex items-center justify-between p-2 bg-secondary rounded-md text-sm">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium truncate">{selectedCreditosCliente.nombre} {selectedCreditosCliente.apellido || ''}</p>
+                                  <p className="text-xs text-muted-foreground truncate">ID: {selectedCreditosCliente.id} | RUC: {selectedCreditosCliente.ruc || 'N/A'}</p>
+                                </div>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setCreditosClienteId(null); setCreditosClienteSearch(''); }}>
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <Popover open={creditosClientePopoverOpen} onOpenChange={setCreditosClientePopoverOpen}>
+                                <PopoverTrigger asChild>
+                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
+                                    <Search className="mr-2 h-3 w-3" />
+                                    Buscar por ID o nombre...
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
+                                  <Command shouldFilter={false}>
+                                    <CommandInput placeholder="ID, nombre o RUC..." value={creditosClienteSearch} onValueChange={setCreditosClienteSearch} />
+                                    <CommandEmpty>{clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}</CommandEmpty>
+                                    <CommandGroup className="max-h-64 overflow-auto">
+                                      {filteredCreditosClientes.slice(0, 50).map((cliente) => (
+                                        <CommandItem key={cliente.id} value={cliente.id.toString()} onSelect={() => { setCreditosClienteId(cliente.id); setCreditosClientePopoverOpen(false); setCreditosClienteSearch(''); }} className="text-sm">
+                                          <Check className={cn('mr-2 h-3 w-3', creditosClienteId === cliente.id ? 'opacity-100' : 'opacity-0')} />
+                                          <div className="flex-1 min-w-0">
+                                            <p className="font-medium truncate">{cliente.nombre} {cliente.apellido || ''}</p>
+                                            <p className="text-xs text-muted-foreground truncate">ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}</p>
+                                          </div>
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                          </div>
+                        );
+                      }
+
                       return null;
                     })}
                   </div>
                 )}
                 
-                <div className="flex gap-2">
+                <div className="flex flex-col min-[360px]:flex-row gap-2">
                   <Button
                     variant="outline"
                     className="flex-1"

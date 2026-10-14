@@ -317,6 +317,7 @@ class ProductoResponse(ProductoBase):
     id: int
     empresa_id: int
     activo: bool
+    creado_en: Optional[datetime] = None
     proveedor_nombre: Optional[str] = None
 
 class ProductoConStock(ProductoResponse):
@@ -324,6 +325,13 @@ class ProductoConStock(ProductoResponse):
     categoria_nombre: Optional[str] = None
     marca_nombre: Optional[str] = None
     proveedor_nombre: Optional[str] = None
+
+class ProductoCodigoBarraConflicto(BaseModel):
+    id: int
+    nombre: str
+    creado_en: Optional[datetime] = None
+    activo: bool
+    tuvo_movimientos_3_meses: bool
 
 # Materia Laboratorio
 class MateriaLaboratorioBase(BaseModel):
@@ -335,12 +343,24 @@ class MateriaLaboratorioBase(BaseModel):
 class MateriaLaboratorioCreate(MateriaLaboratorioBase):
     empresa_id: int
 
+class MateriaLaboratorioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+    precio: Optional[Decimal] = None
+
 class MateriaLaboratorioResponse(MateriaLaboratorioBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     empresa_id: int
     estado: EstadoMateria
     creado_en: Optional[datetime] = None
+
+class MateriaLaboratorioPage(BaseModel):
+    """Página de materias con el total sin paginar, para el contador del listado."""
+    items: List[MateriaLaboratorioResponse]
+    total: int
+    limit: int
+    offset: int
 
 # Almacen
 class AlmacenBase(BaseModel):
@@ -371,6 +391,7 @@ class StockActualResponse(StockActualBase):
 
 class StockConDetalles(StockActualResponse):
     producto_nombre: Optional[str] = None
+    producto_codigo_barra: Optional[str] = None
     almacen_nombre: Optional[str] = None
 
 # Movimiento Stock
@@ -396,6 +417,7 @@ class MovimientoStockResponse(MovimientoStockBase):
     id: int
     proveedor_id: Optional[int] = None
     costo_unitario: Optional[Decimal] = None
+    costo_ponderado: Optional[Decimal] = None
     condicion_pago: Optional[str] = None
     fecha_limite_pago: Optional[date] = None
     notas: Optional[str] = None
@@ -476,6 +498,11 @@ class VentaUpdate(BaseModel):
     es_delivery: Optional[bool] = None
     items: Optional[List[VentaItemCreate]] = None
 
+class FechaImpresionUpdate(BaseModel):
+    """Corrige solo la fecha que se imprime en el documento. No toca creado_en."""
+    tipo_documento: str  # 'BOLETA' | 'FACTURA'
+    fecha: Optional[date] = None  # None = restaurar la fecha original
+
 class VentaResponse(VentaBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -488,11 +515,52 @@ class VentaResponse(VentaBase):
     ganancia: Optional[Decimal] = 0
     estado: EstadoVenta
     creado_en: Optional[datetime] = None
+    fecha_impresion_boleta: Optional[date] = None
+    fecha_impresion_factura: Optional[date] = None
 
 class VentaConDetalles(VentaResponse):
     items: List[VentaItemResponse] = []
     cliente_nombre: Optional[str] = None
     cliente_ruc: Optional[str] = None
+
+# Presupuesto
+class PresupuestoItemCreate(BaseModel):
+    producto_id: int
+    cantidad: int
+    precio_venta_unitario: Optional[Decimal] = None  # override manual del precio (ajustes/descuentos)
+
+class PresupuestoItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    producto_id: Optional[int] = None
+    nombre_producto: str
+    imagen_url: Optional[str] = None
+    cantidad: int
+    precio_venta_unitario: Decimal
+    subtotal: Decimal
+
+class PresupuestoCreate(BaseModel):
+    empresa_id: int
+    cliente_id: int
+    usuario_id: int
+    notas: Optional[str] = None
+    items: List[PresupuestoItemCreate]
+
+class PresupuestoResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    numero: str
+    empresa_id: int
+    cliente_id: int
+    usuario_id: int
+    cliente_nombre: Optional[str] = None
+    subtotal: Decimal
+    total: Decimal
+    notas: Optional[str] = None
+    creado_en: Optional[datetime] = None
+
+class PresupuestoConDetalles(PresupuestoResponse):
+    items: List[PresupuestoItemResponse] = []
 
 # Funcionario
 class FuncionarioBase(BaseModel):
@@ -597,6 +665,24 @@ class FacturaResponse(FacturaBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     estado: str
+    creado_en: Optional[datetime] = None
+
+# FacturaGrupal
+class FacturaGrupalCreate(BaseModel):
+    empresa_id: int
+    cliente_id: int
+    venta_ids: List[int]
+    cobrar_credito: bool = True
+
+class FacturaGrupalResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    empresa_id: int
+    cliente_id: int
+    numero: str
+    condicion: str = 'CONTADO'
+    total: Decimal
+    iva: Decimal
     creado_en: Optional[datetime] = None
 
 # Preferencias Usuario

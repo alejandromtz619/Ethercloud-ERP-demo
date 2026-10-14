@@ -7,6 +7,7 @@ import { Label } from '../components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const getInitials = (nombre) => {
   if (!nombre) return '?';
@@ -69,7 +70,7 @@ const Login = () => {
         <CardHeader className="text-center">
           <div className="mx-auto w-16 h-16 rounded-xl bg-primary flex items-center justify-center mb-4 overflow-hidden">
             {empresa?.logo_url && !logoError ? (
-              <img src={empresa.logo_url} alt={empresa.nombre} className="w-full h-full object-contain p-1" onError={() => setLogoError(true)} />
+              <img src={resolverImagenUrl(empresa.logo_url)} alt={empresa.nombre} className="w-full h-full object-contain p-1" onError={() => setLogoError(true)} />
             ) : (
               <span className="text-2xl font-bold text-white tracking-tight">
                 {empresa ? getInitials(empresa.nombre) : '?'}

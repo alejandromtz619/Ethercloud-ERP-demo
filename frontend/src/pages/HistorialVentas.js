@@ -13,6 +13,19 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '../components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from '../components/ui/command';
+import { cn } from '../lib/utils';
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,7 +42,7 @@ import {
 } from '../components/ui/dialog';
 import { 
   History, Search, Filter, Printer, FileText, Receipt, Eye, 
-  Loader2, Calendar, DollarSign, User, XCircle, Edit, FileSpreadsheet
+  Loader2, Calendar, DollarSign, User, XCircle, Edit, FileSpreadsheet, Check, ChevronsUpDown, X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import PrintModal from '../components/PrintModal';
@@ -42,6 +55,13 @@ const formatCurrency = (val) => {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   }).format(val || 0);
+};
+
+// "YYYY-MM-DD" -> "dd/MM/yyyy" (sin conversión de zona horaria)
+const formatFechaISO = (iso) => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
 };
 
 const HistorialVentas = () => {
@@ -69,6 +89,34 @@ const HistorialVentas = () => {
     monto_max: '',
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [limit, setLimit] = useState(100);
+  const [clienteSearch, setClienteSearch] = useState('');
+  const [usuarioSearch, setUsuarioSearch] = useState('');
+  const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
+  const [usuarioPopoverOpen, setUsuarioPopoverOpen] = useState(false);
+
+  const fetchVentasWithLimit = async (newLimit) => {
+    setLimit(newLimit);
+    if (!empresa?.id) return;
+    setLoading(true);
+    try {
+      let endpoint = `/ventas?empresa_id=${empresa.id}`;
+      if (filters.fecha_desde) endpoint += `&fecha_desde=${filters.fecha_desde}`;
+      if (filters.fecha_hasta) endpoint += `&fecha_hasta=${filters.fecha_hasta}`;
+      if (filters.cliente_id && filters.cliente_id !== 'all') endpoint += `&cliente_id=${filters.cliente_id}`;
+      if (filters.usuario_id && filters.usuario_id !== 'all') endpoint += `&usuario_id=${filters.usuario_id}`;
+      if (filters.estado && filters.estado !== 'all') endpoint += `&estado=${filters.estado}`;
+      if (filters.monto_min) endpoint += `&monto_min=${filters.monto_min}`;
+      if (filters.monto_max) endpoint += `&monto_max=${filters.monto_max}`;
+      endpoint += `&limit=${newLimit}`;
+      const data = await api(endpoint);
+      setVentas(data);
+    } catch (e) {
+      toast.error('Error al cargar ventas');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchVentas = async () => {
     if (!empresa?.id) return;
@@ -83,6 +131,7 @@ const HistorialVentas = () => {
       if (filters.estado && filters.estado !== 'all') endpoint += `&estado=${filters.estado}`;
       if (filters.monto_min) endpoint += `&monto_min=${filters.monto_min}`;
       if (filters.monto_max) endpoint += `&monto_max=${filters.monto_max}`;
+      endpoint += `&limit=${limit}`;
       
       const data = await api(endpoint);
       setVentas(data);
@@ -126,6 +175,8 @@ const HistorialVentas = () => {
       monto_min: '',
       monto_max: '',
     });
+    setClienteSearch('');
+    setUsuarioSearch('');
     setTimeout(fetchVentas, 100);
   };
 
@@ -247,7 +298,7 @@ const HistorialVentas = () => {
           <h1 className="text-2xl font-bold">Historial de Ventas</h1>
           <p className="text-muted-foreground">Consulta y reimpresión de documentos</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button 
             variant="outline" 
             onClick={() => setShowFilters(!showFilters)}
@@ -256,6 +307,25 @@ const HistorialVentas = () => {
             <Filter className="mr-2 h-4 w-4" />
             {showFilters ? 'Ocultar Filtros' : 'Mostrar Filtros'}
           </Button>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">Boletas a cargar:</span>
+            <div className="flex rounded-md border border-input overflow-hidden">
+              {[{label: '100', value: 100}, {label: '200', value: 200}, {label: 'Todo', value: 0}].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => fetchVentasWithLimit(opt.value)}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    limit === opt.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-foreground hover:bg-muted'
+                  } border-r border-input last:border-r-0`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <Button 
             variant="outline"
             onClick={handleDescargarExcel}
@@ -295,41 +365,119 @@ const HistorialVentas = () => {
               </div>
               <div>
                 <Label>Cliente</Label>
-                <Select 
-                  value={filters.cliente_id || 'all'} 
-                  onValueChange={(v) => setFilters({...filters, cliente_id: v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Todos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {clientes.map((c) => (
-                      <SelectItem key={c.id} value={c.id.toString()}>
-                        {c.nombre} {c.apellido || ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {filters.cliente_id && filters.cliente_id !== 'all' ? (
+                  <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30 h-10">
+                    <span className="text-sm flex-1 truncate">
+                      {(() => { const c = clientes.find(x => x.id.toString() === filters.cliente_id); return c ? `${c.nombre} ${c.apellido || ''}`.trim() : filters.cliente_id; })()}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => { setFilters({...filters, cliente_id: ''}); setClienteSearch(''); }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Popover open={clientePopoverOpen} onOpenChange={setClientePopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" className="w-full justify-between h-10 font-normal">
+                        <span className="text-muted-foreground">Todos los clientes</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[280px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Buscar cliente..."
+                          value={clienteSearch}
+                          onValueChange={setClienteSearch}
+                        />
+                        <CommandEmpty>No se encontraron clientes</CommandEmpty>
+                        <CommandGroup className="max-h-60 overflow-auto">
+                          {clientes
+                            .filter(c => {
+                              const q = clienteSearch.toLowerCase();
+                              return !q || `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(q);
+                            })
+                            .slice(0, 60)
+                            .map((c) => (
+                              <CommandItem
+                                key={c.id}
+                                value={`${c.nombre} ${c.apellido || ''}`}
+                                onSelect={() => {
+                                  setFilters({...filters, cliente_id: c.id.toString()});
+                                  setClientePopoverOpen(false);
+                                  setClienteSearch('');
+                                }}
+                              >
+                                <Check className={cn('mr-2 h-4 w-4', filters.cliente_id === c.id.toString() ? 'opacity-100' : 'opacity-0')} />
+                                {c.nombre} {c.apellido || ''}
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
               </div>
               <div>
                 <Label>Vendedor</Label>
-                <Select 
-                  value={filters.usuario_id || 'all'} 
-                  onValueChange={(v) => setFilters({...filters, usuario_id: v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Todos" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Todos</SelectItem>
-                    {usuarios.map((u) => (
-                      <SelectItem key={u.id} value={u.id.toString()}>
-                        {u.nombre} {u.apellido || ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {filters.usuario_id && filters.usuario_id !== 'all' ? (
+                  <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30 h-10">
+                    <span className="text-sm flex-1 truncate">
+                      {(() => { const u = usuarios.find(x => x.id.toString() === filters.usuario_id); return u ? `${u.nombre} ${u.apellido || ''}`.trim() : filters.usuario_id; })()}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => { setFilters({...filters, usuario_id: ''}); setUsuarioSearch(''); }}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <Popover open={usuarioPopoverOpen} onOpenChange={setUsuarioPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" className="w-full justify-between h-10 font-normal">
+                        <span className="text-muted-foreground">Todos los vendedores</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[280px] p-0" align="start">
+                      <Command>
+                        <CommandInput
+                          placeholder="Buscar vendedor..."
+                          value={usuarioSearch}
+                          onValueChange={setUsuarioSearch}
+                        />
+                        <CommandEmpty>No se encontraron vendedores</CommandEmpty>
+                        <CommandGroup className="max-h-60 overflow-auto">
+                          {usuarios
+                            .filter(u => {
+                              const q = usuarioSearch.toLowerCase();
+                              return !q || `${u.nombre} ${u.apellido || ''}`.toLowerCase().includes(q);
+                            })
+                            .slice(0, 60)
+                            .map((u) => (
+                              <CommandItem
+                                key={u.id}
+                                value={`${u.nombre} ${u.apellido || ''}`}
+                                onSelect={() => {
+                                  setFilters({...filters, usuario_id: u.id.toString()});
+                                  setUsuarioPopoverOpen(false);
+                                  setUsuarioSearch('');
+                                }}
+                              >
+                                <Check className={cn('mr-2 h-4 w-4', filters.usuario_id === u.id.toString() ? 'opacity-100' : 'opacity-0')} />
+                                {u.nombre} {u.apellido || ''}
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
               </div>
               <div>
                 <Label>Estado</Label>
@@ -385,7 +533,7 @@ const HistorialVentas = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <History className="h-5 w-5" />
-            Ventas ({ventas.length})
+            Ventas ({ventas.length}{limit > 0 ? ` — últimos ${limit}` : ''})
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -426,9 +574,21 @@ const HistorialVentas = () => {
                         <span className="text-xs text-muted-foreground block">
                           {new Date(venta.creado_en).toLocaleTimeString('es-PY', { 
                             hour: '2-digit', 
-                            minute: '2-digit' 
+                            minute: '2-digit'
                           })}
                         </span>
+                        {(venta.fecha_impresion_boleta || venta.fecha_impresion_factura) && (
+                          <Badge
+                            className="badge-info mt-1 text-[10px] px-1.5 py-0 font-normal"
+                            title={[
+                              venta.fecha_impresion_boleta && `Boleta se imprime con fecha ${formatFechaISO(venta.fecha_impresion_boleta)}`,
+                              venta.fecha_impresion_factura && `Factura se imprime con fecha ${formatFechaISO(venta.fecha_impresion_factura)}`,
+                              'La fecha real de la venta no fue modificada.'
+                            ].filter(Boolean).join('\n')}
+                          >
+                            Fecha impr. editada
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         <span className="font-medium">{venta.cliente_nombre}</span>
@@ -508,6 +668,18 @@ const HistorialVentas = () => {
               </Table>
             </div>
           )}
+          {limit > 0 && ventas.length >= limit && (
+            <div className="flex justify-center pt-4 pb-2">
+              <Button
+                variant="outline"
+                onClick={() => fetchVentasWithLimit(limit + 100)}
+                disabled={loading}
+              >
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Cargar 100 más
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -528,7 +700,7 @@ const HistorialVentas = () => {
                 <div>
                   <Label className="text-muted-foreground">Fecha</Label>
                   <p className="font-medium">
-                    {new Date(selectedVenta.creado_en).toLocaleString('es-PY')}
+                    {new Date(selectedVenta.creado_en).toLocaleString('es-PY', { timeZone: 'America/Asuncion' })}
                   </p>
                 </div>
                 <div>
@@ -609,6 +781,7 @@ const HistorialVentas = () => {
         onOpenChange={setPrintModalOpen}
         ventaId={printVentaId}
         ventaEstado={printVentaEstado}
+        onPrintComplete={fetchVentas}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 """
-Test suite for Luz Brill ERP - Créditos, Reportes PDF, and Ciclos Salario features
+Test suite for Ethercloud ERP - Créditos, Reportes PDF, and Ciclos Salario features
 Tests:
 1. Clientes: campo limite_credito se guarda y muestra
 2. Clientes: crédito disponible endpoint
@@ -20,7 +20,7 @@ from datetime import date, datetime
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
 # Test credentials
-TEST_EMAIL = "admin@luzbrill.com"
+TEST_EMAIL = "admin@ether.com"
 TEST_PASSWORD = "admin123"
 EMPRESA_ID = 1
 

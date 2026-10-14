@@ -1213,7 +1213,7 @@ const TabAging = ({ empresa, API_URL, token }) => {
                               <Clock className="h-3 w-3 shrink-0" />
                               <span className="font-medium text-foreground">
                                 {t.fecha_entrada
-                                  ? new Date(t.fecha_entrada).toLocaleDateString('es-PY')
+                                  ? new Date(t.fecha_entrada).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })
                                   : '—'}
                               </span>
                               <span className="opacity-40">·</span>

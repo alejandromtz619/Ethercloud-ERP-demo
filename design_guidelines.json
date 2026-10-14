@@ -1,6 +1,6 @@
 {
   "brand_identity": {
-    "name": "Luz Brill ERP",
+    "name": "Ethercloud ERP",
     "archetype": "The Performance Pro (Archetype 2) + Swiss Clarity (Archetype 4)",
     "core_values": ["Efficiency", "Precision", "Reliability"],
     "emotional_tone": "Professional, Direct, High-Contrast",
@@ -27,7 +27,7 @@
   },
   "colors": {
     "primary": {
-      "name": "Luz Brill Blue",
+      "name": "Ether Blue",
       "hex": "#0044CC",
       "tailwind_var": "--primary",
       "usage": "Primary buttons, Active states, Key highlights"
@@ -135,7 +135,7 @@
   },
   "instructions_to_main_agent": [
     "1. Install 'lucide-react' for icons.",
-    "2. Update 'index.css' to reflect the 'Luz Brill Blue' color variables.",
+    "2. Update 'index.css' to reflect the 'Ether Blue' color variables.",
     "3. Create a 'Layout' component that handles the Sidebar and Topbar structure.",
     "4. Implement the 'CurrencyTicker' component immediately as it's a key differentiator.",
     "5. Ensure the POS (Ventas) page is responsive: Grid on Desktop, List/Tabs on Mobile."

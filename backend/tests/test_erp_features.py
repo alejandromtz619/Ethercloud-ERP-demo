@@ -1,5 +1,5 @@
 """
-Luz Brill ERP - Backend API Tests
+Ethercloud ERP - Backend API Tests
 Tests for: Login, Delivery, Ventas (cheque validation), Funcionarios (adelantos), 
 Proveedores (deudas), Cotización, Marcas, Permisos
 """
@@ -11,7 +11,7 @@ from datetime import date, datetime
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://enterprise-luz.preview.emergentagent.com')
 
 # Test credentials
-TEST_EMAIL = "admin@luzbrill.com"
+TEST_EMAIL = "admin@ether.com"
 TEST_PASSWORD = "admin123"
 EMPRESA_ID = 1
 
@@ -28,7 +28,7 @@ class TestHealthAndAuth:
         print(f"✓ Health check passed: {data}")
     
     def test_login_with_valid_credentials(self):
-        """Test login with admin@luzbrill.com / admin123"""
+        """Test login with admin@ether.com / admin123"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "email": TEST_EMAIL,
             "password": TEST_PASSWORD
@@ -307,7 +307,7 @@ class TestProveedoresDeudas:
             headers={"Authorization": f"Bearer {auth_token}"},
             json={
                 "nombre": "TEST_Proveedor_Deuda",
-                "ruc": "80012345-6",
+                "ruc": "80000000-1",
                 "direccion": "Asunción",
                 "telefono": "021-123456",
                 "empresa_id": EMPRESA_ID

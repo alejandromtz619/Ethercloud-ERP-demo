@@ -1,5 +1,5 @@
 """
-Test suite for Luz Brill ERP - 10 Features Verification
+Test suite for Ethercloud ERP - 10 Features Verification
 Tests:
 1. Historial Ventas - product/materia names shown (not just 'producto#5')
 2. Boleta/Factura PDF - Materia de Laboratorio items show name and description

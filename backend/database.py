@@ -18,7 +18,7 @@ if DATABASE_URL:
         DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+asyncpg://', 1)
 else:
     # Default to SQLite for local development
-    DATABASE_URL = "sqlite+aiosqlite:///./luzbrill.db"
+    DATABASE_URL = "sqlite+aiosqlite:///./ethercloud.db"
 
 engine = create_async_engine(
     DATABASE_URL,

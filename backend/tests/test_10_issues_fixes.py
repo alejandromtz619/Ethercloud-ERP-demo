@@ -1,5 +1,5 @@
 """
-Test file for 10 issues fixes in Luz Brill ERP
+Test file for 10 issues fixes in Ethercloud ERP
 Tests:
 1. Historial ventas: items muestran nombre del producto no 'producto#5'
 3. Boleta/factura: materias laboratorio muestran nombre + descripción

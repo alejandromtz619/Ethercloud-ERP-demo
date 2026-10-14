@@ -354,7 +354,7 @@ const Funcionarios = () => {
                     <div>
                       <p className="font-mono-data font-medium">{formatCurrency(adelanto.monto)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(adelanto.creado_en).toLocaleDateString('es-PY')}
+                        {new Date(adelanto.creado_en).toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                       </p>
                     </div>
                   </div>
@@ -404,7 +404,7 @@ const Funcionarios = () => {
                       <p className="font-medium">{funcionario.nombre} {funcionario.apellido}</p>
                       {funcionario.fecha_nacimiento && (
                         <p className="text-xs text-muted-foreground">
-                          Cumpleaños: {new Date(funcionario.fecha_nacimiento).toLocaleDateString('es-PY')}
+                          Cumpleaños: {new Date(funcionario.fecha_nacimiento + 'T12:00:00').toLocaleDateString('es-PY', { timeZone: 'America/Asuncion' })}
                         </p>
                       )}
                     </div>

@@ -4,7 +4,8 @@ import { useApp } from '../context/AppContext';
 import { 
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
-  Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2, Receipt
+  Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2, Receipt,
+  FileSpreadsheet
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -17,11 +18,13 @@ import {
   DropdownMenuSeparator,
 } from '../components/ui/dropdown-menu';
 import { cn } from '../lib/utils';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const allMenuItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/ventas', icon: ShoppingCart, label: 'Ventas' },
   { path: '/historial-ventas', icon: History, label: 'Historial Ventas' },
+  { path: '/presupuestos', icon: FileSpreadsheet, label: 'Presupuestos' },
   { path: '/delivery', icon: Truck, label: 'Delivery' },
   { path: '/laboratorio', icon: FlaskConical, label: 'Laboratorio' },
   { path: '/productos', icon: Package, label: 'Productos' },
@@ -83,7 +86,7 @@ const Layout = ({ children }) => {
         <div className={cn("flex h-16 items-center justify-between px-4 border-b", primaryColor === 'ether' ? "border-[#2a2a2a]" : "border-neutral-800")}>
           <div className="flex items-center gap-2">
             {empresa?.logo_url && !logoError ? (
-              <img src={empresa.logo_url} alt={empresa.nombre} className="w-8 h-8 object-contain rounded-md" onError={() => setLogoError(true)} />
+              <img src={resolverImagenUrl(empresa.logo_url)} alt={empresa.nombre} className="w-8 h-8 object-contain rounded-md" onError={() => setLogoError(true)} />
             ) : (
               <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
                 <span className="font-bold text-primary-foreground text-xs">
@@ -148,7 +151,7 @@ const Layout = ({ children }) => {
               <Menu className="h-5 w-5" />
             </Button>
             <div className="hidden sm:block">
-              <h1 className="font-semibold text-lg">{empresa?.nombre || 'Luz Brill ERP'}</h1>
+              <h1 className="font-semibold text-lg">{empresa?.nombre || 'Ethercloud ERP'}</h1>
             </div>
           </div>
 

@@ -1,7 +1,7 @@
-# Luz Brill ERP - AI Coding Instructions
+# Ethercloud ERP - AI Coding Instructions
 
 ## Project Overview
-**Full-stack ERP system** for Paraguayan business operations (PYG currency, 10% IVA). Built for Luz Brill S.A. to manage sales, inventory, delivery, laboratory items, and employee operations.
+**Full-stack ERP system** for Paraguayan business operations (PYG currency, 10% IVA). Built by Ether Soluciones Tecnológicas to manage sales, inventory, delivery, laboratory items, and employee operations.
 
 **Stack**: FastAPI + PostgreSQL/SQLite + React + shadcn/ui  
 **Deployment**: Docker / Coolify  
@@ -23,7 +23,7 @@
 
 ### Key Patterns
 1. **Permission System**: 51+ granular permissions (see [models.py](../backend/models.py#L100-L200) `Rol`/`Permiso`). Frontend checks `userPermisos` array; backend verifies via `get_current_usuario()` dependency.
-2. **Multi-tenant**: All entities scoped to `empresa_id`. Seed user: `admin@luzbrill.com / admin123`.
+2. **Multi-tenant**: All entities scoped to `empresa_id`. Seed user: `admin@ether.com / admin123`.
 3. **Enums**: Shared between models.py and schemas.py (`EstadoVenta`, `TipoPago`, `TipoMovimientoStock`, etc.)
 
 ## Development Workflows
@@ -121,15 +121,16 @@ See [design_guidelines.json](../design_guidelines.json) for:
 4. Update sidebar in `Layout.js` with permission check
 
 ### Database migrations
-- **No Alembic currently used** - schema changes via `Base.metadata.create_all()`
-- For production, manually run SQL or add Alembic
+- **Raw SQL only** — all schema changes are applied manually via pgAdmin directly on the PostgreSQL database
+- Do NOT suggest SQLAlchemy migrations, Alembic, or `Base.metadata.create_all()` for schema changes
+- When a schema change is needed, provide the raw SQL `ALTER TABLE` / `CREATE TABLE` / etc. statement to run in pgAdmin
 
 ## Gotchas
 - **server.py size**: 3100 lines - prefer grep_search over full reads
 - **Async everywhere**: All DB operations use `async def` + `await`
 - **Paraguay specifics**: 10% IVA included in prices, PYG currency (no decimals)
-- **Test credentials**: `admin@luzbrill.com / admin123` (empresa_id: 1)
-- **CORS issues**: If deployed, update `CORS_ORIGINS` env var in backend with frontend URL (e.g., `https://luzbrill-frontend.ddelvalle.xyz`). For local dev, use `http://localhost:3000` or `*` for testing only.
+- **Test credentials**: `admin@ether.com / admin123` (empresa_id: 1)
+- **CORS issues**: If deployed, update `CORS_ORIGINS` env var in backend with frontend URL (e.g., `https://erp-frontend.example.com`). For local dev, use `http://localhost:3000` or `*` for testing only.
   - Check logs for: `CORS allowed origins: ['https://...']`
   - If still failing, ensure no trailing slashes in URL
 

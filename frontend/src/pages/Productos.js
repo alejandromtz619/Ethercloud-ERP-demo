@@ -23,7 +23,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog';
-import { Package, Plus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown } from 'lucide-react';
+import { Package, Plus, Minus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle } from 'lucide-react';
+import EntradaStockDialog from '../components/EntradaStockDialog';
+import SalidaStockDialog from '../components/SalidaStockDialog';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 import {
@@ -35,9 +37,11 @@ import {
   CommandList,
 } from '../components/ui/command';
 import { toast } from 'sonner';
+import { resolverImagenUrl } from '../lib/imagenes';
 
 const Productos = () => {
   const { api, empresa, userPermisos } = useApp();
+  const isAdmin = userPermisos.includes('usuarios.gestionar');
   const [productos, setProductos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [marcas, setMarcas] = useState([]);
@@ -49,12 +53,21 @@ const Productos = () => {
   const [editingId, setEditingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
+  const [searchId, setSearchId] = useState('');
+  const [searchCodigo, setSearchCodigo] = useState('');
   const [filterMarca, setFilterMarca] = useState('');
   const [filterCategoria, setFilterCategoria] = useState('');
   const [marcaOpen, setMarcaOpen] = useState(false);
   const [categoriaOpen, setCategoriaOpen] = useState(false);
   const [proveedorOpen, setProveedorOpen] = useState(false);
-  
+  const [codigoConflicto, setCodigoConflicto] = useState(null);
+  const [checkingCodigo, setCheckingCodigo] = useState(false);
+  const [conflictModalOpen, setConflictModalOpen] = useState(false);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
+  const [entradaDialogOpen, setEntradaDialogOpen] = useState(false);
+  const [salidaDialogOpen, setSalidaDialogOpen] = useState(false);
+  const [selectedProductoId, setSelectedProductoId] = useState(null);
+
   const [formData, setFormData] = useState({
     nombre: '',
     descripcion: '',
@@ -98,6 +111,38 @@ const Productos = () => {
     fetchData();
   }, [empresa?.id]);
 
+  useEffect(() => {
+    const value = formData.codigo_barra?.trim();
+    if (!dialogOpen || !value) {
+      setCodigoConflicto(null);
+      setCheckingCodigo(false);
+      return;
+    }
+    setCheckingCodigo(true);
+    const timer = setTimeout(async () => {
+      try {
+        const qs = `codigo_barra=${encodeURIComponent(value)}${editingId ? `&exclude_id=${editingId}` : ''}`;
+        const conflicto = await api(`/productos/verificar-codigo-barra?${qs}`);
+        setCodigoConflicto(conflicto || null);
+      } catch (err) {
+        setCodigoConflicto(null);
+      } finally {
+        setCheckingCodigo(false);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.codigo_barra, dialogOpen, editingId]);
+
+  const formatDate = (iso) => {
+    if (!iso) return '-';
+    try {
+      return new Date(iso).toLocaleDateString('es-PY', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch (e) {
+      return '-';
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       nombre: '',
@@ -112,6 +157,8 @@ const Productos = () => {
       imagen_url: ''
     });
     setEditingId(null);
+    setCodigoConflicto(null);
+    setConflictModalOpen(false);
   };
 
   const handleEdit = (producto) => {
@@ -131,14 +178,7 @@ const Productos = () => {
     setDialogOpen(true);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!formData.nombre || !formData.precio_venta) {
-      toast.error('Complete nombre y precio');
-      return;
-    }
-    
+  const doSave = async () => {
     setSubmitting(true);
     try {
       const payload = {
@@ -164,7 +204,7 @@ const Productos = () => {
         });
         toast.success('Producto creado');
       }
-      
+
       setDialogOpen(false);
       resetForm();
       fetchData();
@@ -172,6 +212,48 @@ const Productos = () => {
       toast.error(e.message || 'Error al guardar');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!formData.nombre || !formData.precio_venta) {
+      toast.error('Complete nombre y precio');
+      return;
+    }
+
+    const codigo = formData.codigo_barra?.trim();
+    if (codigo) {
+      try {
+        const qs = `codigo_barra=${encodeURIComponent(codigo)}${editingId ? `&exclude_id=${editingId}` : ''}`;
+        const conflicto = await api(`/productos/verificar-codigo-barra?${qs}`);
+        if (conflicto) {
+          setCodigoConflicto(conflicto);
+          setConflictModalOpen(true);
+          return;
+        }
+      } catch (err) {
+        // si falla la verificación, dejamos que el backend valide al guardar
+      }
+    }
+
+    await doSave();
+  };
+
+  const handleResolveConflict = async () => {
+    if (!codigoConflicto) return;
+    setResolvingConflict(true);
+    try {
+      await api(`/productos/${codigoConflicto.id}/limpiar-codigo-barra`, { method: 'PATCH' });
+      toast.success('Código de barra liberado del producto anterior');
+      setConflictModalOpen(false);
+      setCodigoConflicto(null);
+      await doSave();
+    } catch (err) {
+      toast.error(err.message || 'No se pudo liberar el código de barra');
+    } finally {
+      setResolvingConflict(false);
     }
   };
 
@@ -195,14 +277,17 @@ const Productos = () => {
   };
 
   const filteredProductos = productos.filter(p => {
-    const matchesSearch =
-      p.nombre.toLowerCase().includes(search.toLowerCase()) ||
-      p.codigo_barra?.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search ||
+      p.nombre.toLowerCase().includes(search.toLowerCase());
+    const matchesId = !searchId ||
+      p.id.toString() === searchId.trim();
+    const matchesCodigo = !searchCodigo ||
+      (p.codigo_barra?.toLowerCase().includes(searchCodigo.toLowerCase()));
     const matchesMarca = !filterMarca ||
       (p.marca_nombre || '').toLowerCase().includes(filterMarca.toLowerCase());
     const matchesCategoria = !filterCategoria ||
       (p.categoria_nombre || '').toLowerCase().includes(filterCategoria.toLowerCase());
-    return matchesSearch && matchesMarca && matchesCategoria;
+    return matchesSearch && matchesId && matchesCodigo && matchesMarca && matchesCategoria;
   });
 
   if (loading) {
@@ -251,13 +336,26 @@ const Productos = () => {
                   />
                 </div>
                 <div>
-                  <Label>Código de Barra</Label>
+                  <Label className="flex items-center gap-1.5">
+                    Código de Barra
+                    {checkingCodigo && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                    {!checkingCodigo && codigoConflicto && (
+                      <span title={`Ya existe en: ${codigoConflicto.nombre} (ID ${codigoConflicto.id})`}>
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                      </span>
+                    )}
+                  </Label>
                   <Input
                     value={formData.codigo_barra}
                     onChange={(e) => setFormData({...formData, codigo_barra: e.target.value})}
-                    className="font-mono"
+                    className={`font-mono ${codigoConflicto ? 'border-amber-500 focus-visible:ring-amber-500' : ''}`}
                     data-testid="producto-codigo"
                   />
+                  {codigoConflicto && (
+                    <p className="text-xs text-amber-600 mt-1">
+                      Ya usado por "{codigoConflicto.nombre}" (ID {codigoConflicto.id})
+                    </p>
+                  )}
                 </div>
                 <div>
                   <Label>Precio de Venta *</Label>
@@ -450,7 +548,7 @@ const Productos = () => {
               <div className="relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Buscar..."
+                  placeholder="Buscar por nombre..."
                   className="pl-9"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -460,6 +558,39 @@ const Productos = () => {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground font-medium">Filtros:</span>
+              <div className="relative">
+                <Input
+                  placeholder="ID..."
+                  className="pl-3 pr-7 h-8 w-24 text-sm font-mono"
+                  type="number"
+                  value={searchId}
+                  onChange={(e) => setSearchId(e.target.value)}
+                />
+                {searchId && (
+                  <button
+                    onClick={() => setSearchId('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  placeholder="Cód. barra..."
+                  className="pl-3 pr-7 h-8 w-40 text-sm font-mono"
+                  value={searchCodigo}
+                  onChange={(e) => setSearchCodigo(e.target.value)}
+                />
+                {searchCodigo && (
+                  <button
+                    onClick={() => setSearchCodigo('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <Input
                   placeholder="Marca..."
@@ -492,9 +623,9 @@ const Productos = () => {
                   </button>
                 )}
               </div>
-              {(filterMarca || filterCategoria) && (
+              {(filterMarca || filterCategoria || searchId || searchCodigo) && (
                 <button
-                  onClick={() => { setFilterMarca(''); setFilterCategoria(''); }}
+                  onClick={() => { setFilterMarca(''); setFilterCategoria(''); setSearchId(''); setSearchCodigo(''); }}
                   className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
                 >
                   <X className="h-3 w-3" /> Limpiar filtros
@@ -516,7 +647,7 @@ const Productos = () => {
                 <TableHead>Ganancia</TableHead>
                 <TableHead>Proveedor</TableHead>
                 <TableHead>Stock</TableHead>
-                <TableHead className="w-28">Acciones</TableHead>
+                <TableHead className="w-40">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -529,11 +660,19 @@ const Productos = () => {
                         <div 
                           className="relative w-10 h-10 cursor-pointer group"
                           onClick={() => {
-                            setSelectedImage(producto.imagen_url);
+                            setSelectedImage(resolverImagenUrl(producto.imagen_url));
                             setImageDialogOpen(true);
                           }}
                         >
-                          <img src={producto.imagen_url} alt="" className="w-10 h-10 rounded object-cover" />
+                          <img
+                            src={resolverImagenUrl(producto.imagen_url)}
+                            alt=""
+                            className="w-10 h-10 rounded object-cover"
+                            loading="lazy"
+                            decoding="async"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => { e.currentTarget.style.visibility = 'hidden'; }}
+                          />
                           <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center">
                             <Expand className="h-4 w-4 text-white" />
                           </div>
@@ -577,6 +716,26 @@ const Productos = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      {userPermisos.includes('stock.entrada') && (
+                        <Button
+                          size="icon"
+                          title="Agregar stock"
+                          className="h-8 w-8 rounded-md bg-green-600 hover:bg-green-700 text-white shrink-0"
+                          onClick={() => { setSelectedProductoId(producto.id); setEntradaDialogOpen(true); }}
+                        >
+                          <Plus className="h-5 w-5" strokeWidth={3} />
+                        </Button>
+                      )}
+                      {userPermisos.includes('stock.salida') && (
+                        <Button
+                          size="icon"
+                          title="Quitar stock"
+                          className="h-8 w-8 rounded-md bg-red-600 hover:bg-red-700 text-white shrink-0"
+                          onClick={() => { setSelectedProductoId(producto.id); setSalidaDialogOpen(true); }}
+                        >
+                          <Minus className="h-5 w-5" strokeWidth={3} />
+                        </Button>
+                      )}
                       {userPermisos.includes('productos.editar') && (
                         <Button variant="ghost" size="icon" onClick={() => handleEdit(producto)}>
                           <Edit className="h-4 w-4" />
@@ -596,6 +755,72 @@ const Productos = () => {
         </CardContent>
       </Card>
 
+      {/* Conflict Dialog */}
+      <Dialog open={conflictModalOpen} onOpenChange={(open) => { setConflictModalOpen(open); if (!open) setCodigoConflicto(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Código de barra en conflicto
+            </DialogTitle>
+            <DialogDescription>
+              El código <span className="font-mono">{formData.codigo_barra}</span> ya está asignado a otro producto.
+            </DialogDescription>
+          </DialogHeader>
+          {codigoConflicto && (
+            <div className="space-y-2 text-sm border rounded-md p-3 bg-muted/30">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Producto</span>
+                <span className="font-medium text-right">{codigoConflicto.nombre}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">ID</span>
+                <span className="font-mono">{codigoConflicto.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Fecha de creación</span>
+                <span>{formatDate(codigoConflicto.creado_en)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Movimientos últimos 3 meses</span>
+                <span>{codigoConflicto.tuvo_movimientos_3_meses ? 'Sí' : 'No'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Estado</span>
+                <Badge variant={codigoConflicto.activo ? 'secondary' : 'destructive'}>
+                  {codigoConflicto.activo ? 'ACTIVO' : 'INACTIVO'}
+                </Badge>
+              </div>
+            </div>
+          )}
+          {!isAdmin && (
+            <p className="text-xs text-muted-foreground">
+              No podés guardar con este código mientras esté en uso. Pedile a un administrador que lo libere, o cambiá el código.
+            </p>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { setConflictModalOpen(false); setCodigoConflicto(null); }}
+            >
+              Cancelar
+            </Button>
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={resolvingConflict}
+                onClick={handleResolveConflict}
+              >
+                {resolvingConflict && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Quitar código al otro producto y guardar
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Image Preview Dialog */}
       <Dialog open={imageDialogOpen} onOpenChange={setImageDialogOpen}>
         <DialogContent className="max-w-2xl">
@@ -611,6 +836,19 @@ const Productos = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <EntradaStockDialog
+        open={entradaDialogOpen}
+        onOpenChange={setEntradaDialogOpen}
+        productoIdInicial={selectedProductoId}
+        onSuccess={fetchData}
+      />
+      <SalidaStockDialog
+        open={salidaDialogOpen}
+        onOpenChange={setSalidaDialogOpen}
+        productoIdInicial={selectedProductoId}
+        onSuccess={fetchData}
+      />
     </div>
   );
 };
