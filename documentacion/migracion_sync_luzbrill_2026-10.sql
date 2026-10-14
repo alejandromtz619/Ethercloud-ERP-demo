@@ -4,7 +4,9 @@
 --
 -- PostgreSQL. Ejecutar en pgAdmin DESPUÉS de hacer backup (pg_dump).
 -- Es idempotente: se puede correr más de una vez sin romper nada.
--- Aplicar ANTES de desplegar el backend nuevo.
+-- El backend aplica lo mismo solo al arrancar (ensure_columnas, create_all,
+-- ensure_indices, ensure_permisos), así que este script es opcional: sirve para
+-- migrar a mano antes del deploy o para auditar qué cambia.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------

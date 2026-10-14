@@ -8285,24 +8285,7 @@ async def migrate_documentos_temporales():
 @app.on_event("startup")
 async def startup():
     await init_db()
-    # Auto-migration: add cantidad_restante column to movimientos_stock if missing
-    try:
-        async with engine.begin() as conn:
-            db_url = str(engine.url)
-            if 'postgresql' in db_url:
-                await conn.execute(text(
-                    "ALTER TABLE movimientos_stock ADD COLUMN IF NOT EXISTS cantidad_restante INTEGER"
-                ))
-            else:
-                try:
-                    await conn.execute(text(
-                        "ALTER TABLE movimientos_stock ADD COLUMN cantidad_restante INTEGER"
-                    ))
-                except Exception:
-                    pass  # Column already exists in SQLite
-        logger.info("Stock migration: cantidad_restante column ensured")
-    except Exception as e:
-        logger.warning(f"Stock migration warning (may be harmless): {e}")
+    await ensure_columnas()
 
     # Auto-migration: ensure bi.ver permission exists and is assigned to ADMIN roles
     try:
@@ -8331,6 +8314,42 @@ async def startup():
     await ensure_indices()
     await ensure_permisos()
     logger.info("Database initialized")
+
+# Columnas agregadas a tablas que ya existían. create_all() sólo crea tablas nuevas,
+# así que se agregan aquí de forma idempotente (mismo SQL que
+# documentacion/migracion_sync_luzbrill_2026-10.sql).
+COLUMNAS_REQUERIDAS = [
+    ("movimientos_stock", "costo_ponderado", "NUMERIC(15,2)"),
+    ("movimientos_stock", "cantidad_restante", "INTEGER"),
+    ("proveedor_productos", "sku", "VARCHAR(100)"),
+    ("proveedor_productos", "link", "VARCHAR(1000)"),
+    ("ventas", "facturada", "BOOLEAN NOT NULL DEFAULT FALSE"),
+    ("ventas", "fecha_impresion_boleta", "DATE"),
+    ("ventas", "fecha_impresion_factura", "DATE"),
+    ("productos", "creado_en", "TIMESTAMP WITH TIME ZONE"),
+    ("facturas_grupales", "condicion", "VARCHAR(10) NOT NULL DEFAULT 'CONTADO'"),
+]
+
+async def ensure_columnas():
+    es_postgres = 'postgresql' in str(engine.url)
+    for tabla, columna, tipo in COLUMNAS_REQUERIDAS:
+        try:
+            async with engine.begin() as conn:
+                if es_postgres:
+                    await conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN IF NOT EXISTS {columna} {tipo}"))
+                else:
+                    columnas = await conn.execute(text(f"PRAGMA table_info({tabla})"))
+                    if columna not in {fila[1] for fila in columnas}:
+                        await conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}"))
+        except Exception as e:
+            # Una columna que no se pudo agregar no debe impedir el arranque
+            logger.warning(f"No se pudo asegurar la columna {tabla}.{columna}: {e}")
+    if es_postgres:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("ALTER TABLE proveedor_productos ALTER COLUMN costo DROP NOT NULL"))
+        except Exception as e:
+            logger.warning(f"No se pudo hacer opcional proveedor_productos.costo: {e}")
 
 # Índices sobre las claves foráneas más consultadas. create_all() no los añade a
 # tablas que ya existen, así que se crean aquí de forma idempotente.
