@@ -7839,6 +7839,23 @@ PERMISOS_REQUERIDOS = [
     ("presupuestos.eliminar", "Eliminar presupuestos"),
 ]
 
+async def _asignar_permisos_requeridos_a_admins(db: AsyncSession) -> int:
+    """Asigna a los roles administrador los permisos requeridos que les falten.
+    Devuelve cuántas asignaciones se crearon (no hace commit)."""
+    assigned = 0
+    claves = [clave for clave, _ in PERMISOS_REQUERIDOS]
+    perms = (await db.execute(select(Permiso).where(Permiso.clave.in_(claves)))).scalars().all()
+    roles = (await db.execute(select(Rol).where(Rol.nombre.in_(ROLES_ADMIN)))).scalars().all()
+    for rol in roles:
+        for perm in perms:
+            existing_rp = await db.execute(
+                select(RolPermiso).where(RolPermiso.rol_id == rol.id, RolPermiso.permiso_id == perm.id)
+            )
+            if not existing_rp.scalar_one_or_none():
+                db.add(RolPermiso(rol_id=rol.id, permiso_id=perm.id))
+                assigned += 1
+    return assigned
+
 @api_router.post("/sistema/sync-permisos")
 async def sync_permisos(db: AsyncSession = Depends(get_db)):
     """Add any missing permissions and assign them to all ADMIN roles. Safe to run on production."""
@@ -7851,23 +7868,7 @@ async def sync_permisos(db: AsyncSession = Depends(get_db)):
             await db.flush()
             added_perms.append(clave)
 
-    # Asignar a los roles ADMIN cualquier permiso requerido que les falte
-    # (los permisos pueden haber sido creados antes por ensure_permisos al arrancar)
-    assigned = 0
-    for clave, _ in PERMISOS_REQUERIDOS:
-        perm_result = await db.execute(select(Permiso).where(Permiso.clave == clave))
-        perm = perm_result.scalar_one_or_none()
-        if not perm:
-            continue
-        admin_roles = await db.execute(select(Rol).where(Rol.nombre.in_(ROLES_ADMIN)))
-        for rol in admin_roles.scalars().all():
-            existing_rp = await db.execute(
-                select(RolPermiso).where(RolPermiso.rol_id == rol.id, RolPermiso.permiso_id == perm.id)
-            )
-            if not existing_rp.scalar_one_or_none():
-                db.add(RolPermiso(rol_id=rol.id, permiso_id=perm.id))
-                assigned += 1
-
+    assigned = await _asignar_permisos_requeridos_a_admins(db)
     await db.commit()
     return {
         "permisos_added": added_perms,
@@ -8384,6 +8385,10 @@ async def ensure_permisos():
             if not existing.scalar_one_or_none():
                 db.add(Permiso(clave=clave, descripcion=descripcion))
                 logger.info(f"Created missing permission: {clave}")
+        await db.flush()
+        asignados = await _asignar_permisos_requeridos_a_admins(db)
+        if asignados:
+            logger.info(f"Asignados {asignados} permisos requeridos a roles administrador")
         await db.commit()
 
 @app.on_event("shutdown")

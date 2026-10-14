@@ -41,7 +41,7 @@ import { resolverImagenUrl } from '../lib/imagenes';
 const emptyItem = { producto_id: '', cantidad: '1', precio_unitario: '' };
 
 const Presupuestos = () => {
-  const { api, empresa, user, userPermisos, API_URL, token } = useApp();
+  const { api, empresa, user, hasPermission, API_URL, token } = useApp();
   const [presupuestos, setPresupuestos] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [productos, setProductos] = useState([]);
@@ -288,7 +288,7 @@ const Presupuestos = () => {
           <h1 className="text-2xl font-bold">Presupuestos</h1>
           <p className="text-muted-foreground">Cotizaciones comerciales para clientes — no afectan el stock</p>
         </div>
-        {userPermisos.includes('presupuestos.crear') && (
+        {hasPermission('presupuestos.crear') && (
           <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
               <Button>
@@ -458,7 +458,7 @@ const Presupuestos = () => {
                                   min="0"
                                   className="w-28 h-8"
                                   value={item.precio_unitario}
-                                  disabled={!userPermisos.includes('ventas.modificar_precio')}
+                                  disabled={!hasPermission('ventas.modificar_precio')}
                                   onChange={(e) => updateItem(idx, { precio_unitario: e.target.value })}
                                 />
                               </div>
@@ -681,7 +681,7 @@ const Presupuestos = () => {
                             <Download className="h-4 w-4" />
                           )}
                         </Button>
-                        {userPermisos.includes('presupuestos.eliminar') && (
+                        {hasPermission('presupuestos.eliminar') && (
                           <Button variant="ghost" size="icon" onClick={() => handleDelete(p.id, p.numero)}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
