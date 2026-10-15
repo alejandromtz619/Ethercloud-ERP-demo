@@ -4,13 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract, case
+from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract, case, literal, type_coerce, Date
 from sqlalchemy.orm import selectinload
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 import os
 import logging
@@ -7929,6 +7929,11 @@ async def bi_estadisticas_productos_excel(
 
 
 # ==================== BI AGING TANDAS ====================
+def _valor_tanda(costo_unitario, restante: int) -> float:
+    """Valor inmovilizado de una tanda redondeado a guaraníes (mitades hacia arriba, como ROUND de SQL)."""
+    return float((Decimal(costo_unitario or 0) * restante).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
 @api_router.get("/bi/aging-tandas")
 async def bi_aging_tandas(
     empresa_id: int,
@@ -7939,87 +7944,118 @@ async def bi_aging_tandas(
     db: AsyncSession = Depends(get_db)
 ):
     """Aging de tandas activas: cada lote ENTRADA con unidades restantes y sus días de permanencia.
-    El resumen cubre todos los productos; la lista viene paginada (con miles de productos,
-    devolver todas las tandas pesaba decenas de MB)."""
+    El resumen cubre todos los productos; la lista viene paginada. Los totales por producto, el
+    orden y la página se calculan en la base: traer las ~100.000 tandas a Python ocupaba el
+    proceso más de 1 s y frenaba a los demás usuarios."""
     PARAGUAY_TZ = ZoneInfo("America/Asuncion")
     hoy = datetime.now(PARAGUAY_TZ).date()
+    es_postgres = db.bind.dialect.name == "postgresql"
 
-    consulta = (
+    # Día de entrada en hora de Paraguay; sin fecha cuenta como hoy (0 días)
+    if es_postgres:
+        dia_entrada = func_sql.cast(func_sql.timezone("America/Asuncion", MovimientoStock.creado_en), Date)
+    else:  # SQLite guarda la hora local, sin zona
+        dia_entrada = func_sql.date(MovimientoStock.creado_en)
+    dia_entrada = type_coerce(func_sql.coalesce(dia_entrada, literal(hoy, Date)), Date)
+    # NULL cantidad_restante = tanda anterior al FIFO, se toma completa
+    restante = func_sql.coalesce(MovimientoStock.cantidad_restante, MovimientoStock.cantidad)
+
+    tandas_activas = [
+        Almacen.empresa_id == empresa_id,
+        Producto.empresa_id == empresa_id,
+        Producto.activo == True,
+        MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
+        or_(MovimientoStock.cantidad_restante > 0, MovimientoStock.cantidad_restante == None),
+        # Las devoluciones por anulación no son lotes: sus unidades vuelven a los lotes de origen
+        or_(MovimientoStock.referencia_tipo == None, MovimientoStock.referencia_tipo != "ANULACION_VENTA"),
+    ]
+    por_producto = (
         select(
-            MovimientoStock.id.label("tanda_id"),
-            MovimientoStock.producto_id,
+            MovimientoStock.producto_id.label("producto_id"),
             Producto.nombre.label("producto_nombre"),
-            MovimientoStock.cantidad.label("cantidad_original"),
-            MovimientoStock.cantidad_restante,
-            MovimientoStock.costo_unitario,
-            MovimientoStock.almacen_id,
-            Almacen.nombre.label("almacen_nombre"),
-            MovimientoStock.proveedor_id,
-            Proveedor.nombre.label("proveedor_nombre"),
-            MovimientoStock.creado_en,
-            MovimientoStock.notas,
+            func_sql.count().label("num_tandas"),
+            func_sql.min(dia_entrada).label("primera_entrada"),
+            func_sql.max(dia_entrada).label("ultima_entrada"),
+            func_sql.sum(restante).label("restante"),
+            func_sql.sum(func_sql.round(func_sql.coalesce(MovimientoStock.costo_unitario, 0) * restante)).label("valor"),
         )
         .join(Producto, MovimientoStock.producto_id == Producto.id)
         .join(Almacen, MovimientoStock.almacen_id == Almacen.id)
-        .outerjoin(Proveedor, MovimientoStock.proveedor_id == Proveedor.id)
-        .where(
-            Almacen.empresa_id == empresa_id,
-            Producto.empresa_id == empresa_id,
-            Producto.activo == True,
-            MovimientoStock.tipo == TipoMovimientoStock.ENTRADA,
-            # Include batches with remaining units OR NULL (pre-FIFO batches treated as fully active)
-            or_(
-                MovimientoStock.cantidad_restante > 0,
-                MovimientoStock.cantidad_restante == None,
-            ),
-            # Las devoluciones por anulación no son lotes: sus unidades vuelven a los lotes de origen
-            or_(
-                MovimientoStock.referencia_tipo == None,
-                MovimientoStock.referencia_tipo != "ANULACION_VENTA",
-            ),
+        .where(*tandas_activas)
+        .group_by(MovimientoStock.producto_id, Producto.nombre)
+        .subquery()
+    )
+
+    resumen = (await db.execute(select(
+        func_sql.count(),
+        func_sql.coalesce(func_sql.sum(por_producto.c.num_tandas), 0),
+        func_sql.coalesce(func_sql.sum(por_producto.c.valor), 0),
+    ))).one()
+
+    filtro = []
+    if q and q.strip():
+        filtro.append(por_producto.c.producto_nombre.ilike(_patron_contiene(q), escape='\\'))
+    total_filtrados = resumen[0] if not filtro else (
+        await db.execute(select(func_sql.count()).select_from(por_producto).where(*filtro))
+    ).scalar()
+
+    # Empates por producto_id. "nombre" compara por código de carácter, como sorted() de Python.
+    criterios = {
+        "mas_antiguo": por_producto.c.primera_entrada.asc(),
+        "mas_nuevo": por_producto.c.ultima_entrada.desc(),
+        "mayor_valor": por_producto.c.valor.desc(),
+        "nombre": func_sql.lower(por_producto.c.producto_nombre).collate("C" if es_postgres else "BINARY"),
+    }
+    pagina = (await db.execute(
+        select(por_producto)
+        .where(*filtro)
+        .order_by(criterios.get(orden, criterios["mas_antiguo"]), por_producto.c.producto_id)
+        .limit(limit).offset(offset)
+    )).all()
+    ids = [p.producto_id for p in pagina]
+
+    # Detalle de tandas y stock real sólo de los productos de la página
+    tandas_por_producto = defaultdict(list)
+    stock_real_map = {}
+    if ids:
+        tandas = await db.execute(
+            select(
+                MovimientoStock.id.label("tanda_id"),
+                MovimientoStock.producto_id,
+                MovimientoStock.cantidad.label("cantidad_original"),
+                MovimientoStock.cantidad_restante,
+                MovimientoStock.costo_unitario,
+                Almacen.nombre.label("almacen_nombre"),
+                Proveedor.nombre.label("proveedor_nombre"),
+                MovimientoStock.creado_en,
+                MovimientoStock.notas,
+            )
+            .join(Producto, MovimientoStock.producto_id == Producto.id)
+            .join(Almacen, MovimientoStock.almacen_id == Almacen.id)
+            .outerjoin(Proveedor, MovimientoStock.proveedor_id == Proveedor.id)
+            .where(*tandas_activas, MovimientoStock.producto_id.in_(ids))
+            .order_by(MovimientoStock.producto_id, MovimientoStock.creado_en.asc())
         )
-        .order_by(MovimientoStock.producto_id, MovimientoStock.creado_en.asc())
-    )
+        for row in tandas.all():
+            tandas_por_producto[row.producto_id].append(row)
 
-    result = await db.execute(consulta)
-    rows = result.all()
+        # Stock real por producto (StockActual) para detectar diferencias con el FIFO
+        stock_real_r = await db.execute(
+            select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_real"))
+            .join(Almacen, StockActual.almacen_id == Almacen.id)
+            .where(Almacen.empresa_id == empresa_id, StockActual.producto_id.in_(ids))
+            .group_by(StockActual.producto_id)
+        )
+        stock_real_map = {r.producto_id: int(r.stock_real or 0) for r in stock_real_r.all()}
 
-    # Real stock per product (from StockActual) to detect FIFO vs actual discrepancies
-    stock_real_q = (
-        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_real"))
-        .join(Almacen, StockActual.almacen_id == Almacen.id)
-        .where(Almacen.empresa_id == empresa_id)
-        .group_by(StockActual.producto_id)
-    )
-    stock_real_r = await db.execute(stock_real_q)
-    stock_real_map = {r.producto_id: int(r.stock_real or 0) for r in stock_real_r.all()}
-
-    # Una pasada sobre las tandas: agregados por producto, y las filas guardadas para armar el
-    # detalle sólo de los productos de la página (armar un dict por cada una de las ~100.000
-    # tandas costaba más de 1 s y después se descartaban casi todas).
-    resumenes: dict = {}
-    for row in rows:
+    def _tanda(row):
         if row.creado_en:
-            entrada_date = row.creado_en.date() if hasattr(row.creado_en, "date") else row.creado_en
-            dias = (hoy - entrada_date).days
+            fecha = row.creado_en.astimezone(PARAGUAY_TZ) if row.creado_en.tzinfo else row.creado_en
+            dias = (hoy - fecha.date()).days
         else:
             dias = 0
         original = int(row.cantidad_original or 0)
-        # NULL cantidad_restante = pre-FIFO batch, treat as fully remaining
         restante = int(row.cantidad_restante) if row.cantidad_restante is not None else original
-        valor = round(float(row.costo_unitario or 0) * restante, 0)
-        r = resumenes.get(row.producto_id)
-        if r is None:
-            r = resumenes[row.producto_id] = {
-                "nombre": row.producto_nombre, "filas": [], "max": dias, "min": dias, "valor": 0, "restante": 0,
-            }
-        r["filas"].append((row, dias, original, restante, valor))
-        r["max"] = max(r["max"], dias)
-        r["min"] = min(r["min"], dias)
-        r["valor"] += valor
-        r["restante"] += restante
-
-    def _tanda(row, dias, original, restante, valor):
         return {
             "tanda_id": row.tanda_id,
             "fecha_entrada": row.creado_en.isoformat() if row.creado_en else None,
@@ -8028,7 +8064,7 @@ async def bi_aging_tandas(
             "cantidad_restante": restante,
             "porcentaje_consumido": round((1 - restante / original) * 100, 1) if original > 0 else 0.0,
             "costo_unitario": float(row.costo_unitario or 0),
-            "valor_inmovilizado": valor,
+            "valor_inmovilizado": _valor_tanda(row.costo_unitario, restante),
             "almacen": row.almacen_nombre,
             "proveedor": row.proveedor_nombre or "Sin proveedor",
             "notas": row.notas,
@@ -8036,50 +8072,36 @@ async def bi_aging_tandas(
         }
 
     productos = []
-    for pid, r in resumenes.items():
-        stock_real = stock_real_map.get(pid, r["restante"])
-        fifo_diferencia = r["restante"] - stock_real
+    for p in pagina:
+        restante_total = int(p.restante or 0)
+        stock_real = stock_real_map.get(p.producto_id, restante_total)
+        fifo_diferencia = restante_total - stock_real
         productos.append({
-            "producto_id": pid,
-            "producto_nombre": r["nombre"],
-            "num_tandas": len(r["filas"]),
-            "dias_aging_max": r["max"],
-            "dias_aging_min": r["min"],
-            "total_unidades_restantes": r["restante"],
+            "producto_id": p.producto_id,
+            "producto_nombre": p.producto_nombre,
+            "num_tandas": p.num_tandas,
+            "dias_aging_max": (hoy - p.primera_entrada).days,
+            "dias_aging_min": (hoy - p.ultima_entrada).days,
+            "total_unidades_restantes": restante_total,
             "stock_real": stock_real,
             "fifo_concuerda": abs(fifo_diferencia) <= 1,
             "fifo_diferencia": fifo_diferencia,
-            "valor_total_inmovilizado": r["valor"],
+            "valor_total_inmovilizado": float(p.valor or 0),
+            "tandas": [_tanda(t) for t in tandas_por_producto[p.producto_id]],
         })
-
-    sort_map = {
-        "mas_antiguo": lambda x: -x["dias_aging_max"],
-        "mas_nuevo": lambda x: x["dias_aging_min"],
-        "mayor_valor": lambda x: -x["valor_total_inmovilizado"],
-        "nombre": lambda x: x["producto_nombre"].lower(),
-    }
-    productos.sort(key=sort_map.get(orden, sort_map["mas_antiguo"]))
-
-    filtrados = productos
-    if q and q.strip():
-        texto = q.strip().lower()
-        filtrados = [p for p in productos if texto in p["producto_nombre"].lower()]
 
     return {
         "orden": orden,
         "fecha_calculo": hoy.isoformat(),
         "resumen": {
-            "productos_activos_con_stock": len(productos),
-            "total_tandas_activas": sum(p["num_tandas"] for p in productos),
-            "valor_stock_activo": sum(p["valor_total_inmovilizado"] for p in productos),
+            "productos_activos_con_stock": resumen[0],
+            "total_tandas_activas": int(resumen[1]),
+            "valor_stock_activo": float(resumen[2]),
         },
-        "total_productos": len(filtrados),
+        "total_productos": total_filtrados,
         "limit": limit,
         "offset": offset,
-        "productos": [
-            {**p, "tandas": [_tanda(*f) for f in resumenes[p["producto_id"]]["filas"]]}
-            for p in filtrados[offset:offset + limit]
-        ],
+        "productos": productos,
     }
 
 

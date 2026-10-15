@@ -187,3 +187,46 @@ def test_exceso_limita_listas_con_resumen_completo(client, admin, datos):
     assert recortado["sin_ventas_recientes"] == completo["sin_ventas_recientes"][:1]
     assert recortado["exceso_stock"] == completo["exceso_stock"][:1]
     assert completo["resumen"]["productos_sin_ventas"] == len(completo["sin_ventas_recientes"])
+
+
+def test_aging_totales_por_producto(client, admin, datos):
+    """Tandas sin FIFO (restante NULL), sin fecha y con costo con decimales: los totales que
+    calcula la base coinciden con el detalle de cada tanda."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    from sqlalchemy import text
+    import server
+
+    prod = client.post("/api/productos", headers=admin, json={
+        "empresa_id": 1, "nombre": f"{PREFIJO} Aging Sellador", "precio_venta": 10000, "precio_costo": 6000}).json()
+    almacen = _buscar(client, admin, "/api/stock/buscar", nombre=PREFIJO)["items"][0]["almacen_id"]
+    r = client.post("/api/stock/entrada", headers=admin, json={
+        "producto_id": prod["id"], "almacen_id": almacen, "tipo": "ENTRADA", "cantidad": 5, "costo_unitario": 6000})
+    assert r.status_code == 200, r.text
+    hace_10_dias = datetime.now(ZoneInfo("America/Asuncion")) - timedelta(days=10)
+
+    async def insertar():
+        async with server.engine.begin() as conn:
+            await conn.execute(text(
+                "INSERT INTO movimientos_stock (producto_id, almacen_id, tipo, cantidad, cantidad_restante, costo_unitario, creado_en) "
+                "VALUES (:p, :a, 'ENTRADA', 3, NULL, 2.5, :f), (:p, :a, 'ENTRADA', 2, 2, 1000, NULL)"),
+                {"p": prod["id"], "a": almacen, "f": hace_10_dias.strftime("%Y-%m-%d %H:%M:%S.%f")})
+    client.portal.call(insertar)
+
+    pagina = _buscar(client, admin, "/api/bi/aging-tandas", q=f"{PREFIJO} aging")
+    assert pagina["total_productos"] == 1
+    p = pagina["productos"][0]
+    assert sorted((t["dias_aging"], t["cantidad_restante"], t["valor_inmovilizado"], t["sin_fifo"])
+                  for t in p["tandas"]) == [(0, 2, 2000, False), (0, 5, 30000, False), (10, 3, 8, True)]
+    assert (p["num_tandas"], p["dias_aging_max"], p["dias_aging_min"]) == (3, 10, 0)
+    assert p["total_unidades_restantes"] == 10
+    assert p["valor_total_inmovilizado"] == sum(t["valor_inmovilizado"] for t in p["tandas"]) == 32008
+    assert (p["stock_real"], p["fifo_diferencia"], p["fifo_concuerda"]) == (5, 5, False)
+
+    completo = _buscar(client, admin, "/api/bi/aging-tandas", limit=1000)
+    for orden, clave, invertido in (("mas_antiguo", "dias_aging_max", True), ("mas_nuevo", "dias_aging_min", False),
+                                    ("mayor_valor", "valor_total_inmovilizado", True)):
+        lista = _buscar(client, admin, "/api/bi/aging-tandas", orden=orden, limit=1000)["productos"]
+        assert [x[clave] for x in lista] == sorted((x[clave] for x in lista), reverse=invertido)
+    assert completo["resumen"]["valor_stock_activo"] == sum(x["valor_total_inmovilizado"] for x in completo["productos"])
+    assert completo["resumen"]["total_tandas_activas"] == sum(x["num_tandas"] for x in completo["productos"])
