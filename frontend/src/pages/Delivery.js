@@ -42,10 +42,15 @@ const estadoColors = {
   CANCELADO: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 border-red-300'
 };
 
+const ENTREGADAS_POR_PAGINA = 50;
+
 const Delivery = () => {
   const { api, empresa, hasPermission } = useApp();
   const [entregas, setEntregas] = useState([]);
-  const [vehiculos, setVehiculos] = useState([]);
+  // Las entregadas (el histórico) se piden de a páginas; pendientes y en camino, completas
+  const [hayMasEntregadas, setHayMasEntregadas] = useState(false);
+  const [cargandoMas, setCargandoMas] = useState(false);
+const [vehiculos, setVehiculos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   
@@ -71,23 +76,36 @@ const Delivery = () => {
     estado: 'all'
   });
 
+  const urlEntregas = (estado, offset = 0) => {
+    let url = `/entregas?empresa_id=${empresa.id}&estado=${estado}`;
+    if (filtros.fechaDesde) url += `&fecha_desde=${filtros.fechaDesde}`;
+    if (filtros.fechaHasta) url += `&fecha_hasta=${filtros.fechaHasta}`;
+    if (filtros.vehiculoId && filtros.vehiculoId !== 'all') url += `&vehiculo_id=${filtros.vehiculoId}`;
+    if (filtros.responsableId && filtros.responsableId !== 'all') url += `&responsable_id=${filtros.responsableId}`;
+    if (estado === 'ENTREGADO') url += `&limit=${ENTREGADAS_POR_PAGINA}&offset=${offset}`;
+    return url;
+  };
+
+  // Estados que muestra la pantalla (las canceladas no tienen columna)
+  const estadosVisibles = () => (
+    filtros.estado && filtros.estado !== 'all'
+      ? [filtros.estado].filter(e => e !== 'CANCELADO')
+      : ['PENDIENTE', 'EN_CAMINO', 'ENTREGADO']
+  );
+
   const fetchData = async () => {
     if (!empresa?.id) return;
     try {
-      let url = `/entregas?empresa_id=${empresa.id}`;
-      if (filtros.fechaDesde) url += `&fecha_desde=${filtros.fechaDesde}`;
-      if (filtros.fechaHasta) url += `&fecha_hasta=${filtros.fechaHasta}`;
-      if (filtros.vehiculoId && filtros.vehiculoId !== 'all') url += `&vehiculo_id=${filtros.vehiculoId}`;
-      if (filtros.responsableId && filtros.responsableId !== 'all') url += `&responsable_id=${filtros.responsableId}`;
-      if (filtros.estado && filtros.estado !== 'all') url += `&estado=${filtros.estado}`;
-      
-      const [entregasData, vehiculosData, usuariosData] = await Promise.all([
-        api(url),
+      const estados = estadosVisibles();
+      const [porEstado, vehiculosData, usuariosData] = await Promise.all([
+        Promise.all(estados.map(e => api(urlEntregas(e)))),
         api(`/vehiculos?empresa_id=${empresa.id}`),
         api(`/usuarios?empresa_id=${empresa.id}`)
       ]);
-      
-      setEntregas(entregasData);
+      const entregadas = porEstado[estados.indexOf('ENTREGADO')] || [];
+      setHayMasEntregadas(entregadas.length === ENTREGADAS_POR_PAGINA);
+
+      setEntregas(porEstado.flat());
       setVehiculos(vehiculosData);
       setUsuarios(usuariosData);
     } catch (e) {
@@ -100,6 +118,20 @@ const Delivery = () => {
   useEffect(() => {
     fetchData();
   }, [empresa?.id, filtros]);
+
+  const cargarMasEntregadas = async () => {
+    setCargandoMas(true);
+    try {
+      const yaCargadas = entregas.filter(e => e.estado === 'ENTREGADO').length;
+      const mas = await api(urlEntregas('ENTREGADO', yaCargadas));
+      setEntregas(prev => [...prev, ...mas]);
+      setHayMasEntregadas(mas.length === ENTREGADAS_POR_PAGINA);
+    } catch (e) {
+      toast.error('Error al cargar entregas');
+    } finally {
+      setCargandoMas(false);
+    }
+  };
 
   const handleCardClick = async (entrega) => {
     setEntregaSeleccionada(entrega);
@@ -397,7 +429,7 @@ const Delivery = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Truck className="h-5 w-5 text-green-600" />
-              Entregados ({entregasFinalizadas.length})
+              Entregados ({entregasFinalizadas.length}{hayMasEntregadas ? '+' : ''})
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -426,6 +458,14 @@ const Delivery = () => {
                 </Card>
               ))}
             </div>
+            {hayMasEntregadas && (
+              <div className="flex justify-center pt-4">
+                <Button size="sm" variant="outline" onClick={cargarMasEntregadas} disabled={cargandoMas} className="gap-1.5">
+                  {cargandoMas && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Cargar más
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

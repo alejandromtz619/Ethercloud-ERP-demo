@@ -31,13 +31,12 @@ import {
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import ProductoCombobox from '../components/ProductoCombobox';
+import ClienteCombobox from '../components/ClienteCombobox';
 
 const Reportes = () => {
   const { empresa, API_URL, token, api } = useApp();
   const [loading, setLoading] = useState({});
-  const [clientes, setClientes] = useState([]);
-  const [clientesLoading, setClientesLoading] = useState(true);
-  
+
   // Filters for Ventas report
   const [ventasFechaDesde, setVentasFechaDesde] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
@@ -48,9 +47,8 @@ const Reportes = () => {
   const [ventasTipoPago, setVentasTipoPago] = useState('TODOS');
   const [ventasEstado, setVentasEstado] = useState('CONFIRMADA');
   const [ventasClienteId, setVentasClienteId] = useState(null);
-  const [ventasClienteSearch, setVentasClienteSearch] = useState('');
-  const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
-  
+  const [ventasCliente, setVentasCliente] = useState(null);
+
   // Filters for Stock report
   const [stockSoloAlertas, setStockSoloAlertas] = useState('NO');
   
@@ -64,8 +62,7 @@ const Reportes = () => {
   const [creditosFechaHasta, setCreditosFechaHasta] = useState('');
   const [creditosEstado, setCreditosEstado] = useState('PENDIENTE');
   const [creditosClienteId, setCreditosClienteId] = useState(null);
-  const [creditosClienteSearch, setCreditosClienteSearch] = useState('');
-  const [creditosClientePopoverOpen, setCreditosClientePopoverOpen] = useState(false);
+  const [creditosCliente, setCreditosCliente] = useState(null);
 
   // Filters for Venta Items report
   const [itemsFechaDesde, setItemsFechaDesde] = useState('');
@@ -74,27 +71,10 @@ const Reportes = () => {
   const [itemsProductoId, setItemsProductoId] = useState(null);
   const [itemsProducto, setItemsProducto] = useState(null);
   const [itemsClienteId, setItemsClienteId] = useState(null);
-  const [itemsClienteSearch, setItemsClienteSearch] = useState('');
-  const [itemsClientePopoverOpen, setItemsClientePopoverOpen] = useState(false);
+  const [itemsCliente, setItemsCliente] = useState(null);
 
   // Data for Venta Items report
   const [categorias, setCategorias] = useState([]);
-
-  // Load clientes
-  useEffect(() => {
-    const fetchClientes = async () => {
-      if (!empresa?.id) return;
-      try {
-        const data = await api(`/clientes?empresa_id=${empresa.id}`);
-        setClientes(data);
-      } catch (e) {
-        console.error('Error loading clientes:', e);
-      } finally {
-        setClientesLoading(false);
-      }
-    };
-    fetchClientes();
-  }, [empresa?.id, api]);
 
   // Load categorias for Venta Items report (el producto se busca en el servidor)
   useEffect(() => {
@@ -111,48 +91,15 @@ const Reportes = () => {
   }, [empresa?.id, api]);
 
   // Get selected cliente
-  const selectedCliente = ventasClienteId ? clientes.find(c => c.id === ventasClienteId) : null;
+  const selectedCliente = ventasClienteId ? ventasCliente : null;
 
   // Get selected creditos cliente
-  const selectedCreditosCliente = creditosClienteId ? clientes.find(c => c.id === creditosClienteId) : null;
-
-  // Filter creditos clientes by search
-  const filteredCreditosClientes = clientes.filter(c => {
-    const s = creditosClienteSearch.toLowerCase();
-    return (
-      c.nombre.toLowerCase().includes(s) ||
-      (c.apellido && c.apellido.toLowerCase().includes(s)) ||
-      c.id.toString() === creditosClienteSearch ||
-      (c.ruc && c.ruc.toLowerCase().includes(s))
-    );
-  });
+  const selectedCreditosCliente = creditosClienteId ? creditosCliente : null;
 
   // Get selected items report values
   const selectedItemsProducto = itemsProductoId ? itemsProducto : null;
-  const selectedItemsCliente = itemsClienteId ? clientes.find(c => c.id === itemsClienteId) : null;
+  const selectedItemsCliente = itemsClienteId ? itemsCliente : null;
 
-
-  // Filter items clientes by search
-  const filteredItemsClientes = clientes.filter(c => {
-    const s = itemsClienteSearch.toLowerCase();
-    return (
-      c.nombre.toLowerCase().includes(s) ||
-      (c.apellido && c.apellido.toLowerCase().includes(s)) ||
-      c.id.toString() === itemsClienteSearch ||
-      (c.ruc && c.ruc.toLowerCase().includes(s))
-    );
-  });
-
-  // Filter clientes by search
-  const filteredClientes = clientes.filter(c => {
-    const searchLower = ventasClienteSearch.toLowerCase();
-    return (
-      c.nombre.toLowerCase().includes(searchLower) ||
-      (c.apellido && c.apellido.toLowerCase().includes(searchLower)) ||
-      c.id.toString() === ventasClienteSearch ||
-      (c.ruc && c.ruc.toLowerCase().includes(searchLower))
-    );
-  });
 
   const downloadReport = async (tipo, params = {}, format = 'pdf') => {
     if (!empresa?.id) {
@@ -504,66 +451,21 @@ const Reportes = () => {
                                   className="h-6 w-6 ml-2"
                                   onClick={() => {
                                     filter.setClienteId(null);
-                                    setVentasClienteSearch('');
+                                    setVentasCliente(null);
                                   }}
                                 >
                                   <X className="h-3 w-3" />
                                 </Button>
                               </div>
                             ) : (
-                              <Popover open={clientePopoverOpen} onOpenChange={setClientePopoverOpen}>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    role="combobox"
-                                    className="w-full justify-start text-sm h-9"
-                                  >
-                                    <Search className="mr-2 h-3 w-3" />
-                                    Buscar por ID o nombre...
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
-                                  <Command shouldFilter={false}>
-                                    <CommandInput
-                                      placeholder="ID, nombre o RUC..."
-                                      value={ventasClienteSearch}
-                                      onValueChange={setVentasClienteSearch}
-                                    />
-                                    <CommandEmpty>
-                                      {clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}
-                                    </CommandEmpty>
-                                    <CommandGroup className="max-h-64 overflow-auto">
-                                      {filteredClientes.slice(0, 50).map((cliente) => (
-                                        <CommandItem
-                                          key={cliente.id}
-                                          value={cliente.id.toString()}
-                                          onSelect={() => {
-                                            filter.setClienteId(cliente.id);
-                                            setClientePopoverOpen(false);
-                                            setVentasClienteSearch('');
-                                          }}
-                                          className="text-sm"
-                                        >
-                                          <Check
-                                            className={cn(
-                                              'mr-2 h-3 w-3',
-                                              filter.clienteId === cliente.id ? 'opacity-100' : 'opacity-0'
-                                            )}
-                                          />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="font-medium truncate">
-                                              {cliente.nombre} {cliente.apellido || ''}
-                                            </p>
-                                            <p className="text-xs text-muted-foreground truncate">
-                                              ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}
-                                            </p>
-                                          </div>
-                                        </CommandItem>
-                                      ))}
-                                    </CommandGroup>
-                                  </Command>
-                                </PopoverContent>
-                              </Popover>
+                              <ClienteCombobox
+                                value={null}
+                                onChange={(c) => { setVentasCliente(c); filter.setClienteId(c.id); }}
+                                placeholder="Buscar por ID o nombre..."
+                                className="h-9 text-sm"
+                                contentClassName="w-[min(300px,calc(100vw-2rem))]"
+                                align="start"
+                              />
                             )}
                           </div>
                         );
@@ -627,36 +529,19 @@ const Reportes = () => {
                                   <p className="font-medium truncate">{selectedItemsCliente.nombre} {selectedItemsCliente.apellido || ''}</p>
                                   <p className="text-xs text-muted-foreground truncate">ID: {selectedItemsCliente.id} | RUC: {selectedItemsCliente.ruc || 'N/A'}</p>
                                 </div>
-                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setItemsClienteId(null); setItemsClienteSearch(''); }}>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setItemsClienteId(null); setItemsCliente(null); }}>
                                   <X className="h-3 w-3" />
                                 </Button>
                               </div>
                             ) : (
-                              <Popover open={itemsClientePopoverOpen} onOpenChange={setItemsClientePopoverOpen}>
-                                <PopoverTrigger asChild>
-                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
-                                    <Search className="mr-2 h-3 w-3" />
-                                    Buscar por ID o nombre...
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
-                                  <Command shouldFilter={false}>
-                                    <CommandInput placeholder="ID, nombre o RUC..." value={itemsClienteSearch} onValueChange={setItemsClienteSearch} />
-                                    <CommandEmpty>{clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}</CommandEmpty>
-                                    <CommandGroup className="max-h-64 overflow-auto">
-                                      {filteredItemsClientes.slice(0, 50).map((cliente) => (
-                                        <CommandItem key={cliente.id} value={cliente.id.toString()} onSelect={() => { setItemsClienteId(cliente.id); setItemsClientePopoverOpen(false); setItemsClienteSearch(''); }} className="text-sm">
-                                          <Check className={cn('mr-2 h-3 w-3', itemsClienteId === cliente.id ? 'opacity-100' : 'opacity-0')} />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="font-medium truncate">{cliente.nombre} {cliente.apellido || ''}</p>
-                                            <p className="text-xs text-muted-foreground truncate">ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}</p>
-                                          </div>
-                                        </CommandItem>
-                                      ))}
-                                    </CommandGroup>
-                                  </Command>
-                                </PopoverContent>
-                              </Popover>
+                              <ClienteCombobox
+                                value={null}
+                                onChange={(c) => { setItemsCliente(c); setItemsClienteId(c.id); }}
+                                placeholder="Buscar por ID o nombre..."
+                                className="h-9 text-sm"
+                                contentClassName="w-[min(300px,calc(100vw-2rem))]"
+                                align="start"
+                              />
                             )}
                           </div>
                         );
@@ -672,36 +557,19 @@ const Reportes = () => {
                                   <p className="font-medium truncate">{selectedCreditosCliente.nombre} {selectedCreditosCliente.apellido || ''}</p>
                                   <p className="text-xs text-muted-foreground truncate">ID: {selectedCreditosCliente.id} | RUC: {selectedCreditosCliente.ruc || 'N/A'}</p>
                                 </div>
-                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setCreditosClienteId(null); setCreditosClienteSearch(''); }}>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setCreditosClienteId(null); setCreditosCliente(null); }}>
                                   <X className="h-3 w-3" />
                                 </Button>
                               </div>
                             ) : (
-                              <Popover open={creditosClientePopoverOpen} onOpenChange={setCreditosClientePopoverOpen}>
-                                <PopoverTrigger asChild>
-                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
-                                    <Search className="mr-2 h-3 w-3" />
-                                    Buscar por ID o nombre...
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
-                                  <Command shouldFilter={false}>
-                                    <CommandInput placeholder="ID, nombre o RUC..." value={creditosClienteSearch} onValueChange={setCreditosClienteSearch} />
-                                    <CommandEmpty>{clientesLoading ? 'Cargando...' : 'No se encontraron clientes'}</CommandEmpty>
-                                    <CommandGroup className="max-h-64 overflow-auto">
-                                      {filteredCreditosClientes.slice(0, 50).map((cliente) => (
-                                        <CommandItem key={cliente.id} value={cliente.id.toString()} onSelect={() => { setCreditosClienteId(cliente.id); setCreditosClientePopoverOpen(false); setCreditosClienteSearch(''); }} className="text-sm">
-                                          <Check className={cn('mr-2 h-3 w-3', creditosClienteId === cliente.id ? 'opacity-100' : 'opacity-0')} />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="font-medium truncate">{cliente.nombre} {cliente.apellido || ''}</p>
-                                            <p className="text-xs text-muted-foreground truncate">ID: {cliente.id} | RUC: {cliente.ruc || 'N/A'}</p>
-                                          </div>
-                                        </CommandItem>
-                                      ))}
-                                    </CommandGroup>
-                                  </Command>
-                                </PopoverContent>
-                              </Popover>
+                              <ClienteCombobox
+                                value={null}
+                                onChange={(c) => { setCreditosCliente(c); setCreditosClienteId(c.id); }}
+                                placeholder="Buscar por ID o nombre..."
+                                className="h-9 text-sm"
+                                contentClassName="w-[min(300px,calc(100vw-2rem))]"
+                                align="start"
+                              />
                             )}
                           </div>
                         );

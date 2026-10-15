@@ -65,7 +65,7 @@ from schemas import (
     GastoCreate, GastoResponse, GastoUpdate,
     ProductoCreate, ProductoResponse, ProductoConStock, ProductoCodigoBarraConflicto,
     MateriaLaboratorioCreate, MateriaLaboratorioUpdate, MateriaLaboratorioResponse,
-    MateriaLaboratorioPage, ProductoPagina, StockPagina,
+    MateriaLaboratorioPage, ProductoPagina, StockPagina, ClientePagina,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
     EntradaStockHistorialResponse,
@@ -712,6 +712,39 @@ async def listar_clientes(empresa_id: int, db: AsyncSession = Depends(get_db)):
         select(Cliente).where(Cliente.empresa_id == empresa_id, Cliente.estado == True)
     )
     return result.scalars().all()
+
+@api_router.get("/clientes/buscar", response_model=ClientePagina)
+async def buscar_clientes(
+    empresa_id: int,
+    q: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """Búsqueda paginada de clientes activos: q "contiene" en nombre, apellido, RUC, cédula
+    o teléfono, o ID exacto si es un número. Ordenados por nombre."""
+    filtros = [Cliente.empresa_id == empresa_id, Cliente.estado == True]
+    texto = (q or '').strip()
+    id_buscado = int(texto) if texto.isdigit() and int(texto) < 2**31 else None
+    if texto:
+        patron = _patron_contiene(texto)
+        coincide = [campo.ilike(patron, escape='\\') for campo in
+                    (Cliente.nombre, Cliente.apellido, Cliente.ruc, Cliente.cedula, Cliente.telefono)]
+        # "Juan Pérez": también nombre + apellido juntos
+        coincide.append((Cliente.nombre + ' ' + func_sql.coalesce(Cliente.apellido, '')).ilike(patron, escape='\\'))
+        if id_buscado is not None:
+            coincide.append(Cliente.id == id_buscado)
+        filtros.append(or_(*coincide))
+
+    total = await db.scalar(select(func_sql.count(Cliente.id)).where(*filtros))
+    orden = [Cliente.nombre, Cliente.apellido, Cliente.id]
+    if id_buscado is not None:
+        orden.insert(0, case((Cliente.id == id_buscado, 0), else_=1))
+    result = await db.execute(select(Cliente).where(*filtros).order_by(*orden).limit(limit).offset(offset))
+    return ClientePagina(
+        items=[ClienteResponse.model_validate(c) for c in result.scalars().all()],
+        total=total or 0, limit=limit, offset=offset,
+    )
 
 @api_router.get("/clientes/{cliente_id}", response_model=ClienteResponse)
 async def obtener_cliente(cliente_id: int, db: AsyncSession = Depends(get_db)):
@@ -3214,13 +3247,16 @@ async def listar_presupuestos(
     monto_hasta: Optional[float] = None,
     fecha_desde: Optional[str] = None,
     fecha_hasta: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
+    """Sin limit devuelve todos (compatibilidad); la pantalla pide de a páginas."""
     query = (
         select(Presupuesto, Cliente)
         .join(Cliente, Presupuesto.cliente_id == Cliente.id)
         .where(Presupuesto.empresa_id == empresa_id)
-        .order_by(Presupuesto.creado_en.desc())
+        .order_by(Presupuesto.creado_en.desc(), Presupuesto.id.desc())
     )
 
     if numero:
@@ -3240,6 +3276,8 @@ async def listar_presupuestos(
         query = query.where(Presupuesto.creado_en >= datetime.fromisoformat(fecha_desde))
     if fecha_hasta:
         query = query.where(Presupuesto.creado_en < datetime.fromisoformat(fecha_hasta) + timedelta(days=1))
+    if limit:
+        query = query.limit(limit).offset(offset)
 
     result = await db.execute(query)
     respuesta = []
@@ -4630,8 +4668,11 @@ async def listar_entregas(
     vehiculo_id: Optional[int] = None,
     responsable_id: Optional[int] = None,
     estado: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
+    """Sin limit devuelve todas (compatibilidad); la pantalla pide de a páginas."""
     query = (
         select(Entrega, Venta, Cliente, Vehiculo, Usuario)
         .join(Venta, Entrega.venta_id == Venta.id)
@@ -4652,7 +4693,10 @@ async def listar_entregas(
     if estado:
         query = query.where(Entrega.estado == EstadoEntrega(estado))
     
-    result = await db.execute(query.order_by(Entrega.id.desc()))
+    query = query.order_by(Entrega.id.desc())
+    if limit:
+        query = query.limit(limit).offset(offset)
+    result = await db.execute(query)
     rows = result.all()
     items_por_venta = await _items_por_venta(db, {venta.id for _, venta, _, _, _ in rows})
     entregas = []

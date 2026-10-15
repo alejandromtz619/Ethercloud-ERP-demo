@@ -39,6 +39,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { resolverImagenUrl } from '../lib/imagenes';
+import ClienteCombobox from '../components/ClienteCombobox';
 import PrintModal from '../components/PrintModal';
 
 const PRODUCTOS_POR_BUSQUEDA = 50;
@@ -54,8 +55,9 @@ const Ventas = () => {
   const [isEditMode, setIsEditMode] = useState(false);
   
   // State
-  const [clientes, setClientes] = useState([]);
-  // Productos que muestra la grilla: búsqueda paginada en el servidor (GET /productos/buscar)
+  // Clientes del diálogo de selección: búsqueda en el servidor (GET /clientes/buscar)
+  const [clientesResultado, setClientesResultado] = useState({ items: [], total: 0 });
+// Productos que muestra la grilla: búsqueda paginada en el servidor (GET /productos/buscar)
   const [productosResultado, setProductosResultado] = useState({ items: [], total: 0 });
   const [materias, setMaterias] = useState([]);
   const [searchMaterias, setSearchMaterias] = useState('');
@@ -94,15 +96,13 @@ const Ventas = () => {
       if (!empresa?.id) return;
 
       try {
-        const [clientesData, materiasData, vehiculosData, usuariosData] = await Promise.all([
-          api(`/clientes?empresa_id=${empresa.id}`),
+        const [materiasData, vehiculosData, usuariosData] = await Promise.all([
           api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`),
           api(`/vehiculos?empresa_id=${empresa.id}`),
           api(`/usuarios?empresa_id=${empresa.id}`)
         ]);
 
-        setClientes(clientesData);
-        setMaterias(materiasData);
+setMaterias(materiasData);
         setVehiculos(vehiculosData);
         setUsuarios(usuariosData);
       } catch (e) {
@@ -144,6 +144,26 @@ const Ventas = () => {
     return () => clearInterval(id);
   }, [refreshProductosAndMaterias]);
 
+  // Clientes del diálogo "Seleccionar Cliente": buscar en el servidor mientras está abierto
+  useEffect(() => {
+    if (!clienteDialogOpen || !empresa?.id) return undefined;
+    let vigente = true;
+    const t = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ empresa_id: empresa.id, limit: 30 });
+        if (searchCliente.trim()) params.set('q', searchCliente.trim());
+        const data = await api(`/clientes/buscar?${params}`);
+        if (vigente) setClientesResultado(data);
+      } catch (e) {
+        if (vigente) toast.error('Error al buscar clientes');
+      }
+    }, searchCliente ? 250 : 0);
+    return () => {
+      vigente = false;
+      clearTimeout(t);
+    };
+  }, [clienteDialogOpen, searchCliente, empresa?.id, api]);
+
   // Buscar mientras se escribe (con un pequeño retraso para no consultar en cada tecla)
   useEffect(() => {
     searchProductoRef.current = searchProducto;
@@ -170,17 +190,17 @@ const Ventas = () => {
         setEditingVenta(venta);
         setIsEditMode(true);
         
-        // Load cliente
-        const cliente = clientes.find(c => c.id === venta.cliente_id);
-        if (cliente) setSelectedCliente(cliente);
-        
+        // Load cliente (se consulta por ID: ya no se descarga la lista completa)
+        try {
+          setSelectedCliente(await api(`/clientes/${venta.cliente_id}`));
+        } catch (_) {}
+
         // Load representante if exists
         if (venta.representante_cliente_id) {
-          const rep = clientes.find(c => c.id === venta.representante_cliente_id);
-          if (rep) {
-            setRepresentante(rep);
+          try {
+            setRepresentante(await api(`/clientes/${venta.representante_cliente_id}`));
             setIsRepresentante(true);
-          }
+          } catch (_) {}
         }
         
         // Load cart items (el costo actual del producto, para la ganancia, se consulta al servidor)
@@ -216,10 +236,8 @@ const Ventas = () => {
       }
     };
     
-    if (clientes.length > 0) {
-      loadEditVenta();
-    }
-  }, [editVentaId, empresa?.id, api, clientes, navigate]);
+    loadEditVenta();
+  }, [editVentaId, empresa?.id, api, navigate]);
 
   const addToCart = useCallback((item, type) => {
     if (!selectedCliente) {
@@ -604,11 +622,8 @@ const Ventas = () => {
   // Productos de la búsqueda actual (filtrados en el servidor)
   const filteredProductos = productosResultado.items;
 
-  // Filter clients
-  const filteredClientes = clientes.filter(c =>
-    c.nombre.toLowerCase().includes(searchCliente.toLowerCase()) ||
-    c.ruc?.toLowerCase().includes(searchCliente.toLowerCase())
-  );
+  // Clientes del diálogo (filtrados en el servidor)
+  const filteredClientes = clientesResultado.items;
 
   if (loading) {
     return (
@@ -694,7 +709,12 @@ const Ventas = () => {
                             </p>
                           </div>
                         ))}
-                        {filteredClientes.length === 0 && (
+                        {clientesResultado.total > filteredClientes.length && (
+                        <p className="text-center text-xs text-muted-foreground py-1">
+                          Mostrando {filteredClientes.length} de {clientesResultado.total.toLocaleString('es-PY')} — escriba para afinar la búsqueda
+                        </p>
+                      )}
+                      {filteredClientes.length === 0 && (
                           <div className="text-center py-8">
                             <p className="text-muted-foreground mb-4">No se encontraron clientes</p>
                             <Button onClick={() => navigate('/clientes')}>
@@ -723,21 +743,12 @@ const Ventas = () => {
                 </div>
                 
                 {isRepresentante && (
-                  <Select 
-                    value={representante?.id?.toString() || ''} 
-                    onValueChange={(val) => setRepresentante(clientes.find(c => c.id === parseInt(val)))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar cliente representado" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clientes.filter(c => c.id !== selectedCliente.id).map((c) => (
-                        <SelectItem key={c.id} value={c.id.toString()}>
-                          {c.nombre} {c.apellido}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <ClienteCombobox
+                    value={representante}
+                    onChange={setRepresentante}
+                    excluir={(c) => c.id === selectedCliente.id}
+                    placeholder="Seleccionar cliente representado"
+                  />
                 )}
               </div>
             )}

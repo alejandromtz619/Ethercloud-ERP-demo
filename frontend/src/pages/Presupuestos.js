@@ -38,15 +38,18 @@ import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { resolverImagenUrl } from '../lib/imagenes';
 import ProductoCombobox from '../components/ProductoCombobox';
+import ClienteCombobox from '../components/ClienteCombobox';
 
 // `producto` guarda el producto elegido (lo devuelve el buscador del servidor)
 const emptyItem = { producto_id: '', producto: null, cantidad: '1', precio_unitario: '' };
 
+const PRESUPUESTOS_POR_PAGINA = 100;
+
 const Presupuestos = () => {
   const { api, empresa, user, hasPermission, API_URL, token } = useApp();
   const [presupuestos, setPresupuestos] = useState([]);
-  const [clientes, setClientes] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [hayMas, setHayMas] = useState(false);
+const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
@@ -63,10 +66,9 @@ const Presupuestos = () => {
   const [clienteId, setClienteId] = useState('');
   const [notas, setNotas] = useState('');
   const [items, setItems] = useState([{ ...emptyItem }]);
-  const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
-  const [clienteSearch, setClienteSearch] = useState('');
-  const [filtroClientePopoverOpen, setFiltroClientePopoverOpen] = useState(false);
-  const [filtroClienteSearch, setFiltroClienteSearch] = useState('');
+  // Clientes elegidos (se buscan en el servidor, ya no se descarga la lista completa)
+  const [clienteSel, setClienteSel] = useState(null);
+  const [filtroCliente, setFiltroCliente] = useState(null);
 
   // Visor de PDF en el sistema
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -74,21 +76,12 @@ const Presupuestos = () => {
   const [viewerUrl, setViewerUrl] = useState(null);
   const [viewerNumero, setViewerNumero] = useState('');
 
-  const fetchBase = async () => {
-    if (!empresa?.id) return;
-    try {
-      const clientesData = await api(`/clientes?empresa_id=${empresa.id}`);
-      setClientes(clientesData);
-    } catch (e) {
-      toast.error('Error al cargar datos');
-    }
-  };
-
-  const fetchPresupuestos = async () => {
+  // La lista se pide de a páginas: con miles de presupuestos, dibujarlos todos trababa la pantalla
+  const fetchPresupuestos = async (offset = 0) => {
     if (!empresa?.id) return;
     setLoading(true);
     try {
-      const params = new URLSearchParams({ empresa_id: empresa.id });
+      const params = new URLSearchParams({ empresa_id: empresa.id, limit: PRESUPUESTOS_POR_PAGINA, offset });
       if (filtroNumero) params.append('numero', filtroNumero);
       if (filtroClienteId) params.append('cliente_id', filtroClienteId);
       if (filtroMontoDesde) params.append('monto_desde', filtroMontoDesde);
@@ -96,7 +89,8 @@ const Presupuestos = () => {
       if (filtroFechaDesde) params.append('fecha_desde', filtroFechaDesde);
       if (filtroFechaHasta) params.append('fecha_hasta', filtroFechaHasta);
       const data = await api(`/presupuestos?${params.toString()}`);
-      setPresupuestos(data);
+      setPresupuestos(prev => (offset > 0 ? [...prev, ...data] : data));
+      setHayMas(data.length === PRESUPUESTOS_POR_PAGINA);
     } catch (e) {
       toast.error('Error al cargar presupuestos');
     } finally {
@@ -105,18 +99,14 @@ const Presupuestos = () => {
   };
 
   useEffect(() => {
-    fetchBase();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresa?.id]);
-
-  useEffect(() => {
     fetchPresupuestos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresa?.id, filtroNumero, filtroClienteId, filtroMontoDesde, filtroMontoHasta, filtroFechaDesde, filtroFechaHasta]);
 
   const resetForm = () => {
     setClienteId('');
-    setNotas('');
+    setClienteSel(null);
+setNotas('');
     setItems([{ ...emptyItem }]);
   };
 
@@ -257,7 +247,8 @@ const Presupuestos = () => {
   const limpiarFiltros = () => {
     setFiltroNumero('');
     setFiltroClienteId('');
-    setFiltroMontoDesde('');
+    setFiltroCliente(null);
+setFiltroMontoDesde('');
     setFiltroMontoHasta('');
     setFiltroFechaDesde('');
     setFiltroFechaHasta('');
@@ -294,61 +285,15 @@ const Presupuestos = () => {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <Label>Cliente *</Label>
-                  <Popover open={clientePopoverOpen} onOpenChange={setClientePopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={clientePopoverOpen}
-                        className="w-full justify-between font-normal"
-                      >
-                        {clienteId
-                          ? (() => {
-                              const c = clientes.find((c) => c.id.toString() === clienteId);
-                              return c ? `${c.nombre} ${c.apellido || ''}`.trim() : 'Buscar cliente...';
-                            })()
-                          : "Buscar cliente..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[420px] p-0">
-                      <Command shouldFilter={false}>
-                        <CommandInput
-                          placeholder="Buscar por nombre..."
-                          value={clienteSearch}
-                          onValueChange={setClienteSearch}
-                        />
-                        <CommandEmpty>No se encontró el cliente.</CommandEmpty>
-                        <CommandGroup className="max-h-64 overflow-auto">
-                          {clientes
-                            .filter(c =>
-                              !clienteSearch ||
-                              `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(clienteSearch.toLowerCase())
-                            )
-                            .map((c) => (
-                              <CommandItem
-                                key={c.id}
-                                value={`${c.nombre} ${c.apellido || ''}`}
-                                onSelect={() => {
-                                  setClienteId(c.id.toString());
-                                  setClientePopoverOpen(false);
-                                  setClienteSearch('');
-                                }}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4",
-                                    clienteId === c.id.toString() ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                {c.nombre} {c.apellido || ''}
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                  <ClienteCombobox
+                    value={clienteSel}
+                    onChange={(c) => {
+                      setClienteSel(c);
+                      setClienteId(c.id.toString());
+                    }}
+                    placeholder="Seleccionar cliente..."
+                    contentClassName="w-[420px]"
+                  />
                 </div>
 
                 <div className="space-y-3">
@@ -457,7 +402,7 @@ const Presupuestos = () => {
           <div className="flex flex-col gap-3">
             <CardTitle className="flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5" />
-              Presupuestos ({presupuestos.length})
+              Presupuestos ({presupuestos.length}{hayMas ? '+' : ''})
             </CardTitle>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground font-medium">Filtros:</span>
@@ -467,74 +412,33 @@ const Presupuestos = () => {
                 value={filtroNumero}
                 onChange={(e) => setFiltroNumero(e.target.value)}
               />
-              <Popover open={filtroClientePopoverOpen} onOpenChange={setFiltroClientePopoverOpen}>
-                <PopoverTrigger asChild>
+              <div className="flex items-center gap-1">
+                <ClienteCombobox
+                  value={filtroCliente}
+                  onChange={(c) => {
+                    setFiltroCliente(c);
+                    setFiltroClienteId(c.id.toString());
+                  }}
+                  placeholder="Todos los clientes"
+                  className="h-8 w-48 text-sm"
+                  contentClassName="w-[320px]"
+                />
+                {filtroClienteId && (
                   <Button
                     type="button"
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={filtroClientePopoverOpen}
-                    className="h-8 w-48 text-sm justify-between font-normal"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    title="Todos los clientes"
+                    onClick={() => {
+                      setFiltroClienteId('');
+                      setFiltroCliente(null);
+                    }}
                   >
-                    <span className="truncate">
-                      {filtroClienteId
-                        ? (() => {
-                            const c = clientes.find((c) => c.id.toString() === filtroClienteId);
-                            return c ? `${c.nombre} ${c.apellido || ''}`.trim() : 'Cliente';
-                          })()
-                        : 'Todos los clientes'}
-                    </span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    <X className="h-3.5 w-3.5" />
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[320px] p-0">
-                  <Command shouldFilter={false}>
-                    <CommandInput
-                      placeholder="Buscar por nombre..."
-                      value={filtroClienteSearch}
-                      onValueChange={setFiltroClienteSearch}
-                    />
-                    <CommandEmpty>No se encontró el cliente.</CommandEmpty>
-                    <CommandGroup className="max-h-64 overflow-auto">
-                      <CommandItem
-                        value="__all__"
-                        onSelect={() => {
-                          setFiltroClienteId('');
-                          setFiltroClientePopoverOpen(false);
-                          setFiltroClienteSearch('');
-                        }}
-                      >
-                        <Check className={cn("mr-2 h-4 w-4", !filtroClienteId ? "opacity-100" : "opacity-0")} />
-                        Todos los clientes
-                      </CommandItem>
-                      {clientes
-                        .filter(c =>
-                          !filtroClienteSearch ||
-                          `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(filtroClienteSearch.toLowerCase())
-                        )
-                        .map((c) => (
-                          <CommandItem
-                            key={c.id}
-                            value={`${c.nombre} ${c.apellido || ''}`}
-                            onSelect={() => {
-                              setFiltroClienteId(c.id.toString());
-                              setFiltroClientePopoverOpen(false);
-                              setFiltroClienteSearch('');
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                filtroClienteId === c.id.toString() ? "opacity-100" : "opacity-0"
-                              )}
-                            />
-                            {c.nombre} {c.apellido || ''}
-                          </CommandItem>
-                        ))}
-                    </CommandGroup>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+                )}
+              </div>
               <Input
                 type="number"
                 placeholder="Monto desde"
@@ -637,6 +541,14 @@ const Presupuestos = () => {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {hayMas && (
+            <div className="flex justify-center pt-4">
+              <Button size="sm" variant="outline" onClick={() => fetchPresupuestos(presupuestos.length)} disabled={loading} className="gap-1.5">
+                {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Cargar más
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -148,6 +148,13 @@ class ClienteResponse(ClienteBase):
     estado: bool
     creado_en: Optional[datetime] = None
 
+class ClientePagina(BaseModel):
+    """Página de clientes con el total sin paginar (búsqueda en el servidor)."""
+    items: List[ClienteResponse]
+    total: int
+    limit: int
+    offset: int
+
 class ClienteConCredito(ClienteResponse):
     credito_usado: Decimal = 0
     credito_disponible: Decimal = 0

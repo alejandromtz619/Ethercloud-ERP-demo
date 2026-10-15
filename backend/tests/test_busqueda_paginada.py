@@ -131,3 +131,50 @@ def test_totales_por_almacen(client, admin, datos):
                for t in _buscar(client, admin, "/api/stock/totales-por-almacen")}
     deposito = _buscar(client, admin, "/api/stock/buscar", nombre=PREFIJO)["items"][0]["almacen_id"]
     assert totales[deposito] == 7 + 3
+
+
+@pytest.fixture(scope="module")
+def clientes(client, admin):
+    creados = {}
+    for clave, datos_cliente in {
+        "ana": {"nombre": f"{PREFIJO}Ana", "apellido": "Benitez", "ruc": "80012345-6", "telefono": "0981111222"},
+        "luis": {"nombre": f"{PREFIJO}Luis", "apellido": "Gimenez", "cedula": "4567890"},
+        "bajo": {"nombre": f"{PREFIJO}Baja", "apellido": "Inactiva", "ruc": "80099999-1"},
+    }.items():
+        r = client.post("/api/clientes", headers=admin, json={"empresa_id": 1, **datos_cliente})
+        assert r.status_code == 200, r.text
+        creados[clave] = r.json()
+    assert client.delete(f"/api/clientes/{creados['bajo']['id']}", headers=admin).status_code == 200
+    return creados
+
+
+def test_clientes_buscar(client, admin, clientes):
+    def ids(**params):
+        return {c["id"] for c in _buscar(client, admin, "/api/clientes/buscar", **params)["items"]}
+
+    assert ids(q=PREFIJO) == {clientes["ana"]["id"], clientes["luis"]["id"]}  # sin el inactivo
+    assert ids(q="80012345") == {clientes["ana"]["id"]}                       # RUC
+    assert ids(q="4567890") == {clientes["luis"]["id"]}                       # cédula
+    assert ids(q="0981111") == {clientes["ana"]["id"]}                        # teléfono
+    assert ids(q=f"{PREFIJO}ana benitez") == {clientes["ana"]["id"]}          # nombre + apellido
+    assert _buscar(client, admin, "/api/clientes/buscar",
+                   q=str(clientes["luis"]["id"]))["items"][0]["id"] == clientes["luis"]["id"]
+    pagina = _buscar(client, admin, "/api/clientes/buscar", q=PREFIJO, limit=1)
+    assert pagina["total"] == 2 and len(pagina["items"]) == 1
+
+
+def test_presupuestos_y_entregas_paginan_sin_romper_lo_anterior(client, admin, datos, clientes):
+    for _ in range(3):
+        r = client.post("/api/presupuestos", headers=admin, json={
+            "empresa_id": 1, "cliente_id": clientes["ana"]["id"], "usuario_id": 1,
+            "items": [{"producto_id": datos["latex_blanco"]["id"], "cantidad": 1}],
+        })
+        assert r.status_code == 200, r.text
+    todos = client.get("/api/presupuestos", headers=admin,
+                       params={"empresa_id": 1, "cliente_id": clientes["ana"]["id"]}).json()
+    assert len(todos) == 3
+    pagina = client.get("/api/presupuestos", headers=admin,
+                        params={"empresa_id": 1, "cliente_id": clientes["ana"]["id"], "limit": 2, "offset": 2}).json()
+    assert [p["id"] for p in pagina] == [todos[2]["id"]]
+    r = client.get("/api/entregas", headers=admin, params={"empresa_id": 1, "limit": 5, "estado": "ENTREGADO"})
+    assert r.status_code == 200 and isinstance(r.json(), list)

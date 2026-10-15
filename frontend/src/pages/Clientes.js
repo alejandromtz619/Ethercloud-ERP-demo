@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -36,9 +36,14 @@ const formatCurrency = (val) => {
   }).format(val || 0);
 };
 
+const CLIENTES_POR_PAGINA = 100;
+
 const Clientes = () => {
   const { api, empresa, userPermisos } = useApp();
-  const [clientes, setClientes] = useState([]);
+  // Página actual del listado (GET /clientes/buscar): búsqueda y paginación en el servidor
+  const [clientesPagina, setClientesPagina] = useState({ items: [], total: 0 });
+  const [cargandoMas, setCargandoMas] = useState(false);
+  const [busquedaAplicada, setBusquedaAplicada] = useState('');
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creditoDialogOpen, setCreditoDialogOpen] = useState(false);
@@ -63,11 +68,17 @@ const Clientes = () => {
     limite_credito: '1'
   });
 
-  const fetchClientes = async () => {
+  const cargarClientes = async (offset = 0) => {
     if (!empresa?.id) return;
+    const params = new URLSearchParams({ empresa_id: empresa.id, limit: CLIENTES_POR_PAGINA, offset });
+    if (busquedaAplicada) params.set('q', busquedaAplicada);
+    const data = await api(`/clientes/buscar?${params}`);
+    setClientesPagina(prev => (offset > 0 ? { ...data, items: [...prev.items, ...data.items] } : data));
+  };
+
+  const fetchClientes = async () => {
     try {
-      const data = await api(`/clientes?empresa_id=${empresa.id}`);
-      setClientes(data);
+      await cargarClientes(0);
     } catch (e) {
       toast.error('Error al cargar clientes');
     } finally {
@@ -75,9 +86,31 @@ const Clientes = () => {
     }
   };
 
+  const cargarMas = async () => {
+    setCargandoMas(true);
+    try {
+      await cargarClientes(clientesPagina.items.length);
+    } catch (e) {
+      toast.error('Error al cargar clientes');
+    } finally {
+      setCargandoMas(false);
+    }
+  };
+
   useEffect(() => {
     fetchClientes();
-  }, [empresa?.id]);
+  }, [empresa?.id, busquedaAplicada]);
+
+  // La búsqueda se aplica con un pequeño retraso para no consultar en cada tecla
+  const primeraBusqueda = useRef(true);
+  useEffect(() => {
+    if (primeraBusqueda.current) {
+      primeraBusqueda.current = false;
+      return undefined;
+    }
+    const t = setTimeout(() => setBusquedaAplicada(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const resetForm = () => {
     setFormData({
@@ -206,11 +239,7 @@ const Clientes = () => {
     }
   };
 
-  const filteredClientes = clientes.filter(c =>
-    c.nombre.toLowerCase().includes(search.toLowerCase()) ||
-    c.ruc?.toLowerCase().includes(search.toLowerCase()) ||
-    c.telefono?.includes(search)
-  );
+  const filteredClientes = clientesPagina.items;
 
   if (loading) {
     return (
@@ -345,7 +374,7 @@ const Clientes = () => {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
-              Listado ({filteredClientes.length})
+              Listado ({clientesPagina.total.toLocaleString('es-PY')})
             </CardTitle>
             <div className="relative w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -418,6 +447,19 @@ const Clientes = () => {
               ))}
             </TableBody>
           </Table>
+          {filteredClientes.length > 0 && (
+            <div className="flex items-center justify-between gap-3 pt-4 text-xs text-muted-foreground">
+              <span>
+                Mostrando {filteredClientes.length.toLocaleString('es-PY')} de {clientesPagina.total.toLocaleString('es-PY')}
+              </span>
+              {filteredClientes.length < clientesPagina.total && (
+                <Button size="sm" variant="outline" onClick={cargarMas} disabled={cargandoMas} className="gap-1.5">
+                  {cargandoMas && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Cargar más
+                </Button>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

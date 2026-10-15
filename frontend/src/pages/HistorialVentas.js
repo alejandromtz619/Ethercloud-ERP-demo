@@ -25,6 +25,7 @@ import {
   CommandItem,
 } from '../components/ui/command';
 import { cn } from '../lib/utils';
+import ClienteCombobox, { nombreCliente } from '../components/ClienteCombobox';
 import {
   Table,
   TableBody,
@@ -67,8 +68,9 @@ const formatFechaISO = (iso) => {
 const HistorialVentas = () => {
   const { api, empresa, API_URL, token, userPermisos } = useApp();
   const [ventas, setVentas] = useState([]);
-  const [clientes, setClientes] = useState([]);
-  const [usuarios, setUsuarios] = useState([]);
+  // Cliente elegido en el filtro (se busca en el servidor, ya no se descarga la lista)
+  const [clienteFiltro, setClienteFiltro] = useState(null);
+const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedVenta, setSelectedVenta] = useState(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
@@ -90,10 +92,8 @@ const HistorialVentas = () => {
   });
   const [showFilters, setShowFilters] = useState(false);
   const [limit, setLimit] = useState(100);
-  const [clienteSearch, setClienteSearch] = useState('');
-  const [usuarioSearch, setUsuarioSearch] = useState('');
-  const [clientePopoverOpen, setClientePopoverOpen] = useState(false);
-  const [usuarioPopoverOpen, setUsuarioPopoverOpen] = useState(false);
+const [usuarioSearch, setUsuarioSearch] = useState('');
+const [usuarioPopoverOpen, setUsuarioPopoverOpen] = useState(false);
 
   const fetchVentasWithLimit = async (newLimit) => {
     setLimit(newLimit);
@@ -145,11 +145,7 @@ const HistorialVentas = () => {
   const fetchData = async () => {
     if (!empresa?.id) return;
     try {
-      const [clientesData, usuariosData] = await Promise.all([
-        api(`/clientes?empresa_id=${empresa.id}`),
-        api(`/usuarios?empresa_id=${empresa.id}`)
-      ]);
-      setClientes(clientesData);
+      const usuariosData = await api(`/usuarios?empresa_id=${empresa.id}`);
       setUsuarios(usuariosData);
     } catch (e) {
       console.error('Error fetching data:', e);
@@ -175,9 +171,9 @@ const HistorialVentas = () => {
       monto_min: '',
       monto_max: '',
     });
-    setClienteSearch('');
+    setClienteFiltro(null);
     setUsuarioSearch('');
-    setTimeout(fetchVentas, 100);
+setTimeout(fetchVentas, 100);
   };
 
   const handleViewDetail = async (venta) => {
@@ -368,57 +364,28 @@ const HistorialVentas = () => {
                 {filters.cliente_id && filters.cliente_id !== 'all' ? (
                   <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30 h-10">
                     <span className="text-sm flex-1 truncate">
-                      {(() => { const c = clientes.find(x => x.id.toString() === filters.cliente_id); return c ? `${c.nombre} ${c.apellido || ''}`.trim() : filters.cliente_id; })()}
+                      {clienteFiltro ? nombreCliente(clienteFiltro) : filters.cliente_id}
                     </span>
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground"
-                      onClick={() => { setFilters({...filters, cliente_id: ''}); setClienteSearch(''); }}
+                      onClick={() => { setFilters({...filters, cliente_id: ''}); setClienteFiltro(null); }}
                     >
                       <X className="h-3 w-3" />
                     </button>
                   </div>
                 ) : (
-                  <Popover open={clientePopoverOpen} onOpenChange={setClientePopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" role="combobox" className="w-full justify-between h-10 font-normal">
-                        <span className="text-muted-foreground">Todos los clientes</span>
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[280px] p-0" align="start">
-                      <Command>
-                        <CommandInput
-                          placeholder="Buscar cliente..."
-                          value={clienteSearch}
-                          onValueChange={setClienteSearch}
-                        />
-                        <CommandEmpty>No se encontraron clientes</CommandEmpty>
-                        <CommandGroup className="max-h-60 overflow-auto">
-                          {clientes
-                            .filter(c => {
-                              const q = clienteSearch.toLowerCase();
-                              return !q || `${c.nombre} ${c.apellido || ''}`.toLowerCase().includes(q);
-                            })
-                            .slice(0, 60)
-                            .map((c) => (
-                              <CommandItem
-                                key={c.id}
-                                value={`${c.nombre} ${c.apellido || ''}`}
-                                onSelect={() => {
-                                  setFilters({...filters, cliente_id: c.id.toString()});
-                                  setClientePopoverOpen(false);
-                                  setClienteSearch('');
-                                }}
-                              >
-                                <Check className={cn('mr-2 h-4 w-4', filters.cliente_id === c.id.toString() ? 'opacity-100' : 'opacity-0')} />
-                                {c.nombre} {c.apellido || ''}
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                  <ClienteCombobox
+                    value={null}
+                    onChange={(c) => {
+                      setClienteFiltro(c);
+                      setFilters({ ...filters, cliente_id: c.id.toString() });
+                    }}
+                    placeholder="Todos los clientes"
+                    className="h-10"
+                    contentClassName="w-[280px]"
+                    align="start"
+                  />
                 )}
               </div>
               <div>

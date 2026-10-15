@@ -30,6 +30,8 @@ const PRINT_CSS = `
   }
 `;
 
+const CLIENTES_VISIBLES = 100;
+
 const Facturas = () => {
   const { api, empresa } = useApp();
 
@@ -46,6 +48,8 @@ const Facturas = () => {
   const [submitting, setSubmitting] = useState(false);
   const [facturaImpresionData, setFacturaImpresionData] = useState(null);
   const [filtroCliente, setFiltroCliente] = useState('');
+  // Se dibujan de a 100: con miles de clientes pendientes la lista trababa la pantalla
+  const [clientesVisibles, setClientesVisibles] = useState(CLIENTES_VISIBLES);
   const [modalTipoPago, setModalTipoPago] = useState(false);
   const [limitarBoletas, setLimitarBoletas] = useState(true);
   const LIMITE_BOLETAS = 50;
@@ -238,6 +242,16 @@ const Facturas = () => {
   const hayMixto = boletasSeleccionadasArr.some((b) => b.tipo_pago !== 'CREDITO') && boletasSeleccionadasArr.some((b) => b.tipo_pago === 'CREDITO');
 
   // ── Render ─────────────────────────────────────────────────────────────────
+  const textoFiltro = filtroCliente.trim().toLowerCase();
+  const clientesFiltrados = textoFiltro
+    ? clientesPendientes.filter(c =>
+        c.nombre?.toLowerCase().includes(textoFiltro) || c.ruc?.toLowerCase().includes(textoFiltro))
+    : clientesPendientes;
+
+  useEffect(() => {
+    setClientesVisibles(CLIENTES_VISIBLES);
+  }, [filtroCliente]);
+
   return (
     <div className="space-y-6" data-testid="facturas-page">
       <div>
@@ -284,15 +298,8 @@ const Facturas = () => {
                   </div>
                 ) : (
                   <div className="divide-y">
-                    {clientesPendientes
-                      .filter((c) => {
-                        const q = filtroCliente.trim().toLowerCase();
-                        if (!q) return true;
-                        return (
-                          c.nombre?.toLowerCase().includes(q) ||
-                          c.ruc?.toLowerCase().includes(q)
-                        );
-                      })
+                    {clientesFiltrados
+                      .slice(0, clientesVisibles)
                       .map((c) => (
                       <button
                         key={c.cliente_id}
@@ -317,6 +324,14 @@ const Facturas = () => {
                         <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground shrink-0" />
                       </button>
                     ))}
+                    {clientesFiltrados.length > clientesVisibles && (
+                      <div className="flex items-center justify-between gap-2 px-4 py-3 text-xs text-muted-foreground">
+                        <span>Mostrando {clientesVisibles} de {clientesFiltrados.length.toLocaleString('es-PY')}</span>
+                        <Button size="sm" variant="outline" onClick={() => setClientesVisibles(v => v + CLIENTES_VISIBLES)}>
+                          Mostrar más
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
