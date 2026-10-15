@@ -5,23 +5,12 @@ endpoints de desarrollo desactivados y límite de intentos de login.
 Corre contra la app en memoria con una SQLite temporal (no usa red ni la API desplegada):
     pytest backend/tests/test_seguridad_rutas.py
 """
-import os
 import re
-import sys
-import tempfile
-from pathlib import Path
-
-_TMP = tempfile.mkdtemp(prefix="ethercloud-test-")
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{Path(_TMP, 'test.db').as_posix()}"
-os.environ.pop("JWT_SECRET", None)
-os.environ.pop("PERMITIR_ENDPOINTS_DESARROLLO", None)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 from fastapi.routing import APIRoute
-from fastapi.testclient import TestClient
 
-import server  # noqa: E402
+import server  # noqa: E402  (conftest.py ya preparó el entorno de prueba)
 
 # Rutas que deben responder sin token. Cualquier otra ruta /api nueva tiene que exigirlo.
 RUTAS_PUBLICAS = {
@@ -39,15 +28,6 @@ def _rutas_api():
         if isinstance(route, APIRoute) and route.path.startswith("/api"):
             for method in route.methods:
                 yield method, route.path
-
-
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(server.app) as c:
-        server.PERMITIR_ENDPOINTS_DESARROLLO = True
-        assert c.post("/api/seed").status_code == 200
-        server.PERMITIR_ENDPOINTS_DESARROLLO = False
-        yield c
 
 
 def _token(client, email, password):

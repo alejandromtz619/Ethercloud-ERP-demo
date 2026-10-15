@@ -326,6 +326,13 @@ class ProductoConStock(ProductoResponse):
     marca_nombre: Optional[str] = None
     proveedor_nombre: Optional[str] = None
 
+class ProductoPagina(BaseModel):
+    """Página de productos con el total sin paginar (búsqueda en el servidor)."""
+    items: List[ProductoConStock]
+    total: int
+    limit: int
+    offset: int
+
 class ProductoCodigoBarraConflicto(BaseModel):
     id: int
     nombre: str
@@ -393,6 +400,13 @@ class StockConDetalles(StockActualResponse):
     producto_nombre: Optional[str] = None
     producto_codigo_barra: Optional[str] = None
     almacen_nombre: Optional[str] = None
+
+class StockPagina(BaseModel):
+    """Página del inventario con el total sin paginar (búsqueda en el servidor)."""
+    items: List[StockConDetalles]
+    total: int
+    limit: int
+    offset: int
 
 # Movimiento Stock
 class MovimientoStockBase(BaseModel):

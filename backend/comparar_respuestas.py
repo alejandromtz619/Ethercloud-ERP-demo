@@ -7,6 +7,9 @@ que un backend modificado devuelva exactamente lo mismo.
     python comparar_respuestas.py comparar  --url http://localhost:8000 --dir antes/
 
 Usar contra una base de prueba (generar_datos_volumen.py) que no cambie entre las dos corridas.
+Algunas rutas del BI cuentan "las últimas N semanas" desde ahora: si entre guardar y comparar
+pasa tiempo, difieren solas. Para comparar exacto, levantar el código anterior (git worktree)
+en otro puerto y guardar/comparar uno contra otro en el mismo momento.
 """
 import argparse
 import hashlib

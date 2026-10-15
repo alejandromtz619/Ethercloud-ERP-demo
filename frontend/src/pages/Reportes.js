@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import ProductoCombobox from '../components/ProductoCombobox';
 
 const Reportes = () => {
   const { empresa, API_URL, token, api } = useApp();
@@ -71,15 +72,13 @@ const Reportes = () => {
   const [itemsFechaHasta, setItemsFechaHasta] = useState('');
   const [itemsCategoriaId, setItemsCategoriaId] = useState('todos');
   const [itemsProductoId, setItemsProductoId] = useState(null);
-  const [itemsProductoSearch, setItemsProductoSearch] = useState('');
-  const [itemsProductoPopoverOpen, setItemsProductoPopoverOpen] = useState(false);
+  const [itemsProducto, setItemsProducto] = useState(null);
   const [itemsClienteId, setItemsClienteId] = useState(null);
   const [itemsClienteSearch, setItemsClienteSearch] = useState('');
   const [itemsClientePopoverOpen, setItemsClientePopoverOpen] = useState(false);
 
   // Data for Venta Items report
   const [categorias, setCategorias] = useState([]);
-  const [productos, setProductos] = useState([]);
 
   // Load clientes
   useEffect(() => {
@@ -97,17 +96,13 @@ const Reportes = () => {
     fetchClientes();
   }, [empresa?.id, api]);
 
-  // Load categorias and productos for Venta Items report
+  // Load categorias for Venta Items report (el producto se busca en el servidor)
   useEffect(() => {
     const fetchItemsData = async () => {
       if (!empresa?.id) return;
       try {
-        const [cats, prods] = await Promise.all([
-          api(`/categorias?empresa_id=${empresa.id}`),
-          api(`/productos?empresa_id=${empresa.id}`)
-        ]);
+        const cats = await api(`/categorias?empresa_id=${empresa.id}`);
         setCategorias(cats);
-        setProductos(prods);
       } catch (e) {
         console.error('Error loading items report data:', e);
       }
@@ -133,17 +128,9 @@ const Reportes = () => {
   });
 
   // Get selected items report values
-  const selectedItemsProducto = itemsProductoId ? productos.find(p => p.id === itemsProductoId) : null;
+  const selectedItemsProducto = itemsProductoId ? itemsProducto : null;
   const selectedItemsCliente = itemsClienteId ? clientes.find(c => c.id === itemsClienteId) : null;
 
-  // Filter productos by search
-  const filteredProductos = productos.filter(p => {
-    const s = itemsProductoSearch.toLowerCase();
-    return (
-      p.nombre.toLowerCase().includes(s) ||
-      (p.codigo_barra && p.codigo_barra.toLowerCase().includes(s))
-    );
-  });
 
   // Filter items clientes by search
   const filteredItemsClientes = clientes.filter(c => {
@@ -613,36 +600,18 @@ const Reportes = () => {
                                     <p className="text-xs text-muted-foreground truncate">Cód: {selectedItemsProducto.codigo_barra}</p>
                                   )}
                                 </div>
-                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setItemsProductoId(null); setItemsProductoSearch(''); }}>
+                                <Button variant="ghost" size="icon" className="h-6 w-6 ml-2" onClick={() => { setItemsProductoId(null); setItemsProducto(null); }}>
                                   <X className="h-3 w-3" />
                                 </Button>
                               </div>
                             ) : (
-                              <Popover open={itemsProductoPopoverOpen} onOpenChange={setItemsProductoPopoverOpen}>
-                                <PopoverTrigger asChild>
-                                  <Button variant="outline" role="combobox" className="w-full justify-start text-sm h-9">
-                                    <Search className="mr-2 h-3 w-3" />
-                                    Buscar por nombre...
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[min(300px,calc(100vw-2rem))] p-0" align="start">
-                                  <Command shouldFilter={false}>
-                                    <CommandInput placeholder="Nombre o código..." value={itemsProductoSearch} onValueChange={setItemsProductoSearch} />
-                                    <CommandEmpty>No se encontraron productos</CommandEmpty>
-                                    <CommandGroup className="max-h-64 overflow-auto">
-                                      {filteredProductos.slice(0, 50).map((prod) => (
-                                        <CommandItem key={prod.id} value={prod.id.toString()} onSelect={() => { setItemsProductoId(prod.id); setItemsProductoPopoverOpen(false); setItemsProductoSearch(''); }} className="text-sm">
-                                          <Check className={cn('mr-2 h-3 w-3', itemsProductoId === prod.id ? 'opacity-100' : 'opacity-0')} />
-                                          <div className="flex-1 min-w-0">
-                                            <p className="font-medium truncate">{prod.nombre}</p>
-                                            {prod.codigo_barra && <p className="text-xs text-muted-foreground truncate">Cód: {prod.codigo_barra}</p>}
-                                          </div>
-                                        </CommandItem>
-                                      ))}
-                                    </CommandGroup>
-                                  </Command>
-                                </PopoverContent>
-                              </Popover>
+                              <ProductoCombobox
+                                value={null}
+                                onChange={(p) => { setItemsProducto(p); setItemsProductoId(p.id); }}
+                                placeholder="Buscar por nombre..."
+                                className="h-9 text-sm"
+                                contentClassName="w-[min(300px,calc(100vw-2rem))]"
+                              />
                             )}
                           </div>
                         );

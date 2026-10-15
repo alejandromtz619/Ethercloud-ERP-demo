@@ -17,15 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-} from './ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
-import { ChevronsUpDown, Check, ShoppingCart, CreditCard, AlertTriangle, Calculator } from 'lucide-react';
+import ProductoCombobox from './ProductoCombobox';
+import { ShoppingCart, CreditCard, AlertTriangle, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { DatePickerInput } from './ui/date-picker-input';
@@ -49,12 +42,10 @@ const emptyForm = {
 // y nunca se muestra al usuario.
 const EntradaStockDialog = ({ open, onOpenChange, productoIdInicial, onSuccess }) => {
   const { api, empresa } = useApp();
-  const [productos, setProductos] = useState([]);
+  const [productoSel, setProductoSel] = useState(null);
   const [proveedores, setProveedores] = useState([]);
   const [almacenId, setAlmacenId] = useState(null);
   const [form, setForm] = useState(emptyForm);
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const [productoSearch, setProductoSearch] = useState('');
   // CPP aplicado al precio de costo del producto (distinto del costo real de compra)
   const [cppAplicado, setCppAplicado] = useState(null);
 
@@ -62,12 +53,10 @@ const EntradaStockDialog = ({ open, onOpenChange, productoIdInicial, onSuccess }
     if (!open || !empresa?.id) return;
     (async () => {
       try {
-        const [productosData, proveedoresData, almacenesData] = await Promise.all([
-          api(`/productos?empresa_id=${empresa.id}`),
+        const [proveedoresData, almacenesData] = await Promise.all([
           api(`/proveedores?empresa_id=${empresa.id}`),
           api(`/almacenes?empresa_id=${empresa.id}`)
         ]);
-        setProductos(productosData);
         setProveedores(proveedoresData);
         const tienda = almacenesData.find(a => a.nombre === ALMACEN_DEFAULT_NOMBRE && a.estado !== false);
         const activo = tienda || almacenesData.find(a => a.estado !== false) || almacenesData[0];
@@ -78,24 +67,34 @@ const EntradaStockDialog = ({ open, onOpenChange, productoIdInicial, onSuccess }
     })();
   }, [open, empresa?.id]);
 
+  // Precarga costo, precio y proveedor del producto elegido
+  const elegirProducto = (producto) => {
+    setProductoSel(producto);
+    setForm(f => ({
+      ...f,
+      producto_id: producto.id.toString(),
+      costo_unitario: producto.precio_costo ? producto.precio_costo.toString() : '',
+      precio_venta: producto.precio_venta ? producto.precio_venta.toString() : '',
+      proveedor_id: producto.proveedor_id ? producto.proveedor_id.toString() : f.proveedor_id
+    }));
+    setCppAplicado(null);
+  };
+
   useEffect(() => {
-    if (open && productoIdInicial) {
-      const producto = productos.find(p => p.id === productoIdInicial);
-      setForm(f => ({
-        ...f,
-        producto_id: productoIdInicial.toString(),
-        costo_unitario: producto?.precio_costo ? producto.precio_costo.toString() : f.costo_unitario,
-        precio_venta: producto?.precio_venta ? producto.precio_venta.toString() : f.precio_venta,
-        proveedor_id: producto?.proveedor_id ? producto.proveedor_id.toString() : f.proveedor_id
-      }));
-      setCppAplicado(null);
-    }
-  }, [open, productoIdInicial, productos]);
+    if (!open || !productoIdInicial) return;
+    (async () => {
+      try {
+        elegirProducto(await api(`/productos/${productoIdInicial}`));
+      } catch (e) {
+        toast.error('Error al cargar el producto');
+      }
+    })();
+  }, [open, productoIdInicial]);
 
   useEffect(() => {
     if (!open) {
       setForm(emptyForm);
-      setProductoSearch('');
+      setProductoSel(null);
       setCppAplicado(null);
     }
   }, [open]);
@@ -141,7 +140,7 @@ const EntradaStockDialog = ({ open, onOpenChange, productoIdInicial, onSuccess }
   const productoBloqueado = Boolean(productoIdInicial);
 
   // Stock y costo actuales del producto elegido, para el aviso y el cálculo de CPP
-  const productoSeleccionado = productos.find(p => p.id.toString() === form.producto_id);
+  const productoSeleccionado = productoSel;
   const stockActual = productoSeleccionado?.stock_total || 0;
   const costoActual = productoSeleccionado?.precio_costo ? parseFloat(productoSeleccionado.precio_costo) : 0;
   const nuevaCantidad = parseInt(form.cantidad) || 0;
@@ -162,74 +161,10 @@ const EntradaStockDialog = ({ open, onOpenChange, productoIdInicial, onSuccess }
             <Label>Producto</Label>
             {productoBloqueado ? (
               <div className="flex h-10 w-full items-center rounded-md border border-input bg-muted/40 px-3 text-sm">
-                {productos.find(p => p.id.toString() === form.producto_id)?.nombre || '...'}
+                {productoSel?.nombre || '...'}
               </div>
             ) : (
-              <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={popoverOpen}
-                    className="w-full justify-between"
-                  >
-                    {form.producto_id
-                      ? productos.find((p) => p.id.toString() === form.producto_id)?.nombre
-                      : "Buscar producto..."}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[400px] p-0">
-                  <Command shouldFilter={false}>
-                    <CommandInput
-                      placeholder="Buscar por nombre o código..."
-                      value={productoSearch}
-                      onValueChange={setProductoSearch}
-                    />
-                    <CommandEmpty>No se encontró el producto.</CommandEmpty>
-                    <CommandGroup className="max-h-64 overflow-auto">
-                      {productos
-                        .filter(p =>
-                          !productoSearch ||
-                          p.nombre.toLowerCase().includes(productoSearch.toLowerCase()) ||
-                          p.codigo_barra?.toLowerCase().includes(productoSearch.toLowerCase())
-                        )
-                        .map((p) => (
-                          <CommandItem
-                            key={p.id}
-                            value={p.nombre}
-                            onSelect={() => {
-                              setForm({
-                                ...form,
-                                producto_id: p.id.toString(),
-                                costo_unitario: p.precio_costo ? p.precio_costo.toString() : '',
-                                precio_venta: p.precio_venta ? p.precio_venta.toString() : '',
-                                proveedor_id: p.proveedor_id ? p.proveedor_id.toString() : form.proveedor_id
-                              });
-                              setCppAplicado(null);
-                              setPopoverOpen(false);
-                              setProductoSearch('');
-                            }}
-                          >
-                            <Check
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                form.producto_id === p.id.toString() ? "opacity-100" : "opacity-0"
-                              )}
-                            />
-                            <div className="flex flex-col">
-                              <span>{p.nombre}</span>
-                              {p.codigo_barra && (
-                                <span className="text-xs text-muted-foreground">Código: {p.codigo_barra}</span>
-                              )}
-                            </div>
-                          </CommandItem>
-                        ))}
-                    </CommandGroup>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+              <ProductoCombobox value={productoSel} onChange={elegirProducto} />
             )}
           </div>
           <div className="grid grid-cols-2 gap-3">

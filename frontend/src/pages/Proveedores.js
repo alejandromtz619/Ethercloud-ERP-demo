@@ -41,7 +41,9 @@ const Proveedores = () => {
   const [vincularOpen, setVincularOpen] = useState(false);
   const [vincularProveedor, setVincularProveedor] = useState(null);
   const [vinculaciones, setVinculaciones] = useState([]);
-  const [productos, setProductos] = useState([]);
+  // Resultados de la búsqueda de productos del diálogo Vincular (búsqueda en el servidor)
+  const [productosResultados, setProductosResultados] = useState([]);
+  const [productoVincularSel, setProductoVincularSel] = useState(null);
   const [productosSearch, setProductosSearch] = useState('');
   const [editingVinculacion, setEditingVinculacion] = useState(null);
   const [vincularForm, setVincularForm] = useState({ producto_id: '', sku: '', costo: '', link: '' });
@@ -216,6 +218,29 @@ const Proveedores = () => {
     }
   };
 
+  // Busca productos en el servidor mientras se escribe en el diálogo Vincular
+  useEffect(() => {
+    const texto = productosSearch.trim();
+    if (!vincularOpen || !texto || !empresa?.id) {
+      setProductosResultados([]);
+      return undefined;
+    }
+    let vigente = true;
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ empresa_id: empresa.id, q: texto, limit: 20 });
+        const data = await api(`/productos/buscar?${params}`);
+        if (vigente) setProductosResultados(data.items);
+      } catch (e) {
+        if (vigente) setProductosResultados([]);
+      }
+    }, 250);
+    return () => {
+      vigente = false;
+      clearTimeout(timer);
+    };
+  }, [productosSearch, vincularOpen, empresa?.id, api]);
+
   // ── Vincular handlers ──────────────────────────────────────────────
   const fetchVinculaciones = async (proveedorId) => {
     try {
@@ -226,23 +251,14 @@ const Proveedores = () => {
     }
   };
 
-  const fetchProductos = async () => {
-    if (!empresa?.id) return;
-    try {
-      const data = await api(`/productos?empresa_id=${empresa.id}`);
-      setProductos(data);
-    } catch (e) {
-      // non-blocking
-    }
-  };
 
   const handleAbrirVincular = (proveedor) => {
     setVincularProveedor(proveedor);
     setVincularForm({ producto_id: '', sku: '', costo: '', link: '' });
     setEditingVinculacion(null);
     setProductosSearch('');
+    setProductoVincularSel(null);
     fetchVinculaciones(proveedor.id);
-    fetchProductos();
     setVincularOpen(true);
   };
 
@@ -278,6 +294,8 @@ const Proveedores = () => {
       }
       setVincularForm({ producto_id: '', sku: '', costo: '', link: '' });
       setEditingVinculacion(null);
+      setProductoVincularSel(null);
+      setProductosSearch('');
       fetchVinculaciones(vincularProveedor.id);
     } catch (e) {
       toast.error(e.message || 'Error al vincular producto');
@@ -712,11 +730,7 @@ const Proveedores = () => {
                   </div>
                   {productosSearch && (
                     <div className="border rounded-lg mt-1 max-h-40 overflow-y-auto bg-background z-10 relative">
-                      {productos
-                        .filter(p =>
-                          p.nombre.toLowerCase().includes(productosSearch.toLowerCase()) ||
-                          p.codigo_barra?.toLowerCase().includes(productosSearch.toLowerCase())
-                        )
+                      {productosResultados
                         .filter(p => !vinculaciones.find(v => v.producto_id === p.id))
                         .slice(0, 20)
                         .map(p => (
@@ -726,6 +740,7 @@ const Proveedores = () => {
                             className="w-full text-left px-3 py-2 text-sm hover:bg-secondary flex items-center justify-between"
                             onClick={() => {
                               setVincularForm(f => ({ ...f, producto_id: p.id }));
+                              setProductoVincularSel(p);
                               setProductosSearch(p.nombre);
                             }}
                           >
@@ -734,17 +749,14 @@ const Proveedores = () => {
                           </button>
                         ))
                       }
-                      {productos.filter(p =>
-                        p.nombre.toLowerCase().includes(productosSearch.toLowerCase()) ||
-                        p.codigo_barra?.toLowerCase().includes(productosSearch.toLowerCase())
-                      ).filter(p => !vinculaciones.find(v => v.producto_id === p.id)).length === 0 && (
+                      {productosResultados.filter(p => !vinculaciones.find(v => v.producto_id === p.id)).length === 0 && (
                         <p className="text-center text-xs text-muted-foreground py-3">Sin resultados</p>
                       )}
                     </div>
                   )}
                   {vincularForm.producto_id && (
                     <p className="text-xs text-green-600 mt-1">
-                      ✓ {productos.find(p => p.id === vincularForm.producto_id)?.nombre || 'Producto seleccionado'}
+                      ✓ {productoVincularSel?.nombre || 'Producto seleccionado'}
                     </p>
                   )}
                 </div>

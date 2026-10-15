@@ -1018,30 +1018,44 @@ const TabExceso = ({ empresa, API_URL, token }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 5 — Aging de Tandas
 // ─────────────────────────────────────────────────────────────────────────────
+const AGING_POR_PAGINA = 100;
+
 const TabAging = ({ empresa, API_URL, token }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [orden, setOrden] = useState('mas_antiguo');
   const [expandidos, setExpandidos] = useState({});
+  const [busqueda, setBusqueda] = useState('');
+  const [busquedaAplicada, setBusquedaAplicada] = useState('');
 
-  const cargar = useCallback(async () => {
+  // El backend devuelve los productos de a páginas: "Cargar más" agrega la siguiente
+  const cargar = useCallback(async (offset = 0) => {
     if (!empresa?.id) return;
     setLoading(true);
     try {
-      const r = await fetch(`${API_URL}/bi/aging-tandas?empresa_id=${empresa.id}&orden=${orden}`, {
+      const params = new URLSearchParams({
+        empresa_id: empresa.id, orden, limit: AGING_POR_PAGINA, offset,
+      });
+      if (busquedaAplicada) params.set('q', busquedaAplicada);
+      const r = await fetch(`${API_URL}/bi/aging-tandas?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) throw new Error('Error al cargar aging de tandas');
       const d = await r.json();
-      setData(d);
+      setData(prev => (offset > 0 && prev ? { ...d, productos: [...prev.productos, ...d.productos] } : d));
     } catch (e) {
       toast.error(e.message);
     } finally {
       setLoading(false);
     }
-  }, [empresa, API_URL, token, orden]);
+  }, [empresa, API_URL, token, orden, busquedaAplicada]);
 
-  useEffect(() => { cargar(); }, [cargar]);
+  useEffect(() => { cargar(0); }, [cargar]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setBusquedaAplicada(busqueda.trim()), 400);
+    return () => clearTimeout(t);
+  }, [busqueda]);
 
   const toggleExpand = (pid) =>
     setExpandidos(prev => ({ ...prev, [pid]: !prev[pid] }));
@@ -1073,7 +1087,16 @@ const TabAging = ({ empresa, API_URL, token }) => {
                 </SelectContent>
               </Select>
             </div>
-            <Button size="sm" variant="outline" onClick={cargar} disabled={loading} className="h-8 text-xs gap-1.5">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Buscar producto</Label>
+              <Input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Nombre…"
+                className="w-56 h-8 text-xs"
+              />
+            </div>
+            <Button size="sm" variant="outline" onClick={() => cargar(0)} disabled={loading} className="h-8 text-xs gap-1.5">
               {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               Actualizar
             </Button>
@@ -1132,7 +1155,9 @@ const TabAging = ({ empresa, API_URL, token }) => {
       {data && data.productos.length === 0 && (
         <Card>
           <CardContent className="flex items-center justify-center h-40 text-muted-foreground text-sm">
-            No hay tandas activas con stock restante.
+            {busquedaAplicada
+              ? 'Ningún producto con tandas activas coincide con la búsqueda.'
+              : 'No hay tandas activas con stock restante.'}
           </CardContent>
         </Card>
       )}
@@ -1249,6 +1274,23 @@ const TabAging = ({ empresa, API_URL, token }) => {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-t text-xs text-muted-foreground">
+              <span>
+                Mostrando {formatNum(data.productos.length)} de {formatNum(data.total_productos ?? data.productos.length)} productos
+              </span>
+              {data.productos.length < (data.total_productos ?? 0) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  disabled={loading}
+                  onClick={() => cargar(data.productos.length)}
+                >
+                  {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Cargar más
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

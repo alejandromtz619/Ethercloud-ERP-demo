@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract
+from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract, case
 from sqlalchemy.orm import selectinload
 from dotenv import load_dotenv
 from pathlib import Path
@@ -65,7 +65,7 @@ from schemas import (
     GastoCreate, GastoResponse, GastoUpdate,
     ProductoCreate, ProductoResponse, ProductoConStock, ProductoCodigoBarraConflicto,
     MateriaLaboratorioCreate, MateriaLaboratorioUpdate, MateriaLaboratorioResponse,
-    MateriaLaboratorioPage,
+    MateriaLaboratorioPage, ProductoPagina, StockPagina,
     AlmacenCreate, AlmacenResponse, StockActualCreate, StockActualResponse, StockConDetalles,
     MovimientoStockCreate, MovimientoStockResponse, TraspasoStockCreate, SalidaStockCreate,
     EntradaStockHistorialResponse,
@@ -1425,10 +1425,10 @@ async def limpiar_codigo_barra_producto(
     await db.refresh(producto)
     return producto
 
-@api_router.get("/productos", response_model=List[ProductoConStock])
-async def listar_productos(empresa_id: int, db: AsyncSession = Depends(get_db)):
-    # El stock se agrega en una subconsulta: antes se lanzaba un SELECT por
-    # producto dentro del bucle (1 + N consultas, ~1.400ms con 1.200 productos).
+def _select_productos_con_stock():
+    """Productos con categoría, marca, proveedor y stock total en una sola consulta.
+    El stock se agrega en una subconsulta: antes se lanzaba un SELECT por
+    producto dentro del bucle (1 + N consultas, ~1.400ms con 1.200 productos)."""
     stock_sq = (
         select(
             StockActual.producto_id.label("producto_id"),
@@ -1437,8 +1437,7 @@ async def listar_productos(empresa_id: int, db: AsyncSession = Depends(get_db)):
         .group_by(StockActual.producto_id)
         .subquery()
     )
-
-    result = await db.execute(
+    return (
         select(
             Producto,
             Categoria.nombre,
@@ -1450,19 +1449,92 @@ async def listar_productos(empresa_id: int, db: AsyncSession = Depends(get_db)):
         .outerjoin(Marca, Producto.marca_id == Marca.id)
         .outerjoin(Proveedor, Producto.proveedor_id == Proveedor.id)
         .outerjoin(stock_sq, stock_sq.c.producto_id == Producto.id)
-        .where(Producto.empresa_id == empresa_id, Producto.activo == True)
     )
 
-    productos = []
-    for producto, categoria_nombre, marca_nombre, proveedor_nombre, stock_total in result.all():
-        prod = ProductoConStock.model_validate(producto)
-        prod.stock_total = int(stock_total or 0)
-        prod.categoria_nombre = categoria_nombre
-        prod.marca_nombre = marca_nombre
-        prod.proveedor_nombre = proveedor_nombre
-        productos.append(prod)
+def _producto_con_stock(producto, categoria_nombre, marca_nombre, proveedor_nombre, stock_total) -> ProductoConStock:
+    prod = ProductoConStock.model_validate(producto)
+    prod.stock_total = int(stock_total or 0)
+    prod.categoria_nombre = categoria_nombre
+    prod.marca_nombre = marca_nombre
+    prod.proveedor_nombre = proveedor_nombre
+    return prod
 
-    return productos
+def _patron_contiene(valor: str) -> str:
+    """Patrón LIKE para "contiene", con % y _ del usuario tomados literalmente (escape '\\')."""
+    v = valor.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return f"%{v}%"
+
+@api_router.get("/productos", response_model=List[ProductoConStock])
+async def listar_productos(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Catálogo completo. Con miles de productos pesa decenas de MB: las pantallas usan
+    GET /productos/buscar (paginado); esta ruta queda por compatibilidad."""
+    result = await db.execute(
+        _select_productos_con_stock()
+        .where(Producto.empresa_id == empresa_id, Producto.activo == True)
+    )
+    return [_producto_con_stock(*row) for row in result.all()]
+
+@api_router.get("/productos/buscar", response_model=ProductoPagina)
+async def buscar_productos(
+    empresa_id: int,
+    q: Optional[str] = None,          # nombre o código de barras (selectores)
+    nombre: Optional[str] = None,
+    producto_id: Optional[int] = None,
+    codigo: Optional[str] = None,
+    marca: Optional[str] = None,
+    categoria: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """Búsqueda paginada de productos activos. Todos los filtros de texto son "contiene",
+    sin distinguir mayúsculas; producto_id es exacto."""
+    filtros = [Producto.empresa_id == empresa_id, Producto.activo == True]
+    texto = (q or '').strip()
+    # Un número también puede ser el ID del producto (el buscador de Ventas lo acepta)
+    id_buscado = int(texto) if texto.isdigit() and int(texto) < 2**31 else None
+    if texto:
+        patron = _patron_contiene(texto)
+        coincide = [Producto.nombre.ilike(patron, escape='\\'),
+                    Producto.codigo_barra.ilike(patron, escape='\\')]
+        if id_buscado is not None:
+            coincide.append(Producto.id == id_buscado)
+        filtros.append(or_(*coincide))
+    if nombre and nombre.strip():
+        filtros.append(Producto.nombre.ilike(_patron_contiene(nombre), escape='\\'))
+    if producto_id is not None:
+        filtros.append(Producto.id == producto_id)
+    if codigo and codigo.strip():
+        filtros.append(Producto.codigo_barra.ilike(_patron_contiene(codigo), escape='\\'))
+    if marca and marca.strip():
+        filtros.append(Marca.nombre.ilike(_patron_contiene(marca), escape='\\'))
+    if categoria and categoria.strip():
+        filtros.append(Categoria.nombre.ilike(_patron_contiene(categoria), escape='\\'))
+
+    total = await db.scalar(
+        select(func_sql.count(Producto.id))
+        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
+        .outerjoin(Marca, Producto.marca_id == Marca.id)
+        .where(*filtros)
+    )
+    if texto:
+        # Primero los que empiezan con lo buscado (o código exacto), después el resto por nombre
+        relevancia = case(
+            (Producto.id == (id_buscado if id_buscado is not None else -1), 0),
+            (Producto.codigo_barra == texto, 0),
+            (Producto.nombre.ilike(f"{_patron_contiene(texto)[1:]}", escape='\\'), 1),
+            else_=2,
+        )
+        orden = (relevancia, Producto.nombre, Producto.id)
+    else:
+        orden = (Producto.id,)
+    result = await db.execute(
+        _select_productos_con_stock().where(*filtros).order_by(*orden).limit(limit).offset(offset)
+    )
+    return ProductoPagina(
+        items=[_producto_con_stock(*row) for row in result.all()],
+        total=total or 0, limit=limit, offset=offset,
+    )
 
 @api_router.get("/productos/{producto_id}", response_model=ProductoConStock)
 async def obtener_producto(producto_id: int, db: AsyncSession = Depends(get_db)):
@@ -1928,16 +2000,67 @@ async def listar_stock(empresa_id: int, almacen_id: Optional[int] = None, db: As
         query = query.where(StockActual.almacen_id == almacen_id)
     
     result = await db.execute(query)
-    stocks = []
-    for row in result.all():
-        stock, producto, almacen = row
-        stock_dict = StockActualResponse.model_validate(stock).model_dump()
-        stock_dict['producto_nombre'] = producto.nombre
-        stock_dict['producto_codigo_barra'] = producto.codigo_barra
-        stock_dict['almacen_nombre'] = almacen.nombre
-        stocks.append(StockConDetalles(**stock_dict))
-    
-    return stocks
+    return [_stock_con_detalles(*row) for row in result.all()]
+
+def _stock_con_detalles(stock, producto, almacen) -> StockConDetalles:
+    stock_dict = StockActualResponse.model_validate(stock).model_dump()
+    stock_dict['producto_nombre'] = producto.nombre
+    stock_dict['producto_codigo_barra'] = producto.codigo_barra
+    stock_dict['almacen_nombre'] = almacen.nombre
+    return StockConDetalles(**stock_dict)
+
+@api_router.get("/stock/totales-por-almacen")
+async def stock_totales_por_almacen(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Unidades en stock por almacén, para las tarjetas de la pantalla Stock
+    (antes se sumaban en el navegador sobre el inventario completo)."""
+    result = await db.execute(
+        select(StockActual.almacen_id, func_sql.coalesce(func_sql.sum(StockActual.cantidad), 0))
+        .join(Producto, StockActual.producto_id == Producto.id)
+        .where(Producto.empresa_id == empresa_id)
+        .group_by(StockActual.almacen_id)
+    )
+    return [{"almacen_id": almacen_id, "total_unidades": int(total)} for almacen_id, total in result.all()]
+
+@api_router.get("/stock/buscar", response_model=StockPagina)
+async def buscar_stock(
+    empresa_id: int,
+    almacen_id: Optional[int] = None,
+    nombre: Optional[str] = None,
+    producto_id: Optional[int] = None,
+    codigo: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db)
+):
+    """Inventario paginado, ordenado por producto y almacén. Mismos filtros que la pantalla
+    Stock: nombre y código "contiene", producto_id exacto."""
+    filtros = [Producto.empresa_id == empresa_id]
+    if almacen_id:
+        filtros.append(StockActual.almacen_id == almacen_id)
+    if nombre and nombre.strip():
+        filtros.append(Producto.nombre.ilike(_patron_contiene(nombre), escape='\\'))
+    if producto_id is not None:
+        filtros.append(StockActual.producto_id == producto_id)
+    if codigo and codigo.strip():
+        filtros.append(Producto.codigo_barra.ilike(_patron_contiene(codigo), escape='\\'))
+
+    total = await db.scalar(
+        select(func_sql.count(StockActual.id))
+        .join(Producto, StockActual.producto_id == Producto.id)
+        .where(*filtros)
+    )
+    result = await db.execute(
+        select(StockActual, Producto, Almacen)
+        .join(Producto, StockActual.producto_id == Producto.id)
+        .join(Almacen, StockActual.almacen_id == Almacen.id)
+        .where(*filtros)
+        .order_by(Producto.nombre, Almacen.nombre, StockActual.id)
+        .limit(limit).offset(offset)
+    )
+    return StockPagina(
+        items=[_stock_con_detalles(*row) for row in result.all()],
+        total=total or 0, limit=limit, offset=offset,
+    )
 
 
 async def _consume_entrada_fifo(db: AsyncSession, producto_id: int, almacen_id: int, cantidad_consumida: int):
@@ -7763,13 +7886,18 @@ async def bi_estadisticas_productos_excel(
 async def bi_aging_tandas(
     empresa_id: int,
     orden: str = "mas_antiguo",  # mas_antiguo | mas_nuevo | mayor_valor | nombre
+    q: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
-    """Aging de tandas activas: cada lote ENTRADA con unidades restantes y sus días de permanencia."""
+    """Aging de tandas activas: cada lote ENTRADA con unidades restantes y sus días de permanencia.
+    El resumen cubre todos los productos; la lista viene paginada (con miles de productos,
+    devolver todas las tandas pesaba decenas de MB)."""
     PARAGUAY_TZ = ZoneInfo("America/Asuncion")
     hoy = datetime.now(PARAGUAY_TZ).date()
 
-    q = (
+    consulta = (
         select(
             MovimientoStock.id.label("tanda_id"),
             MovimientoStock.producto_id,
@@ -7806,7 +7934,7 @@ async def bi_aging_tandas(
         .order_by(MovimientoStock.producto_id, MovimientoStock.creado_en.asc())
     )
 
-    result = await db.execute(q)
+    result = await db.execute(consulta)
     rows = result.all()
 
     # Real stock per product (from StockActual) to detect FIFO vs actual discrepancies
@@ -7883,6 +8011,11 @@ async def bi_aging_tandas(
     }
     productos.sort(key=sort_map.get(orden, sort_map["mas_antiguo"]))
 
+    filtrados = productos
+    if q and q.strip():
+        texto = q.strip().lower()
+        filtrados = [p for p in productos if texto in p["producto_nombre"].lower()]
+
     return {
         "orden": orden,
         "fecha_calculo": hoy.isoformat(),
@@ -7891,7 +8024,10 @@ async def bi_aging_tandas(
             "total_tandas_activas": sum(p["num_tandas"] for p in productos),
             "valor_stock_activo": sum(p["valor_total_inmovilizado"] for p in productos),
         },
-        "productos": productos,
+        "total_productos": len(filtrados),
+        "limit": limit,
+        "offset": offset,
+        "productos": filtrados[offset:offset + limit],
     }
 
 

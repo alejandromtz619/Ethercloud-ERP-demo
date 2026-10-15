@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -26,6 +26,8 @@ import {
 import { Package, Plus, Minus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle } from 'lucide-react';
 import EntradaStockDialog from '../components/EntradaStockDialog';
 import SalidaStockDialog from '../components/SalidaStockDialog';
+
+const PRODUCTOS_POR_PAGINA = 100;
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 import {
@@ -42,7 +44,10 @@ import { resolverImagenUrl } from '../lib/imagenes';
 const Productos = () => {
   const { api, empresa, userPermisos } = useApp();
   const isAdmin = userPermisos.includes('usuarios.gestionar');
-  const [productos, setProductos] = useState([]);
+  // Página actual del catálogo (GET /productos/buscar): filtros y paginación en el servidor
+  const [productosPagina, setProductosPagina] = useState({ items: [], total: 0 });
+  const [cargandoMas, setCargandoMas] = useState(false);
+  const [filtros, setFiltros] = useState({ nombre: '', id: '', codigo: '', marca: '', categoria: '' });
   const [categorias, setCategorias] = useState([]);
   const [marcas, setMarcas] = useState([]);
   const [proveedores, setProveedores] = useState([]);
@@ -81,11 +86,40 @@ const Productos = () => {
     imagen_url: ''
   });
 
+  const cargarProductos = async (offset = 0) => {
+    if (!empresa?.id) return;
+    const params = new URLSearchParams({ empresa_id: empresa.id, limit: PRODUCTOS_POR_PAGINA, offset });
+    if (filtros.nombre) params.set('nombre', filtros.nombre);
+    if (filtros.codigo) params.set('codigo', filtros.codigo);
+    if (filtros.marca) params.set('marca', filtros.marca);
+    if (filtros.categoria) params.set('categoria', filtros.categoria);
+    if (filtros.id) {
+      if (!/^\d+$/.test(filtros.id)) {
+        setProductosPagina({ items: [], total: 0 });
+        return;
+      }
+      params.set('producto_id', filtros.id);
+    }
+    const data = await api(`/productos/buscar?${params}`);
+    setProductosPagina(prev => (offset > 0 ? { ...data, items: [...prev.items, ...data.items] } : data));
+  };
+
+  const cargarMas = async () => {
+    setCargandoMas(true);
+    try {
+      await cargarProductos(productosPagina.items.length);
+    } catch (e) {
+      toast.error('Error al cargar productos');
+    } finally {
+      setCargandoMas(false);
+    }
+  };
+
   const fetchData = async () => {
     if (!empresa?.id) return;
     try {
-      const [productosData, categoriasData, marcasData] = await Promise.all([
-        api(`/productos?empresa_id=${empresa.id}`),
+      const [, categoriasData, marcasData] = await Promise.all([
+        cargarProductos(0),
         api(`/categorias?empresa_id=${empresa.id}`),
         api(`/marcas?empresa_id=${empresa.id}`)
       ]);
@@ -97,7 +131,6 @@ const Productos = () => {
         proveedoresData = [];
       }
       setProveedores(proveedoresData);
-      setProductos(productosData);
       setCategorias(categoriasData);
       setMarcas(marcasData);
     } catch (e) {
@@ -110,6 +143,27 @@ const Productos = () => {
   useEffect(() => {
     fetchData();
   }, [empresa?.id]);
+
+  // Filtros de texto aplicados con un pequeño retraso para no consultar en cada tecla
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setFiltros({
+        nombre: search.trim(), id: searchId.trim(), codigo: searchCodigo.trim(),
+        marca: filterMarca.trim(), categoria: filterCategoria.trim(),
+      });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search, searchId, searchCodigo, filterMarca, filterCategoria]);
+
+  const filtrosIniciales = useRef(true);
+  useEffect(() => {
+    // La primera carga la hace fetchData junto con categorías y marcas
+    if (filtrosIniciales.current) {
+      filtrosIniciales.current = false;
+      return;
+    }
+    cargarProductos(0).catch(() => toast.error('Error al cargar productos'));
+  }, [filtros]);
 
   useEffect(() => {
     const value = formData.codigo_barra?.trim();
@@ -276,19 +330,7 @@ const Productos = () => {
     }).format(value);
   };
 
-  const filteredProductos = productos.filter(p => {
-    const matchesSearch = !search ||
-      p.nombre.toLowerCase().includes(search.toLowerCase());
-    const matchesId = !searchId ||
-      p.id.toString() === searchId.trim();
-    const matchesCodigo = !searchCodigo ||
-      (p.codigo_barra?.toLowerCase().includes(searchCodigo.toLowerCase()));
-    const matchesMarca = !filterMarca ||
-      (p.marca_nombre || '').toLowerCase().includes(filterMarca.toLowerCase());
-    const matchesCategoria = !filterCategoria ||
-      (p.categoria_nombre || '').toLowerCase().includes(filterCategoria.toLowerCase());
-    return matchesSearch && matchesId && matchesCodigo && matchesMarca && matchesCategoria;
-  });
+  const filteredProductos = productosPagina.items;
 
   if (loading) {
     return (
@@ -543,7 +585,7 @@ const Productos = () => {
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <Package className="h-5 w-5" />
-                Catálogo ({filteredProductos.length})
+                Catálogo ({productosPagina.total.toLocaleString('es-PY')})
               </CardTitle>
               <div className="relative w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -752,6 +794,19 @@ const Productos = () => {
               ))}
             </TableBody>
           </Table>
+          {filteredProductos.length > 0 && (
+            <div className="flex items-center justify-between gap-3 pt-4 text-xs text-muted-foreground">
+              <span>
+                Mostrando {filteredProductos.length.toLocaleString('es-PY')} de {productosPagina.total.toLocaleString('es-PY')}
+              </span>
+              {filteredProductos.length < productosPagina.total && (
+                <Button size="sm" variant="outline" onClick={cargarMas} disabled={cargandoMas} className="gap-1.5">
+                  {cargandoMas && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Cargar más
+                </Button>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

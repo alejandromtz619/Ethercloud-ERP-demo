@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -41,6 +41,8 @@ import { cn } from '../lib/utils';
 import { resolverImagenUrl } from '../lib/imagenes';
 import PrintModal from '../components/PrintModal';
 
+const PRODUCTOS_POR_BUSQUEDA = 50;
+
 const Ventas = () => {
   const { api, empresa, user, hasPermission } = useApp();
   const navigate = useNavigate();
@@ -53,7 +55,8 @@ const Ventas = () => {
   
   // State
   const [clientes, setClientes] = useState([]);
-  const [productos, setProductos] = useState([]);
+  // Productos que muestra la grilla: búsqueda paginada en el servidor (GET /productos/buscar)
+  const [productosResultado, setProductosResultado] = useState({ items: [], total: 0 });
   const [materias, setMaterias] = useState([]);
   const [searchMaterias, setSearchMaterias] = useState('');
   const [vehiculos, setVehiculos] = useState([]);
@@ -91,16 +94,14 @@ const Ventas = () => {
       if (!empresa?.id) return;
 
       try {
-        const [clientesData, productosData, materiasData, vehiculosData, usuariosData] = await Promise.all([
+        const [clientesData, materiasData, vehiculosData, usuariosData] = await Promise.all([
           api(`/clientes?empresa_id=${empresa.id}`),
-          api(`/productos?empresa_id=${empresa.id}`),
           api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`),
           api(`/vehiculos?empresa_id=${empresa.id}`),
           api(`/usuarios?empresa_id=${empresa.id}`)
         ]);
 
         setClientes(clientesData);
-        setProductos(productosData);
         setMaterias(materiasData);
         setVehiculos(vehiculosData);
         setUsuarios(usuariosData);
@@ -115,23 +116,42 @@ const Ventas = () => {
     fetchData();
   }, [empresa?.id, api]);
 
+  // Busca en el servidor los productos de la grilla (nombre, código o ID)
+  const buscarProductos = useCallback(async (texto) => {
+    if (!empresa?.id) return;
+    const params = new URLSearchParams({ empresa_id: empresa.id, limit: PRODUCTOS_POR_BUSQUEDA });
+    if (texto.trim()) params.set('q', texto.trim());
+    const data = await api(`/productos/buscar?${params}`);
+    setProductosResultado(data);
+  }, [empresa?.id, api]);
+
   // Silent background refresh of products/materials to pick up changes from other PCs
+  // (sólo la búsqueda visible: antes se volvía a descargar el catálogo entero)
+  const searchProductoRef = useRef('');
   const refreshProductosAndMaterias = useCallback(async () => {
     if (!empresa?.id) return;
     try {
-      const [productosData, materiasData] = await Promise.all([
-        api(`/productos?empresa_id=${empresa.id}`),
+      const [, materiasData] = await Promise.all([
+        buscarProductos(searchProductoRef.current),
         api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`)
       ]);
-      setProductos(productosData);
       setMaterias(materiasData);
     } catch (_) {}
-  }, [empresa?.id, api]);
+  }, [empresa?.id, api, buscarProductos]);
 
   useEffect(() => {
     const id = setInterval(refreshProductosAndMaterias, 45000);
     return () => clearInterval(id);
   }, [refreshProductosAndMaterias]);
+
+  // Buscar mientras se escribe (con un pequeño retraso para no consultar en cada tecla)
+  useEffect(() => {
+    searchProductoRef.current = searchProducto;
+    const t = setTimeout(() => {
+      buscarProductos(searchProducto).catch(() => toast.error('Error al buscar productos'));
+    }, searchProducto ? 250 : 0);
+    return () => clearTimeout(t);
+  }, [searchProducto, buscarProductos]);
 
   // Load existing sale if editing
   useEffect(() => {
@@ -163,14 +183,24 @@ const Ventas = () => {
           }
         }
         
-        // Load cart items
-        const cartItems = venta.items.map(item => ({
-          producto_id: item.producto_id || null,
-          materia_laboratorio_id: item.materia_laboratorio_id || null,
-          nombre: item.producto_nombre || item.materia_nombre || 'Producto',
-          cantidad: item.cantidad,
-          precio_unitario: parseFloat(item.precio_unitario),
-          observaciones: item.observaciones || ''
+        // Load cart items (el costo actual del producto, para la ganancia, se consulta al servidor)
+        const cartItems = await Promise.all(venta.items.map(async item => {
+          let precioCosto = 0;
+          if (item.producto_id) {
+            try {
+              const producto = await api(`/productos/${item.producto_id}`);
+              precioCosto = parseFloat(producto.precio_costo) || 0;
+            } catch (_) {}
+          }
+          return {
+            producto_id: item.producto_id || null,
+            materia_laboratorio_id: item.materia_laboratorio_id || null,
+            nombre: item.producto_nombre || item.materia_nombre || 'Producto',
+            cantidad: item.cantidad,
+            precio_unitario: parseFloat(item.precio_unitario),
+            precio_costo: precioCosto,
+            observaciones: item.observaciones || ''
+          };
         }));
         setCart(cartItems);
         
@@ -282,9 +312,15 @@ const Ventas = () => {
     }
 
     try {
-      // Try local cache first
-      const product = productos.find(p => p.codigo_barra === code);
-      if (product) {
+      // El producto se consulta siempre al servidor: está al día aunque lo hayan
+      // cargado desde otra PC. Los inactivos no se venden.
+      let product = null;
+      try {
+        product = await api(`/productos/codigo/${encodeURIComponent(code.trim())}`);
+      } catch (_) {
+        product = null;
+      }
+      if (product && product.activo) {
         addToCart(product, 'producto');
         setSearchProducto('');
         return;
@@ -297,20 +333,9 @@ const Ventas = () => {
         return;
       }
 
-      // Not in cache — fetch fresh data (handles products added from another PC)
-      const [freshProductos, freshMaterias] = await Promise.all([
-        api(`/productos?empresa_id=${empresa.id}`),
-        api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`)
-      ]);
-      setProductos(freshProductos);
+      // Materia no encontrada en memoria: refrescar (pudo cargarse desde otra PC)
+      const freshMaterias = await api(`/materias-laboratorio/disponibles?empresa_id=${empresa.id}`);
       setMaterias(freshMaterias);
-
-      const freshProduct = freshProductos.find(p => p.codigo_barra === code);
-      if (freshProduct) {
-        addToCart(freshProduct, 'producto');
-        setSearchProducto('');
-        return;
-      }
 
       const freshMateria = freshMaterias.find(m => m.codigo_barra === code);
       if (freshMateria) {
@@ -323,7 +348,7 @@ const Ventas = () => {
     } catch (e) {
       toast.error('Error al buscar producto');
     }
-  }, [productos, materias, selectedCliente, addToCart, empresa?.id, api]);
+  }, [materias, selectedCliente, addToCart, empresa?.id, api]);
 
 
 
@@ -369,8 +394,7 @@ const Ventas = () => {
 
   // Ganancia: precio de venta final (con descuento proporcional) - costo
   const costoTotal = cart.reduce((sum, item) => {
-    const costo = item.precio_costo ||
-      (item.producto_id ? (productos.find(p => p.id === item.producto_id)?.precio_costo || 0) : 0);
+    const costo = item.precio_costo || 0;
     return sum + item.cantidad * parseFloat(costo);
   }, 0);
   const gananciaTotal = total - costoTotal;
@@ -577,25 +601,8 @@ const Ventas = () => {
     }
   };
 
-  // Filter products
-  const filteredProductos = productos.filter(p =>
-    p.nombre.toLowerCase().includes(searchProducto.toLowerCase()) ||
-    p.codigo_barra?.toLowerCase().includes(searchProducto.toLowerCase()) ||
-    p.id.toString() === searchProducto
-  );
-
-  // When keyboard search finds nothing, refresh data after 500ms (picks up new products from other PCs)
-  useEffect(() => {
-    if (!searchProducto) return;
-    const hasLocal = productos.some(p =>
-      p.nombre.toLowerCase().includes(searchProducto.toLowerCase()) ||
-      p.codigo_barra?.toLowerCase().includes(searchProducto.toLowerCase()) ||
-      p.id.toString() === searchProducto
-    );
-    if (hasLocal) return;
-    const t = setTimeout(refreshProductosAndMaterias, 500);
-    return () => clearTimeout(t);
-  }, [searchProducto, productos, refreshProductosAndMaterias]);
+  // Productos de la búsqueda actual (filtrados en el servidor)
+  const filteredProductos = productosResultado.items;
 
   // Filter clients
   const filteredClientes = clientes.filter(c =>
@@ -840,6 +847,11 @@ const Ventas = () => {
                 })}
               </div>
             </ScrollArea>
+            {productosResultado.total > filteredProductos.length && (
+              <p className="pt-2 text-xs text-muted-foreground">
+                Mostrando {filteredProductos.length} de {productosResultado.total.toLocaleString('es-PY')} productos — escriba para afinar la búsqueda
+              </p>
+            )}
 
             {/* Materias Laboratorio Section */}
             {materias.length > 0 && (

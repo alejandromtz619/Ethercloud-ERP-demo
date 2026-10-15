@@ -18,9 +18,14 @@ INICIO_ANIO = date(date.today().year, 1, 1).isoformat()
 
 # (pantalla, ruta) — mismas consultas que el frontend al abrir cada pantalla
 LLAMADAS = [
-    ("Productos/Ventas/Stock/…", "/productos?empresa_id=1"),
+    ("Productos y Ventas (al abrir)", "/productos/buscar?empresa_id=1&limit=100"),
+    ("Ventas (buscando)", "/productos/buscar?empresa_id=1&limit=50&q=latex%20blanco"),
+    ("Selectores de producto", "/productos/buscar?empresa_id=1&limit=20&q=pintura"),
+    ("Stock (al abrir)", "/stock/buscar?empresa_id=1&limit=100"),
+    ("Stock (buscando)", "/stock/buscar?empresa_id=1&limit=100&nombre=barniz"),
+    ("[ya no se usa] catálogo completo", "/productos?empresa_id=1"),
+    ("[ya no se usa] stock completo", "/stock?empresa_id=1"),
     ("Clientes/Ventas/…", "/clientes?empresa_id=1"),
-    ("Stock", "/stock?empresa_id=1"),
     ("Proveedores/Productos/…", "/proveedores?empresa_id=1"),
     ("Proveedores", "/proveedores/comparacion-mercado?empresa_id=1"),
     ("Presupuestos", "/presupuestos?empresa_id=1"),
@@ -36,7 +41,7 @@ LLAMADAS = [
     ("BI cierre", f"/bi/cierre?empresa_id=1&fecha_desde={INICIO_ANIO}&fecha_hasta={HOY}"),
     ("BI sugerencias", "/bi/sugerencias-compra?empresa_id=1&semanas_analisis=4&semanas_cobertura=4"),
     ("BI exceso", "/bi/exceso-compras?empresa_id=1&semanas_referencia=4"),
-    ("BI aging", "/bi/aging-tandas?empresa_id=1&orden=mas_antiguo"),
+    ("BI aging", "/bi/aging-tandas?empresa_id=1&orden=mas_antiguo&limit=100"),
     ("Ventas (vendedores)", "/usuarios?empresa_id=1"),
 ]
 
