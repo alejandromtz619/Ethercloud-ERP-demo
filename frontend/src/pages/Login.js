@@ -29,7 +29,7 @@ const Login = () => {
   useEffect(() => {
     const fetchEmpresa = async () => {
       try {
-        const res = await fetch(`${API_URL}/empresas/1`);
+        const res = await fetch(`${API_URL}/empresas/1/publico`);
         if (res.ok) {
           const data = await res.json();
           setEmpresa(data);

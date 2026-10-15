@@ -54,7 +54,7 @@ yarn start
 - **Always run tests in `dev` before merging to `main`**
 
 ### Environment Variables
-**Backend**: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `PORT`  
+**Backend**: `DATABASE_URL`, `JWT_SECRET` (required with PostgreSQL, 32+ random chars), `CORS_ORIGINS`, `PORT`, `PERMITIR_ENDPOINTS_DESARROLLO` (dev only)  
 **Frontend**: `REACT_APP_BACKEND_URL`
 
 ## Critical Features
@@ -112,7 +112,9 @@ See [design_guidelines.json](../design_guidelines.json) for:
 1. Define Pydantic schemas in `schemas.py`
 2. Add SQLAlchemy model to `models.py` if needed
 3. Create endpoint in `server.py` under `api_router` (e.g., `@api_router.post("/...)")`)
-4. Include `Depends(get_current_usuario)` for auth
+4. Auth is automatic: `api_router` requires a valid token on every route. Use `Depends(get_current_usuario)` only if you need the user object
+5. For sensitive actions add `dependencies=[Depends(requiere_permiso("modulo.accion"))]` (admin roles always pass)
+6. Only routes that must work without a token go in `public_router` — and must be added to `RUTAS_PUBLICAS` in `backend/tests/test_seguridad_rutas.py`, which fails otherwise
 
 ### Adding a new page
 1. Create in `frontend/src/pages/YourPage.js`

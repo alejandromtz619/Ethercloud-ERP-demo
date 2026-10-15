@@ -18,6 +18,9 @@ import httpx
 import bcrypt
 import jwt
 import uuid
+import secrets
+import time
+from collections import deque
 import shutil
 import asyncio
 import socket
@@ -37,7 +40,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
-from database import get_db, init_db, engine, Base, async_session_maker
+from database import get_db, init_db, engine, Base, async_session_maker, DATABASE_URL
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
     Cliente, CreditoCliente, PagoCredito, Proveedor, ProveedorProducto, DeudaProveedor,
@@ -127,9 +130,18 @@ UPLOADS_DIR = ROOT_DIR / 'uploads' / 'productos'
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # JWT Config
-JWT_SECRET = os.environ.get('JWT_SECRET', 'ethercloud-secret-key-change-in-production')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = int(os.environ.get('JWT_EXPIRATION_HOURS', '12'))
+# Valores por defecto que alguna vez estuvieron publicados en el repo: firmar con ellos
+# permite a cualquiera fabricar un token de administrador.
+JWT_SECRETS_INSEGUROS = {
+    '',
+    'ethercloud-secret-key-change-in-production',
+    'generate-a-strong-secret-here',
+}
+ES_PRODUCCION = DATABASE_URL.startswith('postgresql')
+# Endpoints que borran o siembran la base (/seed, /reset-database). Sólo para desarrollo.
+PERMITIR_ENDPOINTS_DESARROLLO = os.environ.get('PERMITIR_ENDPOINTS_DESARROLLO', '').lower() == 'true'
 
 # Margen de ganancia fijo de las materias de laboratorio: su costo se registra como
 # precio * (1 - margen). Regulable por variable de entorno (0.30 = 30 %).
@@ -138,6 +150,19 @@ LAB_MARGEN_GANANCIA = Decimal(os.environ.get('LAB_MARGEN_GANANCIA', '0.30'))
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+JWT_SECRET = os.environ.get('JWT_SECRET', '').strip()
+if JWT_SECRET in JWT_SECRETS_INSEGUROS:
+    if ES_PRODUCCION:
+        raise RuntimeError(
+            "JWT_SECRET no está configurado o usa un valor por defecto público. "
+            "Definí un valor aleatorio de 32+ caracteres (p. ej. `openssl rand -hex 32`)."
+        )
+    # Desarrollo (SQLite): secreto efímero; las sesiones se pierden al reiniciar.
+    JWT_SECRET = secrets.token_urlsafe(48)
+    logger.warning("JWT_SECRET no configurado: se usa un secreto temporal (sólo desarrollo)")
+elif len(JWT_SECRET) < 32:
+    logger.warning("JWT_SECRET tiene menos de 32 caracteres: conviene reemplazarlo por uno aleatorio más largo")
 
 # Manual currency rates storage
 MANUAL_CURRENCY_RATES = {
@@ -174,8 +199,10 @@ app.add_middleware(
 # Mount static files for uploads
 app.mount("/uploads", StaticFiles(directory=str(ROOT_DIR / 'uploads')), name="uploads")
 
-# API Router
-api_router = APIRouter(prefix="/api")
+# Rutas sin token. Sólo lo imprescindible: salud, login, la marca de la empresa para la
+# pantalla de login y los enlaces públicos de documentos (llevan su propio token).
+# Todo lo demás va en api_router, que exige token por defecto (se define más abajo).
+public_router = APIRouter(prefix="/api")
 
 # ==================== AUTH HELPERS ====================
 def hash_password(password: str) -> str:
@@ -221,7 +248,10 @@ async def get_current_usuario(
             detail="Token de autenticación requerido."
         )
     payload = decode_token(credentials.credentials)
-    usuario_id = int(payload.get("sub", 0))
+    try:
+        usuario_id = int(payload.get("sub", 0))
+    except (TypeError, ValueError):
+        usuario_id = 0
     if not usuario_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -244,19 +274,79 @@ async def get_current_usuario(
 # Nombres del rol administrador: seed_data.py crea "Administrador" y el seed de la API "ADMIN"
 ROLES_ADMIN = ('ADMIN', 'Administrador')
 
+async def _es_admin(db: AsyncSession, usuario_id: int) -> bool:
+    result = await db.execute(
+        select(Rol.id)
+        .join(UsuarioRol, Rol.id == UsuarioRol.rol_id)
+        .where(UsuarioRol.usuario_id == usuario_id, Rol.nombre.in_(ROLES_ADMIN))
+        .limit(1)
+    )
+    return result.first() is not None
+
 async def verificar_es_admin(
     usuario: Usuario = Depends(get_current_usuario),
     db: AsyncSession = Depends(get_db)
 ) -> Usuario:
     """Dependency that requires the current user to have the ADMIN role."""
-    result = await db.execute(
-        select(Rol)
-        .join(UsuarioRol, Rol.id == UsuarioRol.rol_id)
-        .where(UsuarioRol.usuario_id == usuario.id, Rol.nombre.in_(ROLES_ADMIN))
-    )
-    if not result.scalar_one_or_none():
+    if not await _es_admin(db, usuario.id):
         raise HTTPException(status_code=403, detail="Solo un administrador puede realizar esta acción")
     return usuario
+
+def requiere_permiso(*claves: str):
+    """Dependency: el usuario debe tener al menos uno de los permisos `claves`.
+    Los roles administrador pasan siempre."""
+    async def _verificar(
+        usuario: Usuario = Depends(get_current_usuario),
+        db: AsyncSession = Depends(get_db)
+    ) -> Usuario:
+        if await _es_admin(db, usuario.id):
+            return usuario
+        result = await db.execute(
+            select(Permiso.id)
+            .join(RolPermiso, Permiso.id == RolPermiso.permiso_id)
+            .join(UsuarioRol, RolPermiso.rol_id == UsuarioRol.rol_id)
+            .where(UsuarioRol.usuario_id == usuario.id, Permiso.clave.in_(claves))
+            .limit(1)
+        )
+        if result.first() is None:
+            raise HTTPException(status_code=403, detail="No tiene permisos para realizar esta acción")
+        return usuario
+    return _verificar
+
+# Todas las rutas de este router exigen un token válido. Una ruta nueva queda protegida
+# aunque se olvide declarar get_current_usuario; las públicas van en public_router.
+api_router = APIRouter(prefix="/api", dependencies=[Depends(get_current_usuario)])
+
+# ==================== LÍMITE DE INTENTOS DE LOGIN ====================
+class LimitadorIntentos:
+    """Cuenta intentos fallidos por clave dentro de una ventana deslizante (en memoria:
+    el backend corre en un solo proceso por instancia)."""
+
+    def __init__(self, maximo: int, ventana_segundos: int):
+        self.maximo = maximo
+        self.ventana = ventana_segundos
+        self._fallos: dict[str, deque] = {}
+
+    def _vigentes(self, clave: str) -> deque:
+        fallos = self._fallos.setdefault(clave, deque())
+        limite = time.monotonic() - self.ventana
+        while fallos and fallos[0] < limite:
+            fallos.popleft()
+        return fallos
+
+    def bloqueado(self, clave: str) -> bool:
+        return len(self._vigentes(clave)) >= self.maximo
+
+    def registrar_fallo(self, clave: str) -> None:
+        if len(self._fallos) > 10_000:  # evita que claves inventadas llenen la memoria
+            for vieja in [k for k in self._fallos if not self._vigentes(k)]:
+                del self._fallos[vieja]
+        self._vigentes(clave).append(time.monotonic())
+
+    def limpiar(self, clave: str) -> None:
+        self._fallos.pop(clave, None)
+
+LOGIN_FALLOS_POR_EMAIL = LimitadorIntentos(maximo=5, ventana_segundos=15 * 60)
 
 def numero_a_letras(numero):
     """Convert number to Spanish words for receipts"""
@@ -301,16 +391,29 @@ def numero_a_letras(numero):
     return resultado.strip()
 
 # ==================== ROOT ====================
-@api_router.get("/")
+@public_router.get("/")
 async def root():
     return {"message": "Ethercloud ERP API v1.0"}
 
-@api_router.get("/health")
+@public_router.get("/health")
 async def health():
     return {"status": "healthy", "timestamp": now_paraguay().isoformat()}
 
 # ==================== EMPRESA ====================
-@api_router.post("/empresas", response_model=EmpresaResponse)
+@public_router.get("/empresas/{empresa_id}/publico")
+async def obtener_empresa_publico(empresa_id: int, db: AsyncSession = Depends(get_db)):
+    """Nombre y logo para la pantalla de login (sin token). No expone otros datos."""
+    result = await db.execute(
+        select(Empresa.id, Empresa.nombre, Empresa.logo_url)
+        .where(Empresa.id == empresa_id, Empresa.estado == True)
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    return {"id": row.id, "nombre": row.nombre, "logo_url": row.logo_url}
+
+@api_router.post("/empresas", response_model=EmpresaResponse,
+                 dependencies=[Depends(requiere_permiso("sistema.configurar"))])
 async def crear_empresa(data: EmpresaCreate, db: AsyncSession = Depends(get_db)):
     empresa = Empresa(**data.model_dump())
     db.add(empresa)
@@ -336,7 +439,7 @@ async def actualizar_empresa(
     empresa_id: int,
     data: EmpresaUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(get_current_usuario)
+    current_user: Usuario = Depends(requiere_permiso("sistema.configurar"))
 ):
     if current_user.empresa_id != empresa_id:
         raise HTTPException(status_code=403, detail="Sin permisos para modificar esta empresa")
@@ -352,7 +455,9 @@ async def actualizar_empresa(
     return empresa
 
 # ==================== AUTH ====================
-@api_router.post("/auth/register", response_model=TokenResponse)
+# Alta de usuarios desde la pantalla Usuarios: sólo quien gestiona usuarios.
+@api_router.post("/auth/register", response_model=TokenResponse,
+                 dependencies=[Depends(requiere_permiso("usuarios.gestionar"))])
 async def registrar_usuario(data: UsuarioCreate, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(Usuario).where(Usuario.email == data.email))
     if existing.scalar_one_or_none():
@@ -373,17 +478,28 @@ async def registrar_usuario(data: UsuarioCreate, db: AsyncSession = Depends(get_
     token = create_token(usuario.id)
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
 
-@api_router.post("/auth/login", response_model=TokenResponse)
+@public_router.post("/auth/login", response_model=TokenResponse)
 async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
+    # Por e-mail y no por IP: detrás del proxy de Coolify todas las peticiones llegan
+    # con la misma IP, y un límite por IP bloquearía a todos los usuarios a la vez.
+    clave_email = data.email.strip().lower()
+    if LOGIN_FALLOS_POR_EMAIL.bloqueado(clave_email):
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos fallidos. Espere unos minutos e intente de nuevo."
+        )
+
     result = await db.execute(select(Usuario).where(Usuario.email == data.email))
     usuario = result.scalar_one_or_none()
-    
+
     if not usuario or not verify_password(data.password, usuario.password_hash):
+        LOGIN_FALLOS_POR_EMAIL.registrar_fallo(clave_email)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    
+
     if not usuario.activo:
         raise HTTPException(status_code=401, detail="Usuario inactivo")
-    
+
+    LOGIN_FALLOS_POR_EMAIL.limpiar(clave_email)
     token = create_token(usuario.id)
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
 
@@ -428,7 +544,8 @@ async def obtener_usuario(usuario_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return usuario
 
-@api_router.put("/usuarios/{usuario_id}", response_model=UsuarioResponse)
+@api_router.put("/usuarios/{usuario_id}", response_model=UsuarioResponse,
+                dependencies=[Depends(requiere_permiso("usuarios.gestionar"))])
 async def actualizar_usuario(usuario_id: int, data: dict, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Usuario).where(Usuario.id == usuario_id))
     usuario = result.scalar_one_or_none()
@@ -445,7 +562,7 @@ async def actualizar_usuario(usuario_id: int, data: dict, db: AsyncSession = Dep
     await db.refresh(usuario)
     return usuario
 
-@api_router.delete("/usuarios/{usuario_id}")
+@api_router.delete("/usuarios/{usuario_id}", dependencies=[Depends(requiere_permiso("usuarios.gestionar"))])
 async def eliminar_usuario(usuario_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Usuario).where(Usuario.id == usuario_id))
     usuario = result.scalar_one_or_none()
@@ -457,7 +574,7 @@ async def eliminar_usuario(usuario_id: int, db: AsyncSession = Depends(get_db)):
     return {"message": "Usuario desactivado"}
 
 # ==================== ROLES Y PERMISOS ====================
-@api_router.post("/roles", response_model=RolResponse)
+@api_router.post("/roles", response_model=RolResponse, dependencies=[Depends(requiere_permiso("usuarios.gestionar", "roles.gestionar"))])
 async def crear_rol(data: RolCreate, db: AsyncSession = Depends(get_db)):
     rol = Rol(**data.model_dump())
     db.add(rol)
@@ -475,7 +592,7 @@ async def listar_permisos(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Permiso))
     return result.scalars().all()
 
-@api_router.post("/permisos", response_model=PermisoResponse)
+@api_router.post("/permisos", response_model=PermisoResponse, dependencies=[Depends(requiere_permiso("usuarios.gestionar", "roles.gestionar"))])
 async def crear_permiso(data: dict, db: AsyncSession = Depends(get_db)):
     permiso = Permiso(clave=data['clave'], descripcion=data.get('descripcion'))
     db.add(permiso)
@@ -483,7 +600,7 @@ async def crear_permiso(data: dict, db: AsyncSession = Depends(get_db)):
     await db.refresh(permiso)
     return permiso
 
-@api_router.post("/roles/{rol_id}/permisos/{permiso_id}")
+@api_router.post("/roles/{rol_id}/permisos/{permiso_id}", dependencies=[Depends(requiere_permiso("usuarios.gestionar", "roles.gestionar"))])
 async def asignar_permiso_rol(rol_id: int, permiso_id: int, db: AsyncSession = Depends(get_db)):
     # Check if already exists
     existing = await db.execute(
@@ -497,7 +614,7 @@ async def asignar_permiso_rol(rol_id: int, permiso_id: int, db: AsyncSession = D
     await db.commit()
     return {"message": "Permiso asignado"}
 
-@api_router.delete("/roles/{rol_id}/permisos/{permiso_id}")
+@api_router.delete("/roles/{rol_id}/permisos/{permiso_id}", dependencies=[Depends(requiere_permiso("usuarios.gestionar", "roles.gestionar"))])
 async def quitar_permiso_rol(rol_id: int, permiso_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(RolPermiso).where(RolPermiso.rol_id == rol_id, RolPermiso.permiso_id == permiso_id)
@@ -517,7 +634,7 @@ async def obtener_permisos_rol(rol_id: int, db: AsyncSession = Depends(get_db)):
     )
     return result.scalars().all()
 
-@api_router.post("/usuarios/{usuario_id}/roles/{rol_id}")
+@api_router.post("/usuarios/{usuario_id}/roles/{rol_id}", dependencies=[Depends(requiere_permiso("usuarios.gestionar"))])
 async def asignar_rol_usuario(usuario_id: int, rol_id: int, db: AsyncSession = Depends(get_db)):
     # Check if already exists
     existing = await db.execute(
@@ -531,7 +648,7 @@ async def asignar_rol_usuario(usuario_id: int, rol_id: int, db: AsyncSession = D
     await db.commit()
     return {"message": "Rol asignado"}
 
-@api_router.delete("/usuarios/{usuario_id}/roles/{rol_id}")
+@api_router.delete("/usuarios/{usuario_id}/roles/{rol_id}", dependencies=[Depends(requiere_permiso("usuarios.gestionar"))])
 async def quitar_rol_usuario(usuario_id: int, rol_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(UsuarioRol).where(UsuarioRol.usuario_id == usuario_id, UsuarioRol.rol_id == rol_id)
@@ -3736,7 +3853,7 @@ async def generar_enlace_documento(
         raise HTTPException(status_code=500, detail=f"Error al generar documento: {str(e)}")
 
 
-@api_router.get("/documentos/{token}")
+@public_router.get("/documentos/{token}")
 async def descargar_documento(token: str, db: AsyncSession = Depends(get_db)):
     """
     Endpoint público para descargar documentos mediante token único.
@@ -4885,7 +5002,7 @@ async def obtener_cotizacion():
             fecha_actualizacion=now_paraguay()
         )
 
-@api_router.post("/cotizacion/manual")
+@api_router.post("/cotizacion/manual", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
 async def establecer_cotizacion_manual(data: dict):
     """Set manual exchange rates"""
     global MANUAL_CURRENCY_RATES
@@ -4897,7 +5014,7 @@ async def establecer_cotizacion_manual(data: dict):
     
     return {"message": "Cotización manual establecida", "data": MANUAL_CURRENCY_RATES}
 
-@api_router.post("/cotizacion/auto")
+@api_router.post("/cotizacion/auto", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
 async def activar_cotizacion_automatica():
     """Switch back to automatic exchange rates"""
     global MANUAL_CURRENCY_RATES
@@ -7856,7 +7973,7 @@ async def _asignar_permisos_requeridos_a_admins(db: AsyncSession) -> int:
                 assigned += 1
     return assigned
 
-@api_router.post("/sistema/sync-permisos")
+@api_router.post("/sistema/sync-permisos", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
 async def sync_permisos(db: AsyncSession = Depends(get_db)):
     """Add any missing permissions and assign them to all ADMIN roles. Safe to run on production."""
     added_perms = []
@@ -7878,9 +7995,14 @@ async def sync_permisos(db: AsyncSession = Depends(get_db)):
 
 
 # ==================== SEED DATA ====================
-@api_router.post("/seed")
+# Sin token porque se usa sobre una base vacía (aún no hay usuarios), por eso sólo existe
+# con PERMITIR_ENDPOINTS_DESARROLLO=true. En producción, el primer admin se crea con
+# `python seed_data.py` dentro del contenedor.
+@public_router.post("/seed")
 async def seed_data(db: AsyncSession = Depends(get_db)):
     """Create initial data for testing"""
+    if not PERMITIR_ENDPOINTS_DESARROLLO:
+        raise HTTPException(status_code=404, detail="Not Found")
     existing = await db.execute(select(Empresa))
     if existing.scalar_one_or_none():
         return {"message": "Data already seeded"}
@@ -7983,8 +8105,11 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         ("presupuestos.editar", "Editar presupuestos"),
         ("presupuestos.eliminar", "Eliminar presupuestos"),
     ]
+    # El arranque (ensure_permisos) ya crea algunos: sólo se agregan los que falten
+    existentes = set((await db.execute(select(Permiso.clave))).scalars().all())
     for clave, desc in permisos_data:
-        db.add(Permiso(clave=clave, descripcion=desc))
+        if clave not in existentes:
+            db.add(Permiso(clave=clave, descripcion=desc))
     
     # Create roles
     for rol_nombre in ["ADMIN", "GERENTE", "VENDEDOR", "DELIVERY"]:
@@ -8001,6 +8126,7 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
         all_permisos = permisos_result.scalars().all()
         for permiso in all_permisos:
             db.add(RolPermiso(rol_id=admin_rol.id, permiso_id=permiso.id))
+        db.add(UsuarioRol(usuario_id=admin.id, rol_id=admin_rol.id))
     
     # Assign permissions to GERENTE role
     gerente_rol_result = await db.execute(select(Rol).where(Rol.nombre == "GERENTE", Rol.empresa_id == empresa.id))
@@ -8089,12 +8215,14 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"message": "Data seeded successfully", "empresa_id": empresa.id}
 
-@api_router.post("/reset-database")
+@api_router.post("/reset-database", dependencies=[Depends(verificar_es_admin)])
 async def reset_database(db: AsyncSession = Depends(get_db)):
     """
     PELIGRO: Elimina y recrea todas las tablas
     Solo usar en desarrollo o primera configuración
     """
+    if not PERMITIR_ENDPOINTS_DESARROLLO:
+        raise HTTPException(status_code=404, detail="Not Found")
     try:
         # Drop all tables
         async with engine.begin() as conn:
@@ -8246,41 +8374,14 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
         logger.error(f"Error al resetear base de datos: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error al resetear base de datos: {str(e)}")
 
-# Include router
+# Include routers
+app.include_router(public_router)
 app.include_router(api_router)
 
-# Health check endpoint para debugging
+# Health check sin datos internos (rutas de disco ni variables de entorno)
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "ok",
-        "docs_dir": str(DOCS_DIR),
-        "docs_dir_exists": DOCS_DIR.exists(),
-        "backend_url": os.getenv("BACKEND_URL", "NOT_SET")
-    }
-
-# Endpoint temporal para migrar tabla documentos_temporales
-@app.post("/api/admin/migrate-documentos-temporales")
-async def migrate_documentos_temporales():
-    """
-    Migra la tabla documentos_temporales para usar TIMESTAMP WITH TIME ZONE
-    """
-    try:
-        async with engine.begin() as conn:
-            # Primero eliminar datos existentes si los hay (temporales de todas formas)
-            await conn.execute(text("DROP TABLE IF EXISTS documentos_temporales CASCADE"))
-            
-            # Recrear la tabla con el nuevo esquema
-            await conn.run_sync(Base.metadata.create_all)
-            
-        logger.info("Tabla documentos_temporales migrada exitosamente")
-        return {
-            "status": "success",
-            "message": "Tabla documentos_temporales migrada a TIMESTAMP WITH TIME ZONE"
-        }
-    except Exception as e:
-        logger.error(f"Error al migrar tabla: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error en migración: {str(e)}")
+    return {"status": "ok"}
 
 # Startup event
 @app.on_event("startup")

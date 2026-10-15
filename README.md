@@ -38,6 +38,8 @@ yarn start
 ### Variables de Entorno
 
 **Backend:** `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `PORT`  
+- `JWT_SECRET` es **obligatorio** con PostgreSQL: el backend no arranca si falta o si usa un valor por defecto público. Generarlo con `openssl rand -hex 32`.
+- `PERMITIR_ENDPOINTS_DESARROLLO=true` habilita `POST /api/seed` y `POST /api/reset-database` (sólo desarrollo; en producción responden 404).  
 **Frontend:** `REACT_APP_BACKEND_URL`
 
 ## Módulos Principales
@@ -67,3 +69,5 @@ El proyecto se despliega mediante **Docker** (Coolify). Cada servicio tiene su p
 ## Credenciales de Prueba
 
 `admin@ether.com` / `admin123` (empresa_id: 1)
+
+En una instancia **nueva**, el primer administrador se crea dentro del contenedor del backend con `python seed_data.py`. No borra datos, pero si no encuentra la empresa y el usuario por defecto los crea: no usarlo en instancias en uso. **Cambiar la contraseña después del primer ingreso.**

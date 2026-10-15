@@ -40,7 +40,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://ethercloud:${DB_PASSWORD:-changeme_in_production}@postgres:5432/ethercloud_erp
-      JWT_SECRET: ${JWT_SECRET:-generate-a-strong-secret-here}
+      JWT_SECRET: ${JWT_SECRET:?Definí JWT_SECRET con un valor aleatorio (openssl rand -hex 32)}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-12}
       LAB_MARGEN_GANANCIA: ${LAB_MARGEN_GANANCIA:-0.30}

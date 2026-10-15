@@ -234,13 +234,14 @@ export const AppProvider = ({ children }) => {
   }, [fetchUserPermisos]);
 
   const api = useCallback(async (endpoint, options = {}) => {
+    // options va primero: si trae su propio `headers`, no debe pisar el Authorization
     const config = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
         ...(token && { 'Authorization': `Bearer ${token}` }),
         ...options.headers
-      },
-      ...options
+      }
     };
     
     try {
