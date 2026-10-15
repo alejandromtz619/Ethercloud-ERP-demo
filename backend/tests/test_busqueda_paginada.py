@@ -230,3 +230,28 @@ def test_aging_totales_por_producto(client, admin, datos):
         assert [x[clave] for x in lista] == sorted((x[clave] for x in lista), reverse=invertido)
     assert completo["resumen"]["valor_stock_activo"] == sum(x["valor_total_inmovilizado"] for x in completo["productos"])
     assert completo["resumen"]["total_tandas_activas"] == sum(x["num_tandas"] for x in completo["productos"])
+
+
+def test_exceso_compras_resumen_cubre_todo(client, admin, datos):
+    completo = _buscar(client, admin, "/api/bi/exceso-compras", limite=10000)
+    pagina = _buscar(client, admin, "/api/bi/exceso-compras", limite=1)
+    assert pagina["resumen"] == completo["resumen"]
+    sin_ventas = completo["sin_ventas_recientes"]
+    assert completo["resumen"]["productos_sin_ventas"] == len(sin_ventas)
+    assert pagina["sin_ventas_recientes"] == sin_ventas[:1]
+    # Latex Blanco: 7 unidades a 6000, sin ventas -> 42000 inmovilizados
+    blanco = next(x for x in sin_ventas if x["producto_id"] == datos["latex_blanco"]["id"])
+    assert (blanco["stock_actual"], blanco["valor_inmovilizado"], blanco["tipo"]) == (7, 42000, "SIN_VENTAS")
+    valores = [x["valor_inmovilizado"] for x in sin_ventas]
+    assert valores == sorted(valores, reverse=True)
+    assert completo["resumen"]["valor_total_inmovilizado"] == round(
+        sum(valores) + sum(x["valor_inmovilizado"] for x in completo["exceso_stock"]), 2)
+
+
+def test_cierre_evolucion_mensual_suma_el_total(client, admin, datos):
+    from datetime import date
+    hoy = date.today()
+    cierre = _buscar(client, admin, "/api/bi/cierre", fecha_desde=f"{hoy.year - 1}-01-01", fecha_hasta=hoy.isoformat())
+    meses = cierre["evolucion_mensual"]
+    assert [m["mes"] for m in meses] == sorted(m["mes"] for m in meses)
+    assert sum(m["ventas"] for m in meses) == cierre["ventas"]["total"]

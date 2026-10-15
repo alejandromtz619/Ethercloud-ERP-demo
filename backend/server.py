@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract, case, literal, type_coerce, Date
+from sqlalchemy import select, func as func_sql, and_, or_, update, delete, text, extract, case, literal, type_coerce, Date, union_all, null
 from sqlalchemy.orm import selectinload
 from dotenv import load_dotenv
 from pathlib import Path
@@ -7330,11 +7330,18 @@ async def bi_cierre(
         .where(Proveedor.empresa_id == empresa_id, DeudaProveedor.pagado == False)
     )
 
-    # Monthly breakdown of sales — Python-side grouping for cross-DB compatibility
+    # Ventas por mes (en hora de Paraguay), agrupadas en la base
+    if db.bind.dialect.name == "postgresql":
+        mes = func_sql.to_char(func_sql.timezone("America/Asuncion", Venta.creado_en), "YYYY-MM")
+    else:  # SQLite guarda la hora local
+        mes = func_sql.strftime("%Y-%m", Venta.creado_en)
     ventas_mes_q = (
-        select(Venta.creado_en, Venta.total, Venta.ganancia, Venta.costo_total)
+        select(mes.label("mes"), func_sql.sum(Venta.total).label("ventas"),
+               func_sql.sum(Venta.ganancia).label("ganancia"), func_sql.sum(Venta.costo_total).label("costo"))
         .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
-               Venta.creado_en >= f_ini, Venta.creado_en <= f_fin)
+               Venta.creado_en >= f_ini, Venta.creado_en <= f_fin, Venta.creado_en.isnot(None))
+        .group_by(mes)
+        .order_by(mes)
     )
 
     # Gastos operativos en el período
@@ -7394,17 +7401,8 @@ async def bi_cierre(
     total_egresos = total_compras + total_salarios + total_gastos_op
     balance_neto = total_ventas - total_egresos
 
-    # Group ventas by month in Python
-    from collections import defaultdict
-    mes_map = defaultdict(lambda: {"ventas": 0.0, "ganancia": 0.0, "costo": 0.0})
-    for row in vmr.all():
-        key = row.creado_en.strftime('%Y-%m') if row.creado_en else None
-        if key:
-            mes_map[key]["ventas"] += float(row.total or 0)
-            mes_map[key]["ganancia"] += float(row.ganancia or 0)
-            mes_map[key]["costo"] += float(row.costo_total or 0)
-    meses = [{"mes": k, "ventas": v["ventas"], "ganancia": v["ganancia"], "costo": v["costo"]}
-             for k, v in sorted(mes_map.items())]
+    meses = [{"mes": r.mes, "ventas": float(r.ventas or 0), "ganancia": float(r.ganancia or 0),
+              "costo": float(r.costo or 0)} for r in vmr.all()]
 
     return {
         "periodo": {"desde": fecha_desde, "hasta": fecha_hasta},
@@ -7534,19 +7532,22 @@ async def bi_exceso_compras(
 ):
     """Detección de compras en exceso: productos con stock alto respecto a su velocidad de venta.
     Cada lista trae los `limite` de mayor valor inmovilizado; el resumen cubre todos
-    (con miles de productos sin ventas, devolverlos todos pesaba decenas de MB)."""
+    (con miles de productos sin ventas, devolverlos todos pesaba decenas de MB).
+    Los productos sin ventas (la mayoría) se resuelven en la base; Python sólo recorre los que
+    vendieron, para calcular la velocidad con el mismo redondeo de siempre."""
     PARAGUAY_TZ = ZoneInfo("America/Asuncion")
     now = datetime.now(PARAGUAY_TZ)
     fecha_inicio = now - timedelta(weeks=semanas_referencia)
 
-    # Sales velocity últimas N semanas
-    vel_q = (
-        select(VentaItem.producto_id,
-               func_sql.sum(VentaItem.cantidad).label("total_unidades"))
+    # Unidades vendidas por producto en las últimas N semanas
+    vendidos = (
+        select(VentaItem.producto_id.label("producto_id"),
+               func_sql.sum(VentaItem.cantidad).label("vendido"))
         .join(Venta, VentaItem.venta_id == Venta.id)
         .where(Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
                Venta.creado_en >= fecha_inicio, VentaItem.producto_id.isnot(None))
         .group_by(VentaItem.producto_id)
+        .subquery()
     )
 
     # Entradas de stock recientes
@@ -7561,82 +7562,95 @@ async def bi_exceso_compras(
         .group_by(MovimientoStock.producto_id)
     )
 
-    # Stock actual + product info
-    stock_q = (
-        select(StockActual.producto_id, func_sql.sum(StockActual.cantidad).label("stock_total"),
-               Producto.nombre.label("nombre"), Producto.precio_venta.label("precio_venta"),
-               Producto.precio_costo.label("precio_costo"))
+    # Stock actual por producto (sólo con unidades); los datos del producto se suman después
+    # de agrupar, que es más barato que agrupar también por nombre y precio
+    stock = (
+        select(StockActual.producto_id.label("producto_id"),
+               func_sql.sum(StockActual.cantidad).label("stock_total"))
         .join(Almacen, StockActual.almacen_id == Almacen.id)
-        .join(Producto, StockActual.producto_id == Producto.id)
         .where(Almacen.empresa_id == empresa_id)
-        .group_by(StockActual.producto_id, Producto.nombre, Producto.precio_venta, Producto.precio_costo)
+        .group_by(StockActual.producto_id)
+        .having(func_sql.sum(StockActual.cantidad) > 0)
+        .subquery()
     )
+    # stock × costo tiene a lo sumo 2 decimales: ROUND(…, 2) da lo mismo que round() de Python
+    base = (
+        select(stock.c.producto_id, Producto.nombre.label("nombre"), stock.c.stock_total,
+               Producto.precio_costo.label("precio_costo"),
+               func_sql.coalesce(vendidos.c.vendido, 0).label("vendido"),
+               func_sql.round(stock.c.stock_total * func_sql.coalesce(Producto.precio_costo, 0), 2).label("valor"))
+        .join(Producto, Producto.id == stock.c.producto_id)
+        .outerjoin(vendidos, vendidos.c.producto_id == stock.c.producto_id)
+        .cte("base")
+    )
+    # Una sola consulta (la base calcula stock y ventas una vez): todos los productos con
+    # ventas, y de los sin ventas sólo la página, con su cantidad y valor total
+    columnas = [base.c.producto_id, base.c.nombre, base.c.stock_total, base.c.precio_costo, base.c.vendido, base.c.valor]
+    pagina_sin = (
+        select(*columnas, func_sql.count().over().label("n_sin"), func_sql.sum(base.c.valor).over().label("valor_sin"))
+        .where(base.c.vendido == 0)
+        .order_by(base.c.valor.desc(), base.c.producto_id)
+        .limit(limite)
+        .subquery()
+    )
+    filas = (await db.execute(union_all(
+        select(*columnas, null().label("n_sin"), null().label("valor_sin")).where(base.c.vendido != 0),
+        select(pagina_sin),
+    ))).all()
+    con_ventas = sorted((r for r in filas if r.vendido != 0), key=lambda r: r.producto_id)
+    pagina = sorted((r for r in filas if r.vendido == 0), key=lambda r: (-r.valor, r.producto_id))
+    resumen_sin = (pagina[0].n_sin, pagina[0].valor_sin) if pagina else (0, 0)
 
-    vel_r = await db.execute(vel_q)
+    # Sin ventas recientes pero con stock
+    sin_movimiento = [{
+        "producto_id": r.producto_id,
+        "producto_nombre": r.nombre,
+        "stock_actual": int(r.stock_total),
+        "vendido_periodo": 0,
+        "velocidad_semanal": 0,
+        "dias_para_agotar": None,
+        "valor_inmovilizado": float(r.valor),
+        "tipo": "SIN_VENTAS",
+    } for r in pagina]
+
+    # Con ventas: stock alto comparado con la velocidad de venta
     ent_r = await db.execute(entradas_q)
-    stk_r = await db.execute(stock_q)
-
-    vel_map = {r.producto_id: int(r.total_unidades) for r in vel_r.all()}
     ent_map = {r.producto_id: {"comprado": int(r.total_comprado),
                                 "costo": float(r.total_costo or 0)} for r in ent_r.all()}
 
     excesos = []
-    sin_movimiento = []
-
-    for row in stk_r.all():
-        pid = row.producto_id
-        stock = int(row.stock_total)
-        vendido = vel_map.get(pid, 0)
-        vel_semanal = round(vendido / semanas_referencia, 1)
-        entrada = ent_map.get(pid, {})
-        comprado = entrada.get("comprado", 0)
-        costo_sobrante = float(row.precio_costo or 0)
-
-        if stock <= 0:
-            continue
-
-        # Sin ventas recientes pero con stock
-        if vendido == 0 and stock > 0:
-            sin_movimiento.append({
-                "producto_id": pid,
-                "producto_nombre": row.nombre,
-                "stock_actual": stock,
-                "vendido_periodo": 0,
-                "velocidad_semanal": 0,
-                "dias_para_agotar": None,
-                "valor_inmovilizado": round(stock * costo_sobrante, 2),
-                "tipo": "SIN_VENTAS",
-            })
-        # Stock alto comparado con velocidad de venta
-        elif vel_semanal > 0:
-            semanas_para_agotar = stock / vel_semanal
+    for row in con_ventas:
+        stock_actual = int(row.stock_total)
+        vendido_periodo = int(row.vendido)
+        vel_semanal = round(vendido_periodo / semanas_referencia, 1)
+        if vel_semanal > 0:
+            semanas_para_agotar = stock_actual / vel_semanal
             if semanas_para_agotar > semanas_referencia * 2:
+                comprado = ent_map.get(row.producto_id, {}).get("comprado", 0)
                 excesos.append({
-                    "producto_id": pid,
+                    "producto_id": row.producto_id,
                     "producto_nombre": row.nombre,
-                    "stock_actual": stock,
-                    "vendido_periodo": vendido,
+                    "stock_actual": stock_actual,
+                    "vendido_periodo": vendido_periodo,
                     "velocidad_semanal": vel_semanal,
                     "semanas_para_agotar": round(semanas_para_agotar, 1),
                     "comprado_periodo": comprado,
-                    "exceso_vs_venta": max(0, comprado - vendido),
-                    "valor_inmovilizado": round(stock * costo_sobrante, 2),
+                    "exceso_vs_venta": max(0, comprado - vendido_periodo),
+                    "valor_inmovilizado": round(stock_actual * float(row.precio_costo or 0), 2),
                     "tipo": "EXCESO_STOCK",
                 })
 
     excesos.sort(key=lambda x: -x["valor_inmovilizado"])
-    sin_movimiento.sort(key=lambda x: -x["valor_inmovilizado"])
 
     return {
         "parametros": {"semanas_referencia": semanas_referencia},
         "exceso_stock": excesos[:limite],
-        "sin_ventas_recientes": sin_movimiento[:limite],
+        "sin_ventas_recientes": sin_movimiento,
         "resumen": {
             "productos_exceso": len(excesos),
-            "productos_sin_ventas": len(sin_movimiento),
+            "productos_sin_ventas": resumen_sin[0],
             "valor_total_inmovilizado": round(
-                sum(e["valor_inmovilizado"] for e in excesos) +
-                sum(s["valor_inmovilizado"] for s in sin_movimiento), 2
+                sum(e["valor_inmovilizado"] for e in excesos) + float(resumen_sin[1]), 2
             ),
         }
     }
