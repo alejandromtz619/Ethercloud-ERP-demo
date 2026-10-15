@@ -20,7 +20,7 @@ import jwt
 import uuid
 import secrets
 import time
-from collections import deque, defaultdict
+from collections import defaultdict
 import shutil
 import asyncio
 import socket
@@ -52,7 +52,7 @@ from models import (
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
     DocumentoTemporal, TipoDocumento, Gasto,
-    FacturaGrupal, factura_grupal_ventas
+    FacturaGrupal, factura_grupal_ventas, AjusteSistema, IntentoLoginFallido
 )
 from schemas import (
     EmpresaCreate, EmpresaUpdate, EmpresaResponse,
@@ -163,14 +163,6 @@ if JWT_SECRET in JWT_SECRETS_INSEGUROS:
     logger.warning("JWT_SECRET no configurado: se usa un secreto temporal (sólo desarrollo)")
 elif len(JWT_SECRET) < 32:
     logger.warning("JWT_SECRET tiene menos de 32 caracteres: conviene reemplazarlo por uno aleatorio más largo")
-
-# Manual currency rates storage
-MANUAL_CURRENCY_RATES = {
-    'usd_pyg': None,
-    'brl_pyg': None,
-    'manual': False,
-    'updated_at': None
-}
 
 # Create FastAPI app
 app = FastAPI(title="Ethercloud ERP API", version="1.0.0")
@@ -319,32 +311,30 @@ api_router = APIRouter(prefix="/api", dependencies=[Depends(get_current_usuario)
 
 # ==================== LÍMITE DE INTENTOS DE LOGIN ====================
 class LimitadorIntentos:
-    """Cuenta intentos fallidos por clave dentro de una ventana deslizante (en memoria:
-    el backend corre en un solo proceso por instancia)."""
+    """Cuenta intentos fallidos por clave dentro de una ventana deslizante. Se guardan en la
+    base (intentos_login_fallidos) para que el límite valga para todos los procesos de la API."""
 
     def __init__(self, maximo: int, ventana_segundos: int):
         self.maximo = maximo
-        self.ventana = ventana_segundos
-        self._fallos: dict[str, deque] = {}
+        self.ventana = timedelta(seconds=ventana_segundos)
 
-    def _vigentes(self, clave: str) -> deque:
-        fallos = self._fallos.setdefault(clave, deque())
-        limite = time.monotonic() - self.ventana
-        while fallos and fallos[0] < limite:
-            fallos.popleft()
-        return fallos
+    def _desde(self) -> datetime:
+        return datetime.now(timezone.utc) - self.ventana
 
-    def bloqueado(self, clave: str) -> bool:
-        return len(self._vigentes(clave)) >= self.maximo
+    async def bloqueado(self, db: AsyncSession, clave: str) -> bool:
+        fallos = await db.scalar(select(func_sql.count()).where(
+            IntentoLoginFallido.clave == clave, IntentoLoginFallido.creado_en >= self._desde()))
+        return fallos >= self.maximo
 
-    def registrar_fallo(self, clave: str) -> None:
-        if len(self._fallos) > 10_000:  # evita que claves inventadas llenen la memoria
-            for vieja in [k for k in self._fallos if not self._vigentes(k)]:
-                del self._fallos[vieja]
-        self._vigentes(clave).append(time.monotonic())
+    async def registrar_fallo(self, db: AsyncSession, clave: str) -> None:
+        # Los vencidos se borran acá, así la tabla no crece con e-mails inventados
+        await db.execute(delete(IntentoLoginFallido).where(IntentoLoginFallido.creado_en < self._desde()))
+        db.add(IntentoLoginFallido(clave=clave, creado_en=datetime.now(timezone.utc)))
+        await db.commit()
 
-    def limpiar(self, clave: str) -> None:
-        self._fallos.pop(clave, None)
+    async def limpiar(self, db: AsyncSession, clave: str) -> None:
+        await db.execute(delete(IntentoLoginFallido).where(IntentoLoginFallido.clave == clave))
+        await db.commit()
 
 LOGIN_FALLOS_POR_EMAIL = LimitadorIntentos(maximo=5, ventana_segundos=15 * 60)
 
@@ -483,7 +473,7 @@ async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
     # Por e-mail y no por IP: detrás del proxy de Coolify todas las peticiones llegan
     # con la misma IP, y un límite por IP bloquearía a todos los usuarios a la vez.
     clave_email = data.email.strip().lower()
-    if LOGIN_FALLOS_POR_EMAIL.bloqueado(clave_email):
+    if await LOGIN_FALLOS_POR_EMAIL.bloqueado(db, clave_email):
         raise HTTPException(
             status_code=429,
             detail="Demasiados intentos fallidos. Espere unos minutos e intente de nuevo."
@@ -492,14 +482,15 @@ async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Usuario).where(Usuario.email == data.email))
     usuario = result.scalar_one_or_none()
 
-    if not usuario or not verify_password(data.password, usuario.password_hash):
-        LOGIN_FALLOS_POR_EMAIL.registrar_fallo(clave_email)
+    # bcrypt tarda ~0,2 s de CPU a propósito: en un hilo aparte, para no frenar las demás peticiones
+    if not usuario or not await asyncio.to_thread(verify_password, data.password, usuario.password_hash):
+        await LOGIN_FALLOS_POR_EMAIL.registrar_fallo(db, clave_email)
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     if not usuario.activo:
         raise HTTPException(status_code=401, detail="Usuario inactivo")
 
-    LOGIN_FALLOS_POR_EMAIL.limpiar(clave_email)
+    await LOGIN_FALLOS_POR_EMAIL.limpiar(db, clave_email)
     token = create_token(usuario.id)
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
 
@@ -5076,20 +5067,46 @@ async def obtener_preferencias(usuario_id: int, db: AsyncSession = Depends(get_d
     return pref
 
 # ==================== COTIZACION DIVISAS ====================
+# La cotización manual se guarda en la base (ajustes_sistema): antes vivía en la memoria del
+# proceso y se perdía en cada reinicio o deploy.
+CLAVE_COTIZACION_MANUAL = "cotizacion_manual"
+# La cotización automática se consulta afuera a lo sumo cada 15 minutos por proceso
+# (el ticker de cada usuario la pide cada 5 minutos).
+COTIZACION_EXTERNA_TTL_SEGUNDOS = 15 * 60
+_cotizacion_externa = {"valor": None, "vence": 0.0}
+
+async def _leer_cotizacion_manual(db: AsyncSession) -> dict:
+    ajuste = await db.get(AjusteSistema, CLAVE_COTIZACION_MANUAL)
+    return dict(ajuste.valor) if ajuste else {"usd_pyg": None, "brl_pyg": None, "manual": False, "updated_at": None}
+
+async def _guardar_cotizacion_manual(db: AsyncSession, valor: dict) -> None:
+    ajuste = await db.get(AjusteSistema, CLAVE_COTIZACION_MANUAL)
+    if ajuste:
+        ajuste.valor = valor
+    else:
+        db.add(AjusteSistema(clave=CLAVE_COTIZACION_MANUAL, valor=valor))
+    await db.commit()
+
+def _cotizacion_desde_manual(manual: dict) -> CotizacionDivisa:
+    return CotizacionDivisa(
+        usd_pyg=Decimal(str(manual['usd_pyg'])),
+        brl_pyg=Decimal(str(manual['brl_pyg'])),
+        manual=True,
+        fecha_actualizacion=datetime.fromisoformat(manual['updated_at']) if manual.get('updated_at') else now_paraguay()
+    )
+
 @api_router.get("/cotizacion", response_model=CotizacionDivisa)
-async def obtener_cotizacion():
+async def obtener_cotizacion(db: AsyncSession = Depends(get_db)):
     """Get USD/PYG and BRL/PYG exchange rates"""
-    global MANUAL_CURRENCY_RATES
-    
+    manual = await _leer_cotizacion_manual(db)
+
     # If manual mode is set, return manual rates
-    if MANUAL_CURRENCY_RATES['manual'] and MANUAL_CURRENCY_RATES['usd_pyg']:
-        return CotizacionDivisa(
-            usd_pyg=Decimal(str(MANUAL_CURRENCY_RATES['usd_pyg'])),
-            brl_pyg=Decimal(str(MANUAL_CURRENCY_RATES['brl_pyg'])),
-            manual=True,
-            fecha_actualizacion=MANUAL_CURRENCY_RATES['updated_at'] or now_paraguay()
-        )
-    
+    if manual['manual'] and manual['usd_pyg']:
+        return _cotizacion_desde_manual(manual)
+
+    if _cotizacion_externa["valor"] and time.monotonic() < _cotizacion_externa["vence"]:
+        return _cotizacion_externa["valor"]
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -5097,27 +5114,24 @@ async def obtener_cotizacion():
                 timeout=10.0
             )
             data = response.json()
-            
+
             usd_pyg = Decimal(str(data['rates'].get('PYG', 7500)))
             brl_rate = Decimal(str(data['rates'].get('BRL', 5.0)))
             brl_pyg = usd_pyg / brl_rate
-            
-            return CotizacionDivisa(
+
+            cotizacion = CotizacionDivisa(
                 usd_pyg=usd_pyg,
                 brl_pyg=brl_pyg.quantize(Decimal('0.01')),
                 manual=False,
                 fecha_actualizacion=now_paraguay()
             )
+            _cotizacion_externa.update(valor=cotizacion, vence=time.monotonic() + COTIZACION_EXTERNA_TTL_SEGUNDOS)
+            return cotizacion
     except Exception as e:
         logger.error(f"Error fetching exchange rates: {e}")
         # Return default or cached values
-        if MANUAL_CURRENCY_RATES['usd_pyg']:
-            return CotizacionDivisa(
-                usd_pyg=Decimal(str(MANUAL_CURRENCY_RATES['usd_pyg'])),
-                brl_pyg=Decimal(str(MANUAL_CURRENCY_RATES['brl_pyg'])),
-                manual=True,
-                fecha_actualizacion=MANUAL_CURRENCY_RATES['updated_at'] or now_paraguay()
-            )
+        if manual['usd_pyg']:
+            return _cotizacion_desde_manual(manual)
         return CotizacionDivisa(
             usd_pyg=Decimal('7500'),
             brl_pyg=Decimal('1500'),
@@ -5126,22 +5140,23 @@ async def obtener_cotizacion():
         )
 
 @api_router.post("/cotizacion/manual", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
-async def establecer_cotizacion_manual(data: dict):
+async def establecer_cotizacion_manual(data: dict, db: AsyncSession = Depends(get_db)):
     """Set manual exchange rates"""
-    global MANUAL_CURRENCY_RATES
-    
-    MANUAL_CURRENCY_RATES['usd_pyg'] = data.get('usd_pyg')
-    MANUAL_CURRENCY_RATES['brl_pyg'] = data.get('brl_pyg')
-    MANUAL_CURRENCY_RATES['manual'] = data.get('manual', True)
-    MANUAL_CURRENCY_RATES['updated_at'] = now_paraguay()
-    
-    return {"message": "Cotización manual establecida", "data": MANUAL_CURRENCY_RATES}
+    manual = {
+        'usd_pyg': data.get('usd_pyg'),
+        'brl_pyg': data.get('brl_pyg'),
+        'manual': data.get('manual', True),
+        'updated_at': now_paraguay().isoformat(),
+    }
+    await _guardar_cotizacion_manual(db, manual)
+    return {"message": "Cotización manual establecida", "data": manual}
 
 @api_router.post("/cotizacion/auto", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
-async def activar_cotizacion_automatica():
+async def activar_cotizacion_automatica(db: AsyncSession = Depends(get_db)):
     """Switch back to automatic exchange rates"""
-    global MANUAL_CURRENCY_RATES
-    MANUAL_CURRENCY_RATES['manual'] = False
+    manual = await _leer_cotizacion_manual(db)
+    manual['manual'] = False
+    await _guardar_cotizacion_manual(db, manual)
     return {"message": "Cotización automática activada"}
 
 # ==================== DASHBOARD ====================
@@ -8550,8 +8565,24 @@ async def health_check():
     return {"status": "ok"}
 
 # Startup event
+# Con varios procesos de API (WEB_CONCURRENCY) todos arrancan a la vez: el candado hace que
+# las tablas, columnas, índices y permisos los prepare uno solo y los demás esperen.
+# Sin él, dos CREATE TABLE/INDEX simultáneos chocan y un proceso no arranca.
+CANDADO_ARRANQUE = 7_311_002_026
+
 @app.on_event("startup")
 async def startup():
+    if 'postgresql' not in str(engine.url):
+        await _preparar_base()
+        return
+    async with engine.connect() as candado:
+        await candado.execute(text("SELECT pg_advisory_lock(:k)"), {"k": CANDADO_ARRANQUE})
+        try:
+            await _preparar_base()
+        finally:
+            await candado.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": CANDADO_ARRANQUE})
+
+async def _preparar_base():
     await init_db()
     await ensure_columnas()
 

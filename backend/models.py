@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table
+    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table, JSON
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -607,3 +607,23 @@ class Gasto(Base):
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
 
     empresa = relationship("Empresa", backref="gastos")
+
+
+# Estado que antes vivía en la memoria del proceso. En la base lo comparten todos los
+# procesos de la API y sobrevive a reinicios y deploys.
+class AjusteSistema(Base):
+    """Ajustes de la instancia por clave (p. ej. la cotización manual)."""
+    __tablename__ = "ajustes_sistema"
+
+    clave = Column(String(100), primary_key=True)
+    valor = Column(JSON, nullable=False)
+    actualizado_en = Column(DateTime(timezone=True), default=now_paraguay, onupdate=now_paraguay)
+
+
+class IntentoLoginFallido(Base):
+    """Un intento de login fallido; se cuentan los recientes para bloquear por e-mail."""
+    __tablename__ = "intentos_login_fallidos"
+
+    id = Column(Integer, primary_key=True)
+    clave = Column(String(255), nullable=False, index=True)
+    creado_en = Column(DateTime(timezone=True), nullable=False, index=True)

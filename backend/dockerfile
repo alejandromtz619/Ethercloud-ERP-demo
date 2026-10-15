@@ -30,5 +30,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
+# Procesos de API: uvicorn toma la cantidad de WEB_CONCURRENCY. Con varios, una consulta
+# pesada (BI, Excel) no frena a las cajas. ~150 MB de memoria por proceso.
+ENV WEB_CONCURRENCY=2
+
 # Comando de inicio
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]

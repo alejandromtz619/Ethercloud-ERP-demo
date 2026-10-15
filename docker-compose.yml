@@ -44,6 +44,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-12}
       LAB_MARGEN_GANANCIA: ${LAB_MARGEN_GANANCIA:-0.30}
+      # Procesos de API (~150 MB c/u)
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       PORT: 8000
     volumes:
       - backend-uploads:/app/uploads

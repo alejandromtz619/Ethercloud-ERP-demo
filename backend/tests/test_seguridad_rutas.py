@@ -109,4 +109,7 @@ def test_login_bloquea_tras_intentos_fallidos(client):
     assert client.post("/api/auth/login", json=datos).status_code == 429
     # Otro usuario no queda afectado
     assert client.post("/api/auth/login", json={"email": "vendedor@test.com", "password": "mala"}).status_code == 401
-    server.LOGIN_FALLOS_POR_EMAIL.limpiar("admin@ether.com")
+    async def limpiar():
+        async with server.async_session_maker() as db:
+            await server.LOGIN_FALLOS_POR_EMAIL.limpiar(db, "admin@ether.com")
+    client.portal.call(limpiar)
