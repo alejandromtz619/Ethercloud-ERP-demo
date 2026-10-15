@@ -255,3 +255,26 @@ def test_cierre_evolucion_mensual_suma_el_total(client, admin, datos):
     meses = cierre["evolucion_mensual"]
     assert [m["mes"] for m in meses] == sorted(m["mes"] for m in meses)
     assert sum(m["ventas"] for m in meses) == cierre["ventas"]["total"]
+
+
+def test_reporte_venta_items_agrupa_por_producto(client, admin, datos):
+    import io
+    import openpyxl
+    yo = client.get("/api/auth/me", headers=admin).json()
+    cliente = client.post("/api/clientes", headers=admin, json={
+        "empresa_id": 1, "nombre": f"{PREFIJO} Comprador", "ruc": "80055555-5"}).json()
+    pid = datos["latex_negro"]["id"]
+    for cantidad in (1, 2):
+        venta = client.post("/api/ventas", headers=admin, json={
+            "empresa_id": 1, "usuario_id": yo["id"], "cliente_id": cliente["id"], "tipo_pago": "EFECTIVO",
+            "items": [{"producto_id": pid, "cantidad": cantidad, "precio_unitario": 10000}]}).json()
+        assert client.post(f"/api/ventas/{venta['id']}/confirmar", headers=admin).status_code == 200
+
+    r = client.get("/api/reportes/venta-items/excel", headers=admin, params={"empresa_id": 1, "producto_id": pid})
+    assert r.status_code == 200, r.text
+    filas = [tuple(c.value for c in fila) for fila in openpyxl.load_workbook(io.BytesIO(r.content)).active.iter_rows(min_row=5)]
+    assert filas == [(f"{PREFIJO} Latex Negro 1L", "Sin categoría", 3, 30000), ("TOTAL", None, 3, 30000)]
+    pdf = client.get("/api/reportes/venta-items", headers=admin, params={"empresa_id": 1, "producto_id": pid})
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+    assert client.get("/api/reportes/venta-items", headers=admin, params={
+        "empresa_id": 1, "fecha_desde": "2001-01-01", "fecha_hasta": "2001-01-02"}).status_code == 404

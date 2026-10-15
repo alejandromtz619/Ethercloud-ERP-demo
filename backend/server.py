@@ -6775,6 +6775,55 @@ async def reporte_creditos_clientes_excel(
         headers={"Content-Disposition": f"attachment; filename=reporte_creditos_clientes_{today_paraguay().isoformat()}.xlsx"}
     )
 
+async def _venta_items_agrupados(db: AsyncSession, empresa_id: int, fecha_desde, fecha_hasta,
+                                 categoria_id, producto_id, cliente_id) -> list:
+    """Ítems de ventas confirmadas agrupados por nombre de producto, o por materia de laboratorio
+    ("[LAB] nombre") si el ítem no tiene producto; de mayor a menor monto.
+    Devuelve [(nombre, {'cantidad', 'total', 'categoria'})]. Agrupa la base: traer cada ítem del
+    período como objeto tardaba ~2 s por mes de ventas."""
+    filtros = [Venta.empresa_id == empresa_id, Venta.estado == EstadoVenta.CONFIRMADA]
+    if fecha_desde:
+        try:
+            filtros.append(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
+    if fecha_hasta:
+        try:
+            filtros.append(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
+    if categoria_id:
+        filtros.append(Producto.categoria_id == categoria_id)
+    if producto_id:
+        filtros.append(VentaItem.producto_id == producto_id)
+    if cliente_id:
+        filtros.append(Venta.cliente_id == cliente_id)
+
+    def agrupar(nombre, categoria, *condiciones):
+        return (
+            select(nombre.label("nombre"), func_sql.max(categoria).label("categoria"),
+                   func_sql.sum(VentaItem.cantidad).label("cantidad"), func_sql.sum(VentaItem.total).label("total"))
+            .select_from(VentaItem)
+            .join(Venta, VentaItem.venta_id == Venta.id)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+            .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
+            .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+            .where(*filtros, *condiciones)
+            .group_by(nombre)
+        )
+
+    productos = await db.execute(agrupar(
+        Producto.nombre, func_sql.coalesce(Categoria.nombre, 'Sin categoría'), Producto.id.isnot(None)))
+    materias = await db.execute(agrupar(
+        MateriaLaboratorio.nombre, literal('Laboratorio'), Producto.id.is_(None), MateriaLaboratorio.id.isnot(None)))
+    grupos = [(r.nombre, {'cantidad': int(r.cantidad or 0), 'total': r.total or Decimal('0'), 'categoria': r.categoria})
+              for r in productos.all()]
+    grupos += [(f"[LAB] {r.nombre}", {'cantidad': int(r.cantidad or 0), 'total': r.total or Decimal('0'),
+                                      'categoria': r.categoria}) for r in materias.all()]
+    if not grupos:
+        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
+    return sorted(grupos, key=lambda x: (-x[1]['total'], x[0]))
+
 @api_router.get("/reportes/venta-items")
 async def reporte_venta_items(
     empresa_id: int,
@@ -6787,55 +6836,8 @@ async def reporte_venta_items(
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte PDF de ventas de items agrupadas por producto/materia de laboratorio"""
-    from collections import defaultdict
-    query = (
-        select(VentaItem, Venta, Producto, Categoria, MateriaLaboratorio)
-        .join(Venta, VentaItem.venta_id == Venta.id)
-        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
-        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
-        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-        .where(
-            Venta.empresa_id == empresa_id,
-            Venta.estado == EstadoVenta.CONFIRMADA
-        )
-    )
-    if fecha_desde:
-        try:
-            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
-    if fecha_hasta:
-        try:
-            query = query.where(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
-    if categoria_id:
-        query = query.where(Producto.categoria_id == categoria_id)
-    if producto_id:
-        query = query.where(VentaItem.producto_id == producto_id)
-    if cliente_id:
-        query = query.where(Venta.cliente_id == cliente_id)
-
-    result = await db.execute(query)
-    rows = result.all()
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
-
-    agg = defaultdict(lambda: {'cantidad': 0, 'total': Decimal('0'), 'categoria': '-'})
-    for item, venta, producto, categoria, materia in rows:
-        if producto:
-            key = producto.nombre
-            agg[key]['cantidad'] += item.cantidad
-            agg[key]['total'] += item.total
-            agg[key]['categoria'] = categoria.nombre if categoria else 'Sin categoría'
-        elif materia:
-            key = f"[LAB] {materia.nombre}"
-            agg[key]['cantidad'] += item.cantidad
-            agg[key]['total'] += item.total
-            agg[key]['categoria'] = 'Laboratorio'
-
-    sorted_items = sorted(agg.items(), key=lambda x: x[1]['total'], reverse=True)
+    sorted_items = await _venta_items_agrupados(
+        db, empresa_id, fecha_desde, fecha_hasta, categoria_id, producto_id, cliente_id)
 
     columnas = ['Producto / Item', 'Categoría', 'Cant. Vendida', 'Monto Total (Gs.)']
     datos = []
@@ -6882,55 +6884,8 @@ async def reporte_venta_items_excel(
     db: AsyncSession = Depends(get_db)
 ):
     """Genera reporte Excel de ventas de items agrupadas por producto/materia de laboratorio"""
-    from collections import defaultdict
-    query = (
-        select(VentaItem, Venta, Producto, Categoria, MateriaLaboratorio)
-        .join(Venta, VentaItem.venta_id == Venta.id)
-        .outerjoin(Producto, VentaItem.producto_id == Producto.id)
-        .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
-        .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-        .where(
-            Venta.empresa_id == empresa_id,
-            Venta.estado == EstadoVenta.CONFIRMADA
-        )
-    )
-    if fecha_desde:
-        try:
-            query = query.where(Venta.creado_en >= datetime.fromisoformat(fecha_desde).replace(tzinfo=PARAGUAY_TZ))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha_desde inválido. Use YYYY-MM-DD")
-    if fecha_hasta:
-        try:
-            query = query.where(Venta.creado_en < (datetime.fromisoformat(fecha_hasta) + timedelta(days=1)).replace(tzinfo=PARAGUAY_TZ))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Formato de fecha_hasta inválido. Use YYYY-MM-DD")
-    if categoria_id:
-        query = query.where(Producto.categoria_id == categoria_id)
-    if producto_id:
-        query = query.where(VentaItem.producto_id == producto_id)
-    if cliente_id:
-        query = query.where(Venta.cliente_id == cliente_id)
-
-    result = await db.execute(query)
-    rows = result.all()
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="No se encontraron ventas de items para los filtros seleccionados")
-
-    agg = defaultdict(lambda: {'cantidad': 0, 'total': Decimal('0'), 'categoria': '-'})
-    for item, venta, producto, categoria, materia in rows:
-        if producto:
-            key = producto.nombre
-            agg[key]['cantidad'] += item.cantidad
-            agg[key]['total'] += item.total
-            agg[key]['categoria'] = categoria.nombre if categoria else 'Sin categoría'
-        elif materia:
-            key = f"[LAB] {materia.nombre}"
-            agg[key]['cantidad'] += item.cantidad
-            agg[key]['total'] += item.total
-            agg[key]['categoria'] = 'Laboratorio'
-
-    sorted_items = sorted(agg.items(), key=lambda x: x[1]['total'], reverse=True)
+    sorted_items = await _venta_items_agrupados(
+        db, empresa_id, fecha_desde, fecha_hasta, categoria_id, producto_id, cliente_id)
 
     columnas = ['Producto / Item', 'Categoría', 'Cant. Vendida', 'Monto Total (Gs.)']
     datos = []
@@ -7949,20 +7904,27 @@ async def bi_estadisticas_productos_excel(
         cell.border = border
     ws.row_dimensions[4].height = 20
 
-    # Data rows
+    # Data rows: las dos primeras se estilan celda por celda y las demás copian el estilo de la
+    # fila de su misma banda (estilos nuevos en cada celda: ~45.000 productos, más de 1 minuto)
     for ri, p in enumerate(productos, 1):
         rn = 4 + ri
-        bg = "FFFFFF" if ri % 2 == 1 else "F5F7FF"
-        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
         row_vals = [ri, p["nombre"], p["ventas"], p["ganancia"], p["unidades"],
                     p["prom"], p["stock"], p["variacion"]]
-        for ci, val in enumerate(row_vals, 1):
-            cell = ws.cell(row=rn, column=ci, value=val)
-            cell.fill = fill
-            cell.font = Font(name="Calibri", size=9)
-            cell.border = border
-            cell.alignment = Alignment(horizontal="right" if ci > 1 else "center", vertical="center")
-        
+        if ri <= 2:
+            bg = "FFFFFF" if ri % 2 == 1 else "F5F7FF"
+            fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+            for ci, val in enumerate(row_vals, 1):
+                cell = ws.cell(row=rn, column=ci, value=val)
+                cell.fill = fill
+                cell.font = Font(name="Calibri", size=9)
+                cell.border = border
+                cell.alignment = Alignment(horizontal="right" if ci > 1 else "center", vertical="center")
+        else:
+            modelo = 4 + (1 if ri % 2 == 1 else 2)
+            for ci, val in enumerate(row_vals, 1):
+                cell = ws.cell(row=rn, column=ci, value=val)
+                cell._style = copy(ws.cell(row=modelo, column=ci)._style)
+
     # Column widths
     ws.column_dimensions["A"].width = 5
     ws.column_dimensions["B"].width = 35
