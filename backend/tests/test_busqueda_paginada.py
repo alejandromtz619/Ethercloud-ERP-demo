@@ -178,3 +178,12 @@ def test_presupuestos_y_entregas_paginan_sin_romper_lo_anterior(client, admin, d
     assert [p["id"] for p in pagina] == [todos[2]["id"]]
     r = client.get("/api/entregas", headers=admin, params={"empresa_id": 1, "limit": 5, "estado": "ENTREGADO"})
     assert r.status_code == 200 and isinstance(r.json(), list)
+
+
+def test_exceso_limita_listas_con_resumen_completo(client, admin, datos):
+    completo = _buscar(client, admin, "/api/bi/exceso-compras", limite=10000)
+    recortado = _buscar(client, admin, "/api/bi/exceso-compras", limite=1)
+    assert recortado["resumen"] == completo["resumen"]
+    assert recortado["sin_ventas_recientes"] == completo["sin_ventas_recientes"][:1]
+    assert recortado["exceso_stock"] == completo["exceso_stock"][:1]
+    assert completo["resumen"]["productos_sin_ventas"] == len(completo["sin_ventas_recientes"])

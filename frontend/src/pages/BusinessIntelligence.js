@@ -811,17 +811,21 @@ const TabSugerencias = ({ empresa, API_URL, token }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB 4 — Exceso de compras
 // ─────────────────────────────────────────────────────────────────────────────
+const EXCESO_POR_PAGINA = 100;
+
 const TabExceso = ({ empresa, API_URL, token }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [semanas, setSemanas] = useState('4');
+  // Filas por lista: el backend devuelve las de mayor valor inmovilizado; "Ver más" amplía
+  const [limite, setLimite] = useState(EXCESO_POR_PAGINA);
 
   const fetch = useCallback(async () => {
     if (!empresa) return;
     setLoading(true);
     try {
       const res = await window.fetch(
-        `${API_URL}/bi/exceso-compras?empresa_id=${empresa.id}&semanas_referencia=${semanas}`,
+        `${API_URL}/bi/exceso-compras?empresa_id=${empresa.id}&semanas_referencia=${semanas}&limite=${limite}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       if (!res.ok) throw new Error('Error al cargar excesos');
@@ -831,9 +835,21 @@ const TabExceso = ({ empresa, API_URL, token }) => {
     } finally {
       setLoading(false);
     }
-  }, [empresa, API_URL, token, semanas]);
+  }, [empresa, API_URL, token, semanas, limite]);
 
   useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => { setLimite(EXCESO_POR_PAGINA); }, [semanas]);
+
+  const verMas = (mostradas, total) => mostradas < total && (
+    <div className="flex items-center justify-between gap-3 px-4 py-3 border-t text-xs text-muted-foreground">
+      <span>Mostrando {formatNum(mostradas)} de {formatNum(total)} (los de mayor valor primero)</span>
+      <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" disabled={loading}
+        onClick={() => setLimite(l => l + EXCESO_POR_PAGINA)}>
+        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        Ver más
+      </Button>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -927,7 +943,7 @@ const TabExceso = ({ empresa, API_URL, token }) => {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-amber-500" />
                 Stock en exceso respecto a la venta
-                {data.exceso_stock.length > 0 && <Badge variant="outline">{data.exceso_stock.length}</Badge>}
+                {data.exceso_stock.length > 0 && <Badge variant="outline">{data.resumen.productos_exceso}</Badge>}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
@@ -965,6 +981,7 @@ const TabExceso = ({ empresa, API_URL, token }) => {
                       ))}
                     </tbody>
                   </table>
+                  {verMas(data.exceso_stock.length, data.resumen.productos_exceso)}
                 </div>
               )}
             </CardContent>
@@ -976,7 +993,7 @@ const TabExceso = ({ empresa, API_URL, token }) => {
               <CardTitle className="text-sm font-semibold flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-red-500" />
                 Sin ventas en las últimas {semanas} semanas
-                {data.sin_ventas_recientes.length > 0 && <Badge variant="destructive">{data.sin_ventas_recientes.length}</Badge>}
+                {data.sin_ventas_recientes.length > 0 && <Badge variant="destructive">{data.resumen.productos_sin_ventas}</Badge>}
               </CardTitle>
               <CardDescription className="text-xs">Productos con stock disponible pero sin movimiento de venta reciente</CardDescription>
             </CardHeader>
@@ -1005,6 +1022,7 @@ const TabExceso = ({ empresa, API_URL, token }) => {
                       ))}
                     </tbody>
                   </table>
+                  {verMas(data.sin_ventas_recientes.length, data.resumen.productos_sin_ventas)}
                 </div>
               )}
             </CardContent>

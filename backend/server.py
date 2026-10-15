@@ -7514,9 +7514,12 @@ async def bi_sugerencias_compra(
 async def bi_exceso_compras(
     empresa_id: int,
     semanas_referencia: int = 4,
+    limite: int = Query(100, ge=1, le=10000),
     db: AsyncSession = Depends(get_db)
 ):
-    """Detección de compras en exceso: productos con stock alto respecto a su velocidad de venta."""
+    """Detección de compras en exceso: productos con stock alto respecto a su velocidad de venta.
+    Cada lista trae los `limite` de mayor valor inmovilizado; el resumen cubre todos
+    (con miles de productos sin ventas, devolverlos todos pesaba decenas de MB)."""
     PARAGUAY_TZ = ZoneInfo("America/Asuncion")
     now = datetime.now(PARAGUAY_TZ)
     fecha_inicio = now - timedelta(weeks=semanas_referencia)
@@ -7611,8 +7614,8 @@ async def bi_exceso_compras(
 
     return {
         "parametros": {"semanas_referencia": semanas_referencia},
-        "exceso_stock": excesos,
-        "sin_ventas_recientes": sin_movimiento,
+        "exceso_stock": excesos[:limite],
+        "sin_ventas_recientes": sin_movimiento[:limite],
         "resumen": {
             "productos_exceso": len(excesos),
             "productos_sin_ventas": len(sin_movimiento),
@@ -7991,60 +7994,62 @@ async def bi_aging_tandas(
     stock_real_r = await db.execute(stock_real_q)
     stock_real_map = {r.producto_id: int(r.stock_real or 0) for r in stock_real_r.all()}
 
-    from collections import defaultdict
-    productos_map: dict = defaultdict(lambda: {"nombre": "", "producto_id": 0, "tandas": []})
-
+    # Una pasada sobre las tandas: agregados por producto, y las filas guardadas para armar el
+    # detalle sólo de los productos de la página (armar un dict por cada una de las ~100.000
+    # tandas costaba más de 1 s y después se descartaban casi todas).
+    resumenes: dict = {}
     for row in rows:
         if row.creado_en:
             entrada_date = row.creado_en.date() if hasattr(row.creado_en, "date") else row.creado_en
             dias = (hoy - entrada_date).days
         else:
             dias = 0
-        costo = float(row.costo_unitario or 0)
         original = int(row.cantidad_original or 0)
         # NULL cantidad_restante = pre-FIFO batch, treat as fully remaining
         restante = int(row.cantidad_restante) if row.cantidad_restante is not None else original
-        valor = round(costo * restante, 0)
-        pct_consumido = round((1 - restante / original) * 100, 1) if original > 0 else 0.0
+        valor = round(float(row.costo_unitario or 0) * restante, 0)
+        r = resumenes.get(row.producto_id)
+        if r is None:
+            r = resumenes[row.producto_id] = {
+                "nombre": row.producto_nombre, "filas": [], "max": dias, "min": dias, "valor": 0, "restante": 0,
+            }
+        r["filas"].append((row, dias, original, restante, valor))
+        r["max"] = max(r["max"], dias)
+        r["min"] = min(r["min"], dias)
+        r["valor"] += valor
+        r["restante"] += restante
 
-        productos_map[row.producto_id]["nombre"] = row.producto_nombre
-        productos_map[row.producto_id]["producto_id"] = row.producto_id
-        productos_map[row.producto_id]["tandas"].append({
+    def _tanda(row, dias, original, restante, valor):
+        return {
             "tanda_id": row.tanda_id,
             "fecha_entrada": row.creado_en.isoformat() if row.creado_en else None,
             "dias_aging": dias,
             "cantidad_original": original,
             "cantidad_restante": restante,
-            "porcentaje_consumido": pct_consumido,
-            "costo_unitario": costo,
+            "porcentaje_consumido": round((1 - restante / original) * 100, 1) if original > 0 else 0.0,
+            "costo_unitario": float(row.costo_unitario or 0),
             "valor_inmovilizado": valor,
             "almacen": row.almacen_nombre,
             "proveedor": row.proveedor_nombre or "Sin proveedor",
             "notas": row.notas,
             "sin_fifo": row.cantidad_restante is None,
-        })
+        }
 
     productos = []
-    for pid, pdata in productos_map.items():
-        tandas = pdata["tandas"]
-        max_aging = max(t["dias_aging"] for t in tandas)
-        min_aging = min(t["dias_aging"] for t in tandas)
-        total_valor = sum(t["valor_inmovilizado"] for t in tandas)
-        total_restante = sum(t["cantidad_restante"] for t in tandas)
-        stock_real = stock_real_map.get(pid, total_restante)
-        fifo_diferencia = total_restante - stock_real
+    for pid, r in resumenes.items():
+        stock_real = stock_real_map.get(pid, r["restante"])
+        fifo_diferencia = r["restante"] - stock_real
         productos.append({
             "producto_id": pid,
-            "producto_nombre": pdata["nombre"],
-            "num_tandas": len(tandas),
-            "dias_aging_max": max_aging,
-            "dias_aging_min": min_aging,
-            "total_unidades_restantes": total_restante,
+            "producto_nombre": r["nombre"],
+            "num_tandas": len(r["filas"]),
+            "dias_aging_max": r["max"],
+            "dias_aging_min": r["min"],
+            "total_unidades_restantes": r["restante"],
             "stock_real": stock_real,
             "fifo_concuerda": abs(fifo_diferencia) <= 1,
             "fifo_diferencia": fifo_diferencia,
-            "valor_total_inmovilizado": total_valor,
-            "tandas": tandas,
+            "valor_total_inmovilizado": r["valor"],
         })
 
     sort_map = {
@@ -8071,7 +8076,10 @@ async def bi_aging_tandas(
         "total_productos": len(filtrados),
         "limit": limit,
         "offset": offset,
-        "productos": filtrados[offset:offset + limit],
+        "productos": [
+            {**p, "tandas": [_tanda(*f) for f in resumenes[p["producto_id"]]["filas"]]}
+            for p in filtrados[offset:offset + limit]
+        ],
     }
 
 
