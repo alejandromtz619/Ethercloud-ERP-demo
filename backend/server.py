@@ -21,6 +21,7 @@ import uuid
 import secrets
 import time
 from collections import defaultdict
+from copy import copy
 import shutil
 import asyncio
 import socket
@@ -34,7 +35,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, cm, mm
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak, Flowable
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
@@ -5677,58 +5678,111 @@ async def obtener_alertas(empresa_id: int, db: AsyncSession = Depends(get_db)):
     return alertas
 
 # ==================== REPORTES PDF ====================
+ESTILO_TABLA_REPORTE = [
+    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0044CC')),
+    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+    ('FONTSIZE', (0, 0), (-1, 0), 10),
+    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+    ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+    ('FONTSIZE', (0, 1), (-1, -1), 9),
+    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+    ('ALIGN', (-1, 1), (-1, -1), 'RIGHT'),
+    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+]
+ESTILO_TOTALES_REPORTE = [
+    ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E0E0E0')),
+    ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+]
+BANDAS_REPORTE = [colors.white, colors.HexColor('#F5F5F5')]
+
+
+class _TablaPorTramos(Flowable):
+    """Tabla del reporte que reportlab arma de a tramos de filas.
+
+    Una Table con decenas de miles de filas se vuelve a crear con todas las que quedan en cada
+    salto de página (50.000 filas: ~90 s con el proceso ocupado). Así cada página trabaja con
+    un tramo corto. El PDF sale igual que con una sola tabla: encabezado en cada página, bandas
+    que arrancan en blanco en cada página, mismos anchos de columna y fila de totales al final."""
+    TRAMO = 100  # filas por tramo; siempre más de las que entran en una página (~40)
+
+    def __init__(self, encabezado, filas, totales, col_widths, desde=0):
+        Flowable.__init__(self)
+        self.encabezado, self.filas, self.totales = encabezado, filas, totales
+        self.col_widths, self.desde = col_widths, desde
+        self.hAlign = 'CENTER'
+        self._tabla = None
+
+    def _armar(self):
+        hasta = self.desde + self.TRAMO
+        ultimo = hasta >= len(self.filas)
+        datos = [self.encabezado] + self.filas[self.desde:hasta]
+        if ultimo and self.totales:
+            datos.append(self.totales)
+        tabla = Table(datos, repeatRows=1, colWidths=self.col_widths)
+        tabla.setStyle(TableStyle(ESTILO_TABLA_REPORTE + [('ROWBACKGROUNDS', (0, 1), (-1, -1), BANDAS_REPORTE)]))
+        if ultimo and self.totales:
+            tabla.setStyle(TableStyle(ESTILO_TOTALES_REPORTE))
+        return tabla, ultimo
+
+    def wrap(self, availWidth, availHeight):
+        self._tabla, self._ultimo = self._armar()
+        ancho, alto = self._tabla.wrap(availWidth, availHeight)
+        if not self._ultimo:
+            alto = max(alto, availHeight + 1)  # quedan filas en otros tramos: que se parta
+        self.width, self.height = ancho, alto
+        return ancho, alto
+
+    def split(self, availWidth, availHeight):
+        # El frame llama a wrap y después a split: se reutiliza la tabla ya armada
+        if self._tabla is None:
+            self.wrap(availWidth, availHeight)
+        tabla, ultimo = self._tabla, self._ultimo
+        partes = tabla.split(availWidth, availHeight)
+        if ultimo or not partes:
+            return partes
+        entraron = len(partes[0]._cellvalues) - 1  # filas de datos en esta página (sin encabezado)
+        if entraron <= 0:
+            return []
+        return [partes[0], _TablaPorTramos(self.encabezado, self.filas, self.totales,
+                                           self.col_widths, self.desde + entraron)]
+
+    def draw(self):
+        self._tabla.drawOn(self.canv, 0, 0)
+
+
 def crear_pdf_reporte(titulo, subtitulo, columnas, datos, totales=None, col_widths=None):
     """Genera un PDF con tabla de datos"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     elements = []
     styles = getSampleStyleSheet()
-    
+
     # Title
     title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=18, spaceAfter=6, alignment=TA_CENTER)
     elements.append(Paragraph(titulo, title_style))
-    
+
     # Subtitle
     subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Normal'], fontSize=10, spaceAfter=20, alignment=TA_CENTER, textColor=colors.grey)
     elements.append(Paragraph(subtitulo, subtitle_style))
-    
-    # Table
-    table_data = [columnas] + datos
-    
-    if totales:
-        table_data.append(totales)
-    
-    table = Table(table_data, repeatRows=1, colWidths=col_widths)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#0044CC')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-        ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 9),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('ALIGN', (-1, 1), (-1, -1), 'RIGHT'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5F5F5')]),
-    ]))
-    
-    if totales:
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#E0E0E0')),
-            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ]))
-    
-    elements.append(table)
-    
+
+    # Table: sin anchos dados, reportlab los calcula sobre todas las filas; se calculan una vez
+    # con la tabla completa y los tramos los reutilizan
+    if col_widths is None:
+        completa = Table([columnas] + datos + ([totales] if totales else []), repeatRows=1)
+        completa.setStyle(TableStyle(ESTILO_TABLA_REPORTE + (ESTILO_TOTALES_REPORTE if totales else [])))
+        completa._calc_width(doc.width)
+        col_widths = completa._colWidths
+    elements.append(_TablaPorTramos(columnas, datos, totales, col_widths))
+
     # Footer
     elements.append(Spacer(1, 20))
     footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
     elements.append(Paragraph(f"Generado el {now_paraguay().strftime('%d/%m/%Y %H:%M')} - Ethercloud ERP", footer_style))
-    
+
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
@@ -5776,17 +5830,26 @@ def crear_excel_reporte(titulo, subtitulo, columnas, datos, totales=None):
         cell.border = border
     ws.row_dimensions[HEADER_ROW].height = 20
 
-    # Data rows
+    # Data rows. Las dos primeras filas se estilan celda por celda; las demás copian el estilo
+    # ya registrado de la fila con su misma banda (asignar Font/Fill/Alignment nuevos en cada
+    # celda obligaba a openpyxl a buscarlos en su tabla de estilos: 50.000 filas, ~30 s).
+    data_font = Font(name="Calibri", size=9)
     for row_offset, row_data in enumerate(datos, 1):
         row_num = HEADER_ROW + row_offset
-        bg = "FFFFFF" if row_offset % 2 == 1 else "F5F5F5"
-        fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
-        for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_num, column=col_idx, value=value)
-            cell.fill = fill
-            cell.font = Font(name="Calibri", size=9)
-            cell.border = border
-            cell.alignment = Alignment(horizontal="left" if col_idx < num_cols else "right", vertical="center")
+        if row_offset <= 2:
+            bg = "FFFFFF" if row_offset % 2 == 1 else "F5F5F5"
+            fill = PatternFill(start_color=bg, end_color=bg, fill_type="solid")
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_num, column=col_idx, value=value)
+                cell.fill = fill
+                cell.font = data_font
+                cell.border = border
+                cell.alignment = Alignment(horizontal="left" if col_idx < num_cols else "right", vertical="center")
+        else:
+            modelo = HEADER_ROW + (1 if row_offset % 2 == 1 else 2)
+            for col_idx, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_num, column=col_idx, value=value)
+                cell._style = copy(ws.cell(row=modelo, column=col_idx)._style)
 
     # Totals row
     if totales:
