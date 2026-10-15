@@ -3,7 +3,7 @@ Script para poblar la base de datos con datos iniciales
 Ejecutar: python seed_data.py
 """
 import asyncio
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from database import init_db, async_session_maker
 from models import Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol
 import bcrypt
@@ -99,13 +99,10 @@ async def seed_database():
         else:
             print(f"ℹ️  Usuario ya tiene el rol asignado")
         
-        # 5. Limpiar y recrear permisos con formato correcto (modulo.accion)
-        print("\n🔄 Limpiando permisos antiguos...")
-        await session.execute(delete(RolPermiso))
-        await session.execute(delete(Permiso))
-        await session.commit()
-        print("✅ Permisos antiguos eliminados")
-        
+        # 5. (Antes se borraban todos los permisos y asignaciones de todos los roles: correrlo
+        # en una instancia con datos dejaba sin permisos a gerentes y vendedores. Ahora sólo
+        # agrega lo que falta, así sirve para crear el primer admin y se puede repetir.)
+
         # 6. Crear permisos con formato compuesto (igual a main)
         permisos_data = [
             # Ventas
@@ -184,19 +181,30 @@ async def seed_database():
         ]
         
         print(f"\n📝 Creando {len(permisos_data)} permisos...")
+        # El backend crea algunos permisos al arrancar: sólo se agregan los que falten
+        result = await session.execute(select(Permiso))
+        existentes = {p.clave: p for p in result.scalars().all()}
         permisos_creados = []
         for clave, descripcion in permisos_data:
-            permiso = Permiso(clave=clave, descripcion=descripcion)
-            session.add(permiso)
+            permiso = existentes.get(clave)
+            if not permiso:
+                permiso = Permiso(clave=clave, descripcion=descripcion)
+                session.add(permiso)
             permisos_creados.append(permiso)
-        
+
         await session.commit()
-        print(f"✅ {len(permisos_creados)} permisos creados")
-        
+        print(f"✅ {len(permisos_creados)} permisos listos")
+
         # 7. Asignar TODOS los permisos al rol Administrador
         print(f"\n🔗 Asignando permisos al rol {rol_admin.nombre}...")
+        result = await session.execute(
+            select(RolPermiso.permiso_id).where(RolPermiso.rol_id == rol_admin.id)
+        )
+        ya_asignados = set(result.scalars().all())
         for permiso in permisos_creados:
             await session.refresh(permiso)
+            if permiso.id in ya_asignados:
+                continue
             rol_permiso = RolPermiso(
                 rol_id=rol_admin.id,
                 permiso_id=permiso.id
