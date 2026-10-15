@@ -20,7 +20,7 @@ import jwt
 import uuid
 import secrets
 import time
-from collections import deque
+from collections import deque, defaultdict
 import shutil
 import asyncio
 import socket
@@ -2773,6 +2773,35 @@ async def confirmar_venta_pendiente(venta_id: int, db: AsyncSession = Depends(ge
     await db.refresh(venta)
     return venta
 
+async def _items_por_venta(db: AsyncSession, venta_ids) -> dict:
+    """Ítems de varias ventas con el nombre del producto o de la materia, en una consulta
+    por cada 5000 ventas (en vez de una por venta y otra por ítem).
+    Devuelve {venta_id: [(item, producto_nombre, materia_nombre, materia_descripcion)]}."""
+    por_venta = defaultdict(list)
+    ids = list(venta_ids)
+    for i in range(0, len(ids), 5000):
+        result = await db.execute(
+            select(VentaItem, Producto.nombre, MateriaLaboratorio.nombre, MateriaLaboratorio.descripcion)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+            .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+            .where(VentaItem.venta_id.in_(ids[i:i + 5000]))
+            .order_by(VentaItem.id)
+        )
+        for item, producto_nombre, materia_nombre, materia_descripcion in result.all():
+            por_venta[item.venta_id].append((item, producto_nombre, materia_nombre, materia_descripcion))
+    return por_venta
+
+def _venta_item_dict(item, producto_nombre, materia_nombre, materia_descripcion) -> dict:
+    item_dict = VentaItemResponse.model_validate(item).model_dump()
+    if item.producto_id:
+        if producto_nombre:
+            item_dict['producto_nombre'] = producto_nombre
+            item_dict['descripcion'] = producto_nombre
+    elif item.materia_laboratorio_id and materia_nombre:
+        item_dict['materia_nombre'] = materia_nombre
+        item_dict['descripcion'] = f"{materia_nombre} - {materia_descripcion or ''}"
+    return item_dict
+
 @api_router.get("/ventas", response_model=List[VentaConDetalles])
 async def listar_ventas(
     empresa_id: int,
@@ -2815,39 +2844,12 @@ async def listar_ventas(
         query = query.limit(limit)
     
     result = await db.execute(query)
+    rows = result.all()
+    items_por_venta = await _items_por_venta(db, [venta.id for venta, _ in rows])
     ventas = []
-    for row in result.all():
-        venta, cliente = row
-        items_result = await db.execute(
-            select(VentaItem).where(VentaItem.venta_id == venta.id)
-        )
-        raw_items = items_result.scalars().all()
-        
-        # Enrich items with product/materia names
-        items = []
-        for item in raw_items:
-            item_dict = VentaItemResponse.model_validate(item).model_dump()
-            
-            # Get product name
-            if item.producto_id:
-                prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
-                producto = prod_result.scalar_one_or_none()
-                if producto:
-                    item_dict['producto_nombre'] = producto.nombre
-                    item_dict['descripcion'] = producto.nombre
-            
-            # Get materia name
-            elif item.materia_laboratorio_id:
-                mat_result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id))
-                materia = mat_result.scalar_one_or_none()
-                if materia:
-                    item_dict['materia_nombre'] = materia.nombre
-                    item_dict['descripcion'] = f"{materia.nombre} - {materia.descripcion or ''}"
-            
-            items.append(item_dict)
-        
+    for venta, cliente in rows:
         venta_dict = VentaResponse.model_validate(venta).model_dump()
-        venta_dict['items'] = items
+        venta_dict['items'] = [_venta_item_dict(*fila) for fila in items_por_venta.get(venta.id, [])]
         venta_dict['cliente_nombre'] = f"{cliente.nombre} {cliente.apellido or ''}"
         venta_dict['cliente_ruc'] = cliente.ruc
         ventas.append(VentaConDetalles(**venta_dict))
@@ -2866,36 +2868,9 @@ async def obtener_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Venta no encontrada")
     
     venta, cliente = row
-    items_result = await db.execute(
-        select(VentaItem).where(VentaItem.venta_id == venta.id)
-    )
-    raw_items = items_result.scalars().all()
-    
-    # Enrich items with product/materia names
-    items = []
-    for item in raw_items:
-        item_dict = VentaItemResponse.model_validate(item).model_dump()
-        
-        # Get product name
-        if item.producto_id:
-            prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
-            producto = prod_result.scalar_one_or_none()
-            if producto:
-                item_dict['producto_nombre'] = producto.nombre
-                item_dict['descripcion'] = producto.nombre
-        
-        # Get materia name
-        elif item.materia_laboratorio_id:
-            mat_result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id))
-            materia = mat_result.scalar_one_or_none()
-            if materia:
-                item_dict['materia_nombre'] = materia.nombre
-                item_dict['descripcion'] = f"{materia.nombre} - {materia.descripcion or ''}"
-        
-        items.append(item_dict)
-    
+    items_por_venta = await _items_por_venta(db, [venta.id])
     venta_dict = VentaResponse.model_validate(venta).model_dump()
-    venta_dict['items'] = items
+    venta_dict['items'] = [_venta_item_dict(*fila) for fila in items_por_venta.get(venta.id, [])]
     venta_dict['cliente_nombre'] = f"{cliente.nombre} {cliente.apellido or ''}"
     venta_dict['cliente_ruc'] = cliente.ruc
     return VentaConDetalles(**venta_dict)
@@ -4555,40 +4530,21 @@ async def listar_entregas(
         query = query.where(Entrega.estado == EstadoEntrega(estado))
     
     result = await db.execute(query.order_by(Entrega.id.desc()))
+    rows = result.all()
+    items_por_venta = await _items_por_venta(db, {venta.id for _, venta, _, _, _ in rows})
     entregas = []
-    for row in result.all():
-        entrega, venta, cliente, vehiculo, usuario = row
-        
-        # Load venta items with product/materia names
-        items_result = await db.execute(
-            select(VentaItem).where(VentaItem.venta_id == venta.id)
-        )
-        items = []
-        for item in items_result.scalars().all():
-            item_dict = {
+    for entrega, venta, cliente, vehiculo, usuario in rows:
+        items = [
+            {
                 'cantidad': item.cantidad,
                 'precio_unitario': float(item.precio_unitario),
                 'total': float(item.total),
-                'producto_nombre': None,
-                'materia_nombre': None
+                'producto_nombre': producto_nombre if item.producto_id else None,
+                'materia_nombre': materia_nombre if not item.producto_id and item.materia_laboratorio_id else None,
             }
-            
-            # Get product name
-            if item.producto_id:
-                prod_result = await db.execute(select(Producto).where(Producto.id == item.producto_id))
-                producto = prod_result.scalar_one_or_none()
-                if producto:
-                    item_dict['producto_nombre'] = producto.nombre
-            
-            # Get materia name
-            elif item.materia_laboratorio_id:
-                mat_result = await db.execute(select(MateriaLaboratorio).where(MateriaLaboratorio.id == item.materia_laboratorio_id))
-                materia = mat_result.scalar_one_or_none()
-                if materia:
-                    item_dict['materia_nombre'] = materia.nombre
-            
-            items.append(item_dict)
-        
+            for item, producto_nombre, materia_nombre, _ in items_por_venta.get(venta.id, [])
+        ]
+
         entrega_dict = EntregaResponse.model_validate(entrega).model_dump()
         entrega_dict['cliente_nombre'] = f"{cliente.nombre} {cliente.apellido or ''}"
         entrega_dict['cliente_telefono'] = cliente.telefono
