@@ -46,6 +46,8 @@ services:
       LAB_MARGEN_GANANCIA: ${LAB_MARGEN_GANANCIA:-0.30}
       # Procesos de API (~150 MB c/u)
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      # Módulos opcionales: fe (facturación electrónica), crm, crm_ia, crm_ads
+      MODULOS: ${MODULOS:-}
       PORT: 8000
     volumes:
       - backend-uploads:/app/uploads

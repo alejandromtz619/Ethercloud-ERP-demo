@@ -156,6 +156,17 @@ LAB_MARGEN_GANANCIA = Decimal(os.environ.get('LAB_MARGEN_GANANCIA', '0.30'))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Módulos opcionales activos en esta instancia: MODULOS=fe,crm,crm_ia,crm_ads (fe = facturación
+# electrónica SIFEN). La misma imagen sirve a todos los clientes; el sistema muestra cada módulo
+# según esto (GET /api/sistema/modulos).
+MODULOS_DISPONIBLES = ("fe", "crm", "crm_ia", "crm_ads")
+MODULOS_ACTIVOS = {m.strip().lower() for m in os.environ.get("MODULOS", "").split(",") if m.strip()}
+if MODULOS_ACTIVOS - set(MODULOS_DISPONIBLES):
+    logger.warning(f"MODULOS tiene valores desconocidos: {sorted(MODULOS_ACTIVOS - set(MODULOS_DISPONIBLES))}")
+if MODULOS_ACTIVOS & {"crm_ia", "crm_ads"} and "crm" not in MODULOS_ACTIVOS:
+    logger.warning("MODULOS: crm_ia y crm_ads necesitan crm; se ignoran sin él")
+    MODULOS_ACTIVOS -= {"crm_ia", "crm_ads"}
+
 JWT_SECRET = os.environ.get('JWT_SECRET', '').strip()
 if JWT_SECRET in JWT_SECRETS_INSEGUROS:
     if ES_PRODUCCION:
@@ -7947,6 +7958,11 @@ async def _asignar_permisos_requeridos_a_admins(db: AsyncSession) -> int:
                 db.add(RolPermiso(rol_id=rol.id, permiso_id=perm.id))
                 assigned += 1
     return assigned
+
+@api_router.get("/sistema/modulos")
+async def modulos_de_la_instancia():
+    """Qué módulos opcionales tiene activos esta instancia."""
+    return {m: m in MODULOS_ACTIVOS for m in MODULOS_DISPONIBLES}
 
 @api_router.post("/sistema/sync-permisos", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
 async def sync_permisos(db: AsyncSession = Depends(get_db)):

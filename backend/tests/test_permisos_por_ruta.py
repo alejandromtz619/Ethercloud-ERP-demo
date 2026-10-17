@@ -81,3 +81,11 @@ def test_sin_roles_solo_lo_comun(client, usuarios):
 def test_admin_pasa_todo(client, admin):
     assert client.get("/api/bi/cierre?empresa_id=1&fecha_desde=2026-01-01&fecha_hasta=2026-01-31",
                       headers=admin).status_code == 200
+
+
+def test_modulos_de_la_instancia(client, usuarios, monkeypatch):
+    monkeypatch.setattr(server, "MODULOS_ACTIVOS", {"fe"})
+    r = client.get("/api/sistema/modulos", headers=usuarios["sinrol@test.com"])  # cualquier usuario con sesión
+    assert r.status_code == 200
+    assert r.json() == {"fe": True, "crm": False, "crm_ia": False, "crm_ads": False}
+    assert client.get("/api/sistema/modulos").status_code == 401

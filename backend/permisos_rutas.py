@@ -140,6 +140,7 @@ PERMISOS_POR_RUTA = {
     ('GET', '/roles/{rol_id}/permisos'): ('roles.gestionar',),
     ('DELETE', '/roles/{rol_id}/permisos/{permiso_id}'): None,
     ('POST', '/roles/{rol_id}/permisos/{permiso_id}'): None,
+    ('GET', '/sistema/modulos'): (),
     ('POST', '/sistema/sync-permisos'): None,
     ('GET', '/stock'): ('stock.ver',),
     ('POST', '/stock'): ('stock.ver',),
