@@ -119,3 +119,86 @@ def test_administrar_tokens_exige_sistema_configurar(client, admin):
     otro = _token(client, "sinpermiso.int@test.com", "clave-segura-123")
     assert client.get("/api/integracion/tokens", headers=otro).status_code == 403
     assert client.post("/api/integracion/tokens", headers=otro, json={"nombre": "x", "perfil": "crm-interno"}).status_code == 403
+
+
+# ---------------------------------------------------------------- eventos
+def _eventos(client, token, desde=0, **params):
+    r = client.get(f"{V1}/eventos", headers=_bearer(token), params={"desde": desde, **params})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_eventos_de_cada_cambio(client, admin, tokens, catalogo, monkeypatch):
+    import integracion
+    monkeypatch.setattr(integracion, "RETRASO_EVENTOS_SEGUNDOS", 0)
+    interno = tokens["interno"]["token"]
+    inicio = _eventos(client, interno, limite=1000)["cursor"]
+    while True:  # avanzar hasta el final
+        siguiente = _eventos(client, interno, desde=inicio, limite=1000)["cursor"]
+        if siguiente == inicio:
+            break
+        inicio = siguiente
+
+    def post(ruta, cuerpo=None):
+        r = client.post(ruta, headers=admin, json=cuerpo or {})
+        assert r.status_code == 200, r.text
+        return r.json()
+    yo = client.get("/api/auth/me", headers=admin).json()
+    cli = post("/api/clientes", {"empresa_id": 1, "nombre": f"{PREFIJO} Evento", "ruc": "80044444-4"})
+    assert client.put(f"/api/clientes/{cli['id']}", headers=admin, json={"telefono": "0981000000"}).status_code == 200
+    pid = catalogo["mucho"]["id"]
+    venta = post("/api/ventas", {"empresa_id": 1, "usuario_id": yo["id"], "cliente_id": cli["id"], "tipo_pago": "EFECTIVO",
+                                 "es_delivery": True, "items": [{"producto_id": pid, "cantidad": 1, "precio_unitario": 50000}]})
+    post(f"/api/ventas/{venta['id']}/confirmar")
+    entrega = [e for e in client.get("/api/entregas", headers=admin, params={"empresa_id": 1, "estado": "PENDIENTE"}).json()
+               if e["venta_id"] == venta["id"]][0]
+    assert client.put(f"/api/entregas/{entrega['id']}/estado", headers=admin, params={"estado": "ENTREGADO"}).status_code == 200
+    post(f"/api/ventas/{venta['id']}/anular")
+    post("/api/presupuestos", {"empresa_id": 1, "cliente_id": cli["id"], "usuario_id": yo["id"],
+                               "items": [{"producto_id": pid, "cantidad": 2}]})
+    almacen = client.get("/api/stock/buscar", headers=admin, params={"empresa_id": 1, "producto_id": pid}).json()["items"][0]["almacen_id"]
+    post("/api/stock/entrada", {"producto_id": pid, "almacen_id": almacen, "tipo": "ENTRADA", "cantidad": 3, "costo_unitario": 31000})
+
+    nuevos = _eventos(client, interno, desde=inicio, limite=1000)["eventos"]
+    tipos = [e["tipo"] for e in nuevos]
+    for esperado in ("cliente.creado", "cliente.actualizado", "venta.confirmada", "entrega.estado",
+                     "venta.anulada", "presupuesto.creado", "stock.entrada"):
+        assert esperado in tipos, (esperado, tipos)
+    assert tipos.index("venta.confirmada") < tipos.index("venta.anulada")
+    confirmada = next(e for e in nuevos if e["tipo"] == "venta.confirmada")
+    assert confirmada["datos"]["venta_id"] == venta["id"] and confirmada["datos"]["es_delivery"] is True
+    entregado = [e for e in nuevos if e["tipo"] == "entrega.estado" and e["datos"]["estado"] == "ENTREGADO"]
+    assert entregado and entregado[0]["datos"]["venta_id"] == venta["id"]
+    entrada = [e for e in nuevos if e["tipo"] == "stock.entrada" and e["datos"]["cantidad"] == 3]
+    assert entrada and entrada[0]["datos"]["producto_id"] == pid
+    assert [e["id"] for e in nuevos] == sorted(e["id"] for e in nuevos)
+
+    # Cursor de a 2
+    pagina = _eventos(client, interno, desde=inicio, limite=2)
+    assert len(pagina["eventos"]) == 2 and pagina["cursor"] == pagina["eventos"][-1]["id"]
+    assert _eventos(client, interno, desde=pagina["cursor"], limite=1)["eventos"][0]["id"] > pagina["cursor"]
+
+
+def test_eventos_con_retraso_y_solo_crm_interno(client, admin, tokens, monkeypatch):
+    import integracion
+    monkeypatch.setattr(integracion, "RETRASO_EVENTOS_SEGUNDOS", 3600)
+    ultimo = _eventos(client, tokens["interno"]["token"], desde=0, limite=1000)
+    client.post("/api/clientes", headers=admin, json={"empresa_id": 1, "nombre": f"{PREFIJO} Reciente", "ruc": "80033333-3"})
+    assert _eventos(client, tokens["interno"]["token"], desde=ultimo["cursor"])["eventos"] == []
+    assert client.get(f"{V1}/eventos", headers=_bearer(tokens["bot"]["token"])).status_code == 403
+
+
+def test_cambio_deshecho_no_deja_evento(client):
+    from sqlalchemy import func, select
+    from database import async_session_maker
+    from models import Cliente, EventoIntegracion
+
+    async def probar():
+        async with async_session_maker() as db:
+            antes = await db.scalar(select(func.count()).select_from(EventoIntegracion))
+            db.add(Cliente(empresa_id=1, nombre=f"{PREFIJO} Deshecho"))
+            await db.flush()
+            await db.rollback()
+            return antes, await db.scalar(select(func.count()).select_from(EventoIntegracion))
+    antes, despues = client.portal.call(probar)
+    assert antes == despues

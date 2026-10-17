@@ -45,7 +45,9 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 # Local imports
 from database import get_db, init_db, engine, Base, async_session_maker, DATABASE_URL
 from migraciones import aplicar_migraciones
-from integracion import crear_router as crear_router_integracion, generar_token, PERFILES
+from integracion import (
+    crear_router as crear_router_integracion, depurar_eventos as depurar_eventos_integracion, generar_token, PERFILES,
+)
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
@@ -8505,6 +8507,9 @@ async def _preparar_base():
     aplicadas = await aplicar_migraciones(engine)
     if aplicadas:
         logger.info(f"Migraciones aplicadas: {aplicadas}")
+    depurados = await depurar_eventos_integracion(engine)
+    if depurados:
+        logger.info(f"Eventos de integración de más de 30 días borrados: {depurados}")
 
     # Auto-migration: ensure bi.ver permission exists and is assigned to ADMIN roles
     try:

@@ -18,11 +18,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, event, func, insert, inspect as sa_inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm import Session
+
 from database import get_db
-from models import Categoria, Marca, Producto, StockActual, TokenServicio, Usuario
+from models import (
+    Almacen, Categoria, Cliente, Entrega, EstadoVenta, EventoIntegracion, Marca, MovimientoStock, Presupuesto,
+    Producto, StockActual, TipoMovimientoStock, TokenServicio, Usuario, Venta,
+)
 
 PREFIJO_TOKEN = "ecs_"
 
@@ -42,6 +47,73 @@ PERMISOS_POR_SCOPE = {
     "metricas.leer": ("bi.ver", "dashboard.ver"),
     "eventos.leer": ("sistema.configurar",),
 }
+
+
+# ---------------------------------------------------------------------------------------------
+# Eventos (outbox). Un listener de la sesión detecta los cambios al guardarlos y escribe el evento
+# en la MISMA transacción: si el cambio se deshace, el evento también; ninguna ruta, actual o
+# futura, se olvida de emitirlo.
+# ---------------------------------------------------------------------------------------------
+TIPOS_EVENTO = ("venta.confirmada", "venta.anulada", "cliente.creado", "cliente.actualizado",
+                "presupuesto.creado", "entrega.estado", "stock.entrada")
+# Los eventos se entregan con este retraso: dos transacciones pueden confirmarse en otro orden que el
+# de sus ids, y sin margen el CRM se saltaría la más lenta. El CRM descarta repetidos por id.
+RETRASO_EVENTOS_SEGUNDOS = 5
+DIAS_DE_EVENTOS = 30
+
+
+def _cambio(obj, atributo):
+    """Valor nuevo si `atributo` cambió en este flush, si no None."""
+    hist = sa_inspect(obj).attrs[atributo].history
+    return hist.added[0] if hist.added else None
+
+
+def _eventos_del_flush(session: Session) -> list:
+    eventos = []
+    conexion = session.connection()
+
+    def empresa_de_venta(venta_id):
+        return conexion.execute(select(Venta.empresa_id).where(Venta.id == venta_id)).scalar()
+
+    for obj in list(session.new) + list(session.dirty):
+        nuevo = obj in session.new
+        if isinstance(obj, Venta):
+            estado = _cambio(obj, "estado")
+            if estado in (EstadoVenta.CONFIRMADA, EstadoVenta.ANULADA):
+                eventos.append((obj.empresa_id, "venta." + estado.value.lower(),
+                                obj.id, {"venta_id": obj.id, "cliente_id": obj.cliente_id,
+                                         "total": float(obj.total or 0), "tipo_pago": obj.tipo_pago.value if obj.tipo_pago else None,
+                                         "es_delivery": bool(obj.es_delivery)}))
+        elif isinstance(obj, Cliente):
+            if nuevo:
+                eventos.append((obj.empresa_id, "cliente.creado", obj.id, {"cliente_id": obj.id}))
+            elif session.is_modified(obj, include_collections=False):
+                eventos.append((obj.empresa_id, "cliente.actualizado", obj.id,
+                                {"cliente_id": obj.id, "activo": bool(obj.estado)}))
+        elif isinstance(obj, Presupuesto) and nuevo:
+            eventos.append((obj.empresa_id, "presupuesto.creado", obj.id,
+                            {"presupuesto_id": obj.id, "cliente_id": obj.cliente_id}))
+        elif isinstance(obj, Entrega) and (nuevo or _cambio(obj, "estado") is not None):
+            estado = obj.estado.value if obj.estado else None
+            eventos.append((empresa_de_venta(obj.venta_id), "entrega.estado", obj.id,
+                            {"entrega_id": obj.id, "venta_id": obj.venta_id, "estado": estado}))
+        elif isinstance(obj, MovimientoStock) and nuevo and obj.tipo == TipoMovimientoStock.ENTRADA                 and obj.referencia_tipo != "ANULACION_VENTA":
+            empresa_id = conexion.execute(select(Almacen.empresa_id).where(Almacen.id == obj.almacen_id)).scalar()
+            eventos.append((empresa_id, "stock.entrada", obj.producto_id,
+                            {"producto_id": obj.producto_id, "almacen_id": obj.almacen_id, "cantidad": obj.cantidad}))
+    return eventos
+
+
+@event.listens_for(Session, "after_flush")
+def registrar_eventos(session, flush_context):
+    """after_flush: los objetos nuevos ya tienen id y el historial de cambios sigue disponible."""
+    eventos = [e for e in _eventos_del_flush(session) if e[0] is not None]
+    if eventos:
+        ahora = datetime.now(timezone.utc)
+        session.connection().execute(insert(EventoIntegracion), [
+            {"empresa_id": empresa_id, "tipo": tipo, "entidad_id": entidad_id, "datos": datos, "creado_en": ahora}
+            for empresa_id, tipo, entidad_id, datos in eventos
+        ])
 
 
 def generar_token() -> tuple:
@@ -216,4 +288,35 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         p, c, m = fila
         return _producto_publico(p, c, m, (await _disponibilidad(db, [p]))[p.id])
 
+    # ---------- Eventos ----------
+    @router.get("/eventos")
+    async def eventos(
+        desde: int = Query(0, ge=0, description="Último id ya procesado (cursor)"),
+        limite: int = Query(100, ge=1, le=1000),
+        cred: Credencial = Depends(requiere_scope("eventos.leer")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Eventos con id mayor a `desde`, en orden. Para seguir, pasar como `desde` el `cursor`
+        devuelto. Llegan con unos segundos de retraso; procesarlos de forma idempotente por id."""
+        hasta = datetime.now(timezone.utc) - timedelta(seconds=RETRASO_EVENTOS_SEGUNDOS)
+        filas = (await db.execute(
+            select(EventoIntegracion)
+            .where(EventoIntegracion.empresa_id == cred.empresa_id, EventoIntegracion.id > desde,
+                   EventoIntegracion.creado_en <= hasta)
+            .order_by(EventoIntegracion.id).limit(limite)
+        )).scalars().all()
+        return {
+            "eventos": [{"id": e.id, "tipo": e.tipo, "entidad_id": e.entidad_id, "datos": e.datos,
+                         "creado_en": e.creado_en.isoformat()} for e in filas],
+            "cursor": filas[-1].id if filas else desde,
+        }
+
     return router
+
+
+async def depurar_eventos(engine) -> int:
+    """Borra los eventos de más de DIAS_DE_EVENTOS días (al arrancar el backend)."""
+    limite = datetime.now(timezone.utc) - timedelta(days=DIAS_DE_EVENTOS)
+    async with engine.begin() as conn:
+        r = await conn.execute(delete(EventoIntegracion).where(EventoIntegracion.creado_en < limite))
+    return r.rowcount or 0

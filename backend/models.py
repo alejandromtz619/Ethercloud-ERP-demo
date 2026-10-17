@@ -651,3 +651,17 @@ class TokenServicio(Base):
     activo = Column(Boolean, nullable=False, default=True)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     ultimo_uso = Column(DateTime(timezone=True), nullable=True)
+
+
+class EventoIntegracion(Base):
+    """Outbox: un cambio del ERP que le interesa al CRM (venta confirmada, cliente creado...). Se
+    escribe en la misma transacción que el cambio (integracion.registrar_eventos) y el CRM lo lee
+    con un cursor (GET /api/integracion/v1/eventos?desde=<id>). Se borran a los 30 días."""
+    __tablename__ = "eventos_integracion"
+
+    id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    tipo = Column(String(50), nullable=False)
+    entidad_id = Column(Integer, nullable=False)
+    datos = Column(JSON, nullable=False)
+    creado_en = Column(DateTime(timezone=True), nullable=False, index=True)
