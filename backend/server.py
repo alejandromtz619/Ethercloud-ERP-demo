@@ -2485,6 +2485,15 @@ async def _costo_y_tasa_iva(db: AsyncSession, item) -> tuple:
 
 @api_router.post("/ventas", response_model=VentaResponse)
 async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: AsyncSession = Depends(get_db)):
+    venta = await armar_venta(db, data, crear_pendiente)
+    await db.commit()
+    await db.refresh(venta)
+    return venta
+
+async def armar_venta(db: AsyncSession, data: VentaCreate, crear_pendiente: bool) -> Venta:
+    """Crea la venta (BORRADOR, o PENDIENTE si crear_pendiente) con sus ítems, sin confirmar la
+    transacción: quien llama hace el commit. Calcula costo, descuento del cliente e IVA. También
+    la usa la API de integración para los pedidos (integracion.py)."""
     # Get client
     cliente_result = await db.execute(select(Cliente).where(Cliente.id == data.cliente_id))
     cliente = cliente_result.scalar_one_or_none()
@@ -2584,9 +2593,7 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
     for item_data in items_data:
         venta_item = VentaItem(venta_id=venta.id, **item_data)
         db.add(venta_item)
-    
-    await db.commit()
-    await db.refresh(venta)
+    await db.flush()
     return venta
 
 @api_router.post("/ventas/{venta_id}/confirmar", response_model=VentaResponse)
@@ -8475,7 +8482,7 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
 app.include_router(public_router)
 app.include_router(api_router)
 # API de integración para el CRM y el bot (integracion.py): autenticación y permisos propios
-app.include_router(crear_router_integracion(usuario_desde_jwt, _tiene_algun_permiso))
+app.include_router(crear_router_integracion(usuario_desde_jwt, _tiene_algun_permiso, armar_venta))
 
 # Health check sin datos internos (rutas de disco ni variables de entorno)
 @app.get("/health")

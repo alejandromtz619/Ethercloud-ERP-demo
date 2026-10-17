@@ -12,22 +12,27 @@ Nunca expone costos, proveedores ni márgenes. Los datos siempre son de la empre
 Contrato completo: documentacion/api_integracion_v1.md
 """
 import hashlib
+import re
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, event, func, insert, inspect as sa_inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import (
-    Almacen, Categoria, Cliente, Entrega, EstadoVenta, EventoIntegracion, Marca, MovimientoStock, Presupuesto,
-    Producto, StockActual, TipoMovimientoStock, TokenServicio, Usuario, Venta,
+    PARAGUAY_TZ, Almacen, Categoria, Cliente, CreditoCliente, Entrega, EstadoEntrega, EstadoVenta, EventoIntegracion,
+    Marca, MovimientoStock, PedidoIntegracion, Presupuesto, Producto, StockActual, TipoMovimientoStock, TokenServicio,
+    Usuario, Venta, VentaItem,
 )
+from schemas import VentaCreate, VentaItemCreate
 
 PREFIJO_TOKEN = "ecs_"
 
@@ -146,9 +151,9 @@ def _token_del_encabezado(request: Request) -> str:
     return valor[7:].strip()
 
 
-def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> APIRouter:
-    """Router de la API. Recibe de server.py cómo validar un JWT y cómo consultar permisos (así
-    este módulo no importa server.py)."""
+def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, armar_venta: Callable) -> APIRouter:
+    """Router de la API. Recibe de server.py cómo validar un JWT, cómo consultar permisos y cómo
+    armar una venta (así este módulo no importa server.py ni duplica esa lógica)."""
 
     async def autenticar(request: Request, db: AsyncSession) -> Credencial:
         cred = getattr(request.state, "credencial_integracion", None)
@@ -287,6 +292,267 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             raise HTTPException(status_code=404, detail="Producto no encontrado")
         p, c, m = fila
         return _producto_publico(p, c, m, (await _disponibilidad(db, [p]))[p.id])
+
+    # ---------- Clientes ----------
+    def _cliente_publico(c: Cliente) -> dict:
+        return {"id": c.id, "nombre": c.nombre, "apellido": c.apellido, "ruc": c.ruc, "cedula": c.cedula,
+                "telefono": c.telefono, "email": c.email, "direccion": c.direccion, "activo": bool(c.estado)}
+
+    async def _cliente_de_la_empresa(db: AsyncSession, cred: Credencial, cliente_id: int) -> Cliente:
+        cliente = await db.get(Cliente, cliente_id)
+        if not cliente or cliente.empresa_id != cred.empresa_id:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        return cliente
+
+    @router.get("/clientes")
+    async def buscar_clientes(
+        telefono: Optional[str] = None,
+        documento: Optional[str] = None,
+        cred: Credencial = Depends(requiere_scope("clientes.leer")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Clientes por teléfono (se comparan los últimos 9 dígitos: "0981 111-222" y "595981111222"
+        son el mismo) o por documento (RUC con o sin dígito verificador, o cédula)."""
+        if not (telefono and telefono.strip()) and not (documento and documento.strip()):
+            raise HTTPException(status_code=400, detail="Indique telefono o documento")
+        consulta = select(Cliente).where(Cliente.empresa_id == cred.empresa_id)
+        if telefono and telefono.strip():
+            digitos = re.sub(r"\D", "", telefono)[-9:]
+            if len(digitos) < 6:
+                raise HTTPException(status_code=400, detail="Teléfono demasiado corto")
+            # Prefiltro en la base (los dígitos en orden, con cualquier separador) y control exacto acá
+            consulta = consulta.where(Cliente.telefono.like("%" + "%".join(digitos) + "%"))
+            candidatos = (await db.execute(consulta.limit(200))).scalars().all()
+            encontrados = [c for c in candidatos if re.sub(r"\D", "", c.telefono or "").endswith(digitos)]
+        else:
+            doc = documento.strip()
+            consulta = consulta.where(or_(Cliente.ruc == doc, Cliente.ruc.like(doc.split("-")[0] + "-%"),
+                                          Cliente.cedula == doc))
+            encontrados = (await db.execute(consulta.limit(50))).scalars().all()
+        return {"items": [_cliente_publico(c) for c in encontrados]}
+
+    class ClienteNuevo(BaseModel):
+        nombre: str = Field(min_length=1, max_length=255)
+        apellido: Optional[str] = Field(None, max_length=255)
+        telefono: Optional[str] = Field(None, max_length=50)
+        ruc: Optional[str] = Field(None, max_length=50)
+        cedula: Optional[str] = Field(None, max_length=50)
+        email: Optional[str] = Field(None, max_length=255)
+        direccion: Optional[str] = Field(None, max_length=500)
+
+    @router.post("/clientes")
+    async def crear_cliente(
+        data: ClienteNuevo,
+        cred: Credencial = Depends(requiere_scope("clientes.escribir")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Crea un cliente (contacto nuevo del CRM). Con un RUC o cédula que ya existe responde 409 y
+        el id del existente, para vincularlo en lugar de duplicarlo."""
+        for campo in ("ruc", "cedula"):
+            valor = getattr(data, campo)
+            if valor and valor.strip():
+                existente = (await db.execute(select(Cliente.id).where(
+                    Cliente.empresa_id == cred.empresa_id, getattr(Cliente, campo) == valor.strip()))).scalar()
+                if existente:
+                    raise HTTPException(status_code=409, detail={"mensaje": f"Ya existe un cliente con ese {campo}",
+                                                                 "cliente_id": existente})
+        cliente = Cliente(empresa_id=cred.empresa_id,
+                          **{k: (v.strip() if isinstance(v, str) else v) or None for k, v in data.model_dump().items()})
+        cliente.nombre = data.nombre.strip()
+        db.add(cliente)
+        await db.commit()
+        await db.refresh(cliente)
+        return _cliente_publico(cliente)
+
+    @router.get("/clientes/{cliente_id}/resumen-360")
+    async def resumen_cliente(
+        cliente_id: int,
+        cred: Credencial = Depends(requiere_scope("clientes.leer")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Perfil del cliente para el CRM: compras, productos que más compra, últimas ventas,
+        presupuestos, entregas pendientes y crédito (el crédito, sólo con permiso para verlo)."""
+        cliente = await _cliente_de_la_empresa(db, cred, cliente_id)
+        confirmadas = (Venta.cliente_id == cliente_id, Venta.estado == EstadoVenta.CONFIRMADA)
+        total, cantidad, ultima = (await db.execute(
+            select(func.coalesce(func.sum(Venta.total), 0), func.count(Venta.id), func.max(Venta.creado_en))
+            .where(*confirmadas))).one()
+        top = (await db.execute(
+            select(Producto.id, Producto.nombre, func.sum(VentaItem.cantidad).label("unidades"))
+            .join(Venta, VentaItem.venta_id == Venta.id).join(Producto, VentaItem.producto_id == Producto.id)
+            .where(*confirmadas).group_by(Producto.id, Producto.nombre)
+            .order_by(func.sum(VentaItem.cantidad).desc(), Producto.id).limit(5))).all()
+        recientes = (await db.execute(
+            select(Venta).where(Venta.cliente_id == cliente_id).order_by(Venta.creado_en.desc(), Venta.id.desc()).limit(5)
+        )).scalars().all()
+        presupuestos = (await db.execute(
+            select(Presupuesto).where(Presupuesto.cliente_id == cliente_id)
+            .order_by(Presupuesto.creado_en.desc(), Presupuesto.id.desc()).limit(5))).scalars().all()
+        entregas = await db.scalar(
+            select(func.count(Entrega.id)).join(Venta, Entrega.venta_id == Venta.id)
+            .where(Venta.cliente_id == cliente_id, Entrega.estado != EstadoEntrega.ENTREGADO,
+                   Entrega.estado != EstadoEntrega.CANCELADO))
+
+        resumen = {
+            "cliente": _cliente_publico(cliente),
+            "compras": {
+                "total": float(total or 0), "cantidad": cantidad,
+                "ticket_promedio": round(float(total or 0) / cantidad, 0) if cantidad else 0,
+                "ultima_compra": ultima.isoformat() if ultima else None,
+            },
+            "productos_mas_comprados": [{"producto_id": i, "nombre": n, "unidades": int(u)} for i, n, u in top],
+            "ventas_recientes": [{"venta_id": v.id, "fecha": v.creado_en.isoformat() if v.creado_en else None,
+                                  "total": float(v.total or 0), "estado": v.estado.value if v.estado else None}
+                                 for v in recientes],
+            "presupuestos_recientes": [{"presupuesto_id": p.id, "fecha": p.creado_en.isoformat() if p.creado_en else None,
+                                        "total": float(p.total or 0)} for p in presupuestos],
+            "entregas_pendientes": entregas or 0,
+        }
+        puede_ver_credito = cred.es_servicio or await tiene_algun_permiso(db, cred.usuario.id, ("clientes.ver_creditos",))
+        if puede_ver_credito:
+            usado = await db.scalar(select(func.coalesce(func.sum(CreditoCliente.monto_pendiente), 0)).where(
+                CreditoCliente.cliente_id == cliente_id, CreditoCliente.pagado == False))
+            limite = float(cliente.limite_credito or 0)
+            resumen["credito"] = {"limite": limite, "usado": float(usado or 0),
+                                  "disponible": max(0.0, limite - float(usado or 0))}
+        return resumen
+
+    # ---------- Métricas ----------
+    @router.get("/metricas/ventas")
+    async def metricas_ventas(
+        desde: date,
+        hasta: date,
+        por: str = Query("dia", pattern="^(dia|semana|mes)$"),
+        cliente_id: Optional[int] = None,
+        cred: Credencial = Depends(requiere_scope("metricas.leer")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Ventas confirmadas por día, semana (lunes) o mes, en hora de Paraguay. Con cliente_id, sólo
+        las de ese cliente (atribución de campañas). Hasta 366 días por consulta."""
+        if hasta < desde or (hasta - desde).days > 366:
+            raise HTTPException(status_code=400, detail="Rango inválido (hasta 366 días)")
+        inicio = datetime.combine(desde, datetime.min.time(), PARAGUAY_TZ)
+        fin = datetime.combine(hasta + timedelta(days=1), datetime.min.time(), PARAGUAY_TZ)
+        filtros = [Venta.empresa_id == cred.empresa_id, Venta.estado == EstadoVenta.CONFIRMADA,
+                   Venta.creado_en >= inicio, Venta.creado_en < fin]
+        if cliente_id:
+            filtros.append(Venta.cliente_id == cliente_id)
+        filas = (await db.execute(select(Venta.creado_en, Venta.total).where(*filtros))).all()
+
+        def periodo(momento: datetime) -> str:
+            d = (momento.astimezone(PARAGUAY_TZ) if momento.tzinfo else momento).date()
+            if por == "semana":
+                return (d - timedelta(days=d.weekday())).isoformat()
+            return d.isoformat()[:7] if por == "mes" else d.isoformat()
+        series = {}
+        for creado_en, monto in filas:
+            p = series.setdefault(periodo(creado_en), {"total": 0.0, "cantidad": 0})
+            p["total"] += float(monto or 0)
+            p["cantidad"] += 1
+        return {"por": por, "desde": desde.isoformat(), "hasta": hasta.isoformat(), "series": [
+            {"periodo": k, "total": round(v["total"], 2), "cantidad": v["cantidad"],
+             "ticket_promedio": round(v["total"] / v["cantidad"], 0)} for k, v in sorted(series.items())]}
+
+    # ---------- Pedidos ----------
+    class ItemPedido(BaseModel):
+        producto_id: int
+        cantidad: int = Field(gt=0, le=10000)
+
+    class PedidoNuevo(BaseModel):
+        cliente_id: int
+        items: list[ItemPedido] = Field(min_length=1, max_length=100)
+        tipo_pago: Literal["EFECTIVO", "TARJETA", "TRANSFERENCIA"] = "EFECTIVO"  # crédito: sólo un vendedor
+        es_delivery: bool = False
+
+    async def _pedido_publico(db: AsyncSession, pedido: PedidoIntegracion) -> dict:
+        venta = await db.get(Venta, pedido.venta_id)
+        items = (await db.execute(
+            select(VentaItem.producto_id, Producto.nombre, VentaItem.cantidad, VentaItem.precio_unitario, VentaItem.total)
+            .outerjoin(Producto, VentaItem.producto_id == Producto.id).where(VentaItem.venta_id == venta.id)
+            .order_by(VentaItem.id))).all()
+        return {
+            "pedido_id": pedido.id, "venta_id": venta.id, "cliente_id": venta.cliente_id,
+            "estado": venta.estado.value,  # PENDIENTE hasta que lo confirma un vendedor
+            "tipo_pago": venta.tipo_pago.value if venta.tipo_pago else None, "es_delivery": bool(venta.es_delivery),
+            "items": [{"producto_id": pid, "nombre": n, "cantidad": c, "precio_unitario": float(pu), "total": float(t)}
+                      for pid, n, c, pu, t in items],
+            "descuento": float(venta.descuento or 0), "total": float(venta.total or 0),
+            "creado_en": pedido.creado_en.isoformat() if pedido.creado_en else None,
+        }
+
+    @router.post("/pedidos")
+    async def crear_pedido(
+        data: PedidoNuevo,
+        request: Request,
+        cred: Credencial = Depends(requiere_scope("pedidos.crear")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Crea un pedido como venta PENDIENTE que confirma un vendedor (D8, modo por defecto). Los
+        precios los pone el ERP (precio de venta actual y el descuento del cliente); el pedido no
+        trae precios ni descuentos. Encabezado Idempotency-Key obligatorio: repetir la misma clave
+        devuelve el mismo pedido; la misma clave con otro pedido, 409."""
+        clave = (request.headers.get("Idempotency-Key") or "").strip()
+        if not clave or len(clave) > 100:
+            raise HTTPException(status_code=400, detail="Encabezado Idempotency-Key obligatorio (hasta 100 caracteres)")
+        huella = hashlib.sha256(data.model_dump_json().encode("utf-8")).hexdigest()
+
+        async def existente():
+            return (await db.execute(select(PedidoIntegracion).where(
+                PedidoIntegracion.empresa_id == cred.empresa_id,
+                PedidoIntegracion.clave_idempotencia == clave))).scalar_one_or_none()
+
+        previo = await existente()
+        if previo:
+            if previo.huella != huella:
+                raise HTTPException(status_code=409, detail="Esa Idempotency-Key ya se usó con otro pedido")
+            return await _pedido_publico(db, previo)
+
+        usuario_id = cred.usuario.id if cred.usuario else None
+        if not usuario_id:
+            raise HTTPException(status_code=400, detail="El token no tiene un usuario asignado para registrar pedidos")
+        await _cliente_de_la_empresa(db, cred, data.cliente_id)
+        ids = [i.producto_id for i in data.items]
+        productos = {p.id: p for p in (await db.execute(select(Producto).where(
+            Producto.id.in_(ids), Producto.empresa_id == cred.empresa_id, Producto.activo == True))).scalars().all()}
+        faltan = sorted(set(ids) - set(productos))
+        if faltan:
+            raise HTTPException(status_code=400, detail={"mensaje": "Productos inexistentes o inactivos", "producto_ids": faltan})
+
+        venta = await armar_venta(db, VentaCreate(
+            empresa_id=cred.empresa_id, usuario_id=usuario_id, cliente_id=data.cliente_id, tipo_pago=data.tipo_pago,
+            es_delivery=data.es_delivery,
+            items=[VentaItemCreate(producto_id=i.producto_id, cantidad=i.cantidad,
+                                   precio_unitario=productos[i.producto_id].precio_venta) for i in data.items],
+        ), True)
+        pedido = PedidoIntegracion(empresa_id=cred.empresa_id, clave_idempotencia=clave, huella=huella, venta_id=venta.id,
+                                   token_id=cred.token.id if cred.token else None,
+                                   usuario_id=None if cred.es_servicio else usuario_id)
+        db.add(pedido)
+        try:
+            await db.commit()  # venta y pedido juntos: o se guardan los dos o ninguno
+        except IntegrityError:
+            # Otra petición con la misma clave ganó la carrera: devolver la suya
+            await db.rollback()
+            previo = await existente()
+            if not previo or previo.huella != huella:
+                raise HTTPException(status_code=409, detail="Esa Idempotency-Key ya se usó con otro pedido")
+            return await _pedido_publico(db, previo)
+        await db.refresh(pedido)
+        return await _pedido_publico(db, pedido)
+
+    @router.get("/pedidos/{pedido_id}")
+    async def ver_pedido(
+        pedido_id: int,
+        cred: Credencial = Depends(requiere_scope("pedidos.leer")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Estado de un pedido. Un token de servicio sin clientes.leer (el bot) sólo ve los suyos."""
+        pedido = await db.get(PedidoIntegracion, pedido_id)
+        if not pedido or pedido.empresa_id != cred.empresa_id:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        if cred.es_servicio and "clientes.leer" not in (cred.token.scopes or []) and pedido.token_id != cred.token.id:
+            raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        return await _pedido_publico(db, pedido)
 
     # ---------- Eventos ----------
     @router.get("/eventos")

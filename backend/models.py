@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    CheckConstraint, Column, Integer, SmallInteger, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table, JSON
+    CheckConstraint, UniqueConstraint, Column, Integer, SmallInteger, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table, JSON
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -665,3 +665,19 @@ class EventoIntegracion(Base):
     entidad_id = Column(Integer, nullable=False)
     datos = Column(JSON, nullable=False)
     creado_en = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class PedidoIntegracion(Base):
+    """Pedido creado por la API de integración (CRM o bot): queda como una venta PENDIENTE que
+    confirma un vendedor (D8). La clave de idempotencia evita duplicarla si el CRM reintenta."""
+    __tablename__ = "pedidos_integracion"
+    __table_args__ = (UniqueConstraint("empresa_id", "clave_idempotencia", name="uq_pedidos_integracion_clave"),)
+
+    id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    clave_idempotencia = Column(String(100), nullable=False)
+    huella = Column(String(64), nullable=False)  # hash del pedido, para detectar la misma clave con otro pedido
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=False)
+    token_id = Column(Integer, ForeignKey("tokens_servicio.id"), nullable=True)  # quién lo creó
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
