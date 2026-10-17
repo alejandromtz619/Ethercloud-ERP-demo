@@ -714,7 +714,7 @@ setTimeout(fetchVentas, 100);
                     Descuento: {formatCurrency(selectedVenta.descuento || 0)}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    IVA 10%: {formatCurrency(selectedVenta.iva || 0)}
+                    IVA incluido: {formatCurrency(selectedVenta.iva || 0)}
                   </p>
                 </div>
                 <div className="text-right">

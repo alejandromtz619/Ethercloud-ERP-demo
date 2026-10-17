@@ -24,6 +24,7 @@ import {
   DialogTrigger,
 } from '../components/ui/dialog';
 import { Package, Plus, Minus, Loader2, Search, Edit, Trash2, Upload, Expand, X, Check, ChevronDown, AlertTriangle } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import EntradaStockDialog from '../components/EntradaStockDialog';
 import SalidaStockDialog from '../components/SalidaStockDialog';
 
@@ -83,7 +84,8 @@ const Productos = () => {
     categoria_id: '',
     marca_id: '',
     proveedor_id: '',
-    imagen_url: ''
+    imagen_url: '',
+    tasa_iva: '10'
   });
 
   const cargarProductos = async (offset = 0) => {
@@ -208,7 +210,8 @@ const Productos = () => {
       categoria_id: '',
       marca_id: '',
       proveedor_id: '',
-      imagen_url: ''
+      imagen_url: '',
+      tasa_iva: '10'
     });
     setEditingId(null);
     setCodigoConflicto(null);
@@ -226,7 +229,8 @@ const Productos = () => {
       categoria_id: producto.categoria_id?.toString() || '',
       marca_id: producto.marca_id?.toString() || '',
       proveedor_id: producto.proveedor_id?.toString() || '',
-      imagen_url: producto.imagen_url || ''
+      imagen_url: producto.imagen_url || '',
+      tasa_iva: (producto.tasa_iva ?? 10).toString()
     });
     setEditingId(producto.id);
     setDialogOpen(true);
@@ -242,7 +246,8 @@ const Productos = () => {
         categoria_id: formData.categoria_id ? parseInt(formData.categoria_id) : null,
         marca_id: formData.marca_id ? parseInt(formData.marca_id) : null,
         proveedor_id: formData.proveedor_id ? parseInt(formData.proveedor_id) : null,
-        fecha_vencimiento: formData.fecha_vencimiento || null
+        fecha_vencimiento: formData.fecha_vencimiento || null,
+        tasa_iva: parseInt(formData.tasa_iva, 10)
       };
 
       if (editingId) {
@@ -415,6 +420,19 @@ const Productos = () => {
                     value={formData.precio_costo}
                     onChange={(e) => setFormData({...formData, precio_costo: e.target.value})}
                   />
+                </div>
+                <div>
+                  <Label>IVA (incluido en el precio)</Label>
+                  <Select value={formData.tasa_iva} onValueChange={(v) => setFormData({...formData, tasa_iva: v})}>
+                    <SelectTrigger data-testid="producto-tasa-iva">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10%</SelectItem>
+                      <SelectItem value="5">5%</SelectItem>
+                      <SelectItem value="0">Exento</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label>Categoría</Label>

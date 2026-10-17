@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Literal, Optional, List
 from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
@@ -315,6 +315,7 @@ class ProductoBase(BaseModel):
     categoria_id: Optional[int] = None
     marca_id: Optional[int] = None
     proveedor_id: Optional[int] = None
+    tasa_iva: Literal[10, 5, 0] = 10  # IVA incluido en el precio; 0 = exento
 
 class ProductoCreate(ProductoBase):
     empresa_id: int
@@ -497,6 +498,7 @@ class VentaItemResponse(VentaItemBase):
     venta_id: int
     total: Decimal
     precio_costo: Optional[Decimal] = 0
+    tasa_iva: int = 10
     producto_nombre: Optional[str] = None
     materia_nombre: Optional[str] = None
     descripcion: Optional[str] = None
@@ -559,6 +561,7 @@ class PresupuestoItemResponse(BaseModel):
     cantidad: int
     precio_venta_unitario: Decimal
     subtotal: Decimal
+    tasa_iva: int = 10
 
 class PresupuestoCreate(BaseModel):
     empresa_id: int

@@ -475,7 +475,7 @@ const Sistema = () => {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">IVA Paraguay</span>
-              <span className="font-mono">10%</span>
+              <span className="font-mono">10% / 5% / exento (por producto)</span>
             </div>
             <Separator className="my-2" />
             <p className="text-xs text-muted-foreground text-center">

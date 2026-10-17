@@ -45,6 +45,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 # Local imports
 from database import get_db, init_db, engine, Base, async_session_maker, DATABASE_URL
 from migraciones import aplicar_migraciones
+from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
@@ -1679,6 +1680,11 @@ async def actualizar_producto(producto_id: int, data: dict, db: AsyncSession = D
                     value = value.strip()
             elif key == 'imagen_url' and value:
                 value = await _localizar_si_es_externa(str(value).strip())
+            elif key == 'tasa_iva':
+                try:
+                    value = validar_tasa(int(value))
+                except (TypeError, ValueError) as e:
+                    raise HTTPException(status_code=400, detail=str(e))
             setattr(producto, key, value)
     
     await db.commit()
@@ -2448,6 +2454,20 @@ async def historial_stock_producto(producto_id: int, db: AsyncSession = Depends(
     return response
 
 # ==================== VENTAS ====================
+async def _costo_y_tasa_iva(db: AsyncSession, item) -> tuple:
+    """Costo y tasa de IVA de un ítem de venta. Productos: su costo real y su tasa; materias de
+    laboratorio: precio * (1 - LAB_MARGEN_GANANCIA) y 10 %."""
+    if item.producto_id:
+        fila = (await db.execute(
+            select(Producto.precio_costo, Producto.tasa_iva).where(Producto.id == item.producto_id)
+        )).first()
+        if fila:
+            return Decimal(str(fila.precio_costo or 0)), fila.tasa_iva
+        return Decimal('0'), 10
+    if item.materia_laboratorio_id:
+        return item.precio_unitario * (Decimal('1') - LAB_MARGEN_GANANCIA), 10
+    return Decimal('0'), 10
+
 @api_router.post("/ventas", response_model=VentaResponse)
 async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: AsyncSession = Depends(get_db)):
     # Get client
@@ -2481,22 +2501,14 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
         item_total = Decimal(str(item.cantidad)) * item.precio_unitario
         subtotal += item_total
 
-        # Fetch precio_costo: productos usan costo real, materias laboratorio usan precio * (1 - LAB_MARGEN_GANANCIA)
-        precio_costo = Decimal('0')
-        if item.producto_id:
-            prod_costo_res = await db.execute(
-                select(Producto.precio_costo).where(Producto.id == item.producto_id)
-            )
-            raw_costo = prod_costo_res.scalar_one_or_none()
-            precio_costo = Decimal(str(raw_costo or 0))
-        elif item.materia_laboratorio_id:
-            precio_costo = item.precio_unitario * (Decimal('1') - LAB_MARGEN_GANANCIA)
+        precio_costo, tasa_iva = await _costo_y_tasa_iva(db, item)
         costo_total += Decimal(str(item.cantidad)) * precio_costo
 
         items_data.append({
             **item.model_dump(),
             'total': item_total,
             'precio_costo': precio_costo,
+            'tasa_iva': tasa_iva,
         })
         
         if not crear_pendiente and item.producto_id:
@@ -2515,7 +2527,7 @@ async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: Asyn
     
     descuento = subtotal * descuento_porcentaje / Decimal('100')
     subtotal_con_descuento = subtotal - descuento
-    iva = subtotal_con_descuento * Decimal('10') / Decimal('110')
+    iva = iva_total(desglose_iva([(i['total'], i['tasa_iva']) for i in items_data], subtotal_con_descuento))
     total = subtotal_con_descuento
     ganancia = total - costo_total
     
@@ -2708,21 +2720,14 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
         # Recalculate totals with new items
         subtotal = Decimal('0')
         costo_total = Decimal('0')
+        montos_iva = []
         for item in data.items:
             item_total = Decimal(str(item.cantidad)) * item.precio_unitario
             subtotal += item_total
 
-            # Fetch precio_costo: productos usan costo real, materias laboratorio usan precio * (1 - LAB_MARGEN_GANANCIA)
-            precio_costo = Decimal('0')
-            if item.producto_id:
-                prod_costo_res = await db.execute(
-                    select(Producto.precio_costo).where(Producto.id == item.producto_id)
-                )
-                raw_costo = prod_costo_res.scalar_one_or_none()
-                precio_costo = Decimal(str(raw_costo or 0))
-            elif item.materia_laboratorio_id:
-                precio_costo = item.precio_unitario * (Decimal('1') - LAB_MARGEN_GANANCIA)
+            precio_costo, tasa_iva = await _costo_y_tasa_iva(db, item)
             costo_total += Decimal(str(item.cantidad)) * precio_costo
+            montos_iva.append((item_total, tasa_iva))
             
             venta_item = VentaItem(
                 venta_id=venta.id,
@@ -2732,13 +2737,14 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
                 precio_unitario=item.precio_unitario,
                 precio_costo=precio_costo,
                 total=item_total,
-                observaciones=item.observaciones
+                observaciones=item.observaciones,
+                tasa_iva=tasa_iva,
             )
             db.add(venta_item)
         
         descuento = subtotal * descuento_porcentaje / Decimal('100')
         subtotal_con_descuento = subtotal - descuento
-        iva = subtotal_con_descuento * Decimal('10') / Decimal('110')
+        iva = iva_total(desglose_iva(montos_iva, subtotal_con_descuento))
         
         venta.descuento = descuento
         venta.iva = iva
@@ -3253,7 +3259,8 @@ async def crear_presupuesto(data: PresupuestoCreate, db: AsyncSession = Depends(
             imagen_url=producto.imagen_url,
             cantidad=item_data.cantidad,
             precio_venta_unitario=precio_unitario,
-            subtotal=subtotal_item
+            subtotal=subtotal_item,
+            tasa_iva=producto.tasa_iva,
         ))
 
     presupuesto.subtotal = total
@@ -3583,15 +3590,18 @@ def generar_pdf_presupuesto(presupuesto: Presupuesto, cliente: Cliente, empresa:
         elements.append(_construir_tabla_items(pagina_items))
     elements.append(Spacer(1, 5 * mm))
 
-    # ---- Resumen: Subtotal / IVA incluido (precios ya incluyen IVA, igual que en Ventas) ----
-    iva_incluido = (presupuesto.total * Decimal('10') / Decimal('110')).quantize(Decimal('1'))
-    subtotal_sin_iva = presupuesto.total - iva_incluido
+    # ---- Resumen: Subtotal / IVA incluido por tasa (precios ya incluyen IVA, igual que en Ventas) ----
+    desglose = desglose_iva([(i.subtotal, i.tasa_iva) for i in presupuesto.items], presupuesto.total)
+    iva_por_tasa = {t: d["iva"].quantize(Decimal('1')) for t, d in sorted(desglose.items(), reverse=True) if t}
+    subtotal_sin_iva = presupuesto.total - sum(iva_por_tasa.values(), Decimal(0))
     resumen_label_style = ParagraphStyle('ResumenLabel', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=gris)
     resumen_value_style = ParagraphStyle('ResumenValue', fontName='Helvetica', fontSize=9.5, leading=13, alignment=TA_RIGHT, textColor=texto)
     resumen_table = Table(
         [
             [Paragraph('Subtotal (sin IVA)', resumen_label_style), Paragraph(f"Gs. {int(subtotal_sin_iva):,}", resumen_value_style)],
-            [Paragraph('IVA (10%, incluido)', resumen_label_style), Paragraph(f"Gs. {int(iva_incluido):,}", resumen_value_style)],
+        ] + [
+            [Paragraph(f'IVA ({tasa}%, incluido)', resumen_label_style), Paragraph(f"Gs. {int(iva):,}", resumen_value_style)]
+            for tasa, iva in iva_por_tasa.items()
         ],
         colWidths=[ancho_util - 55 * mm, 55 * mm]
     )
@@ -3721,7 +3731,7 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
                 'codigo': codigo,
                 'cantidad': float(item.cantidad),
                 'descripcion': descripcion,
-                'iva': 10,
+                'iva': item.tasa_iva,
                 'precio': float(item.precio_unitario),
                 'total': float(item.total)
             })
@@ -3763,6 +3773,19 @@ async def generar_boleta(venta_id: int, db: AsyncSession = Depends(get_db)):
         logger.error(f"Error generando datos de boleta para venta {venta_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error al generar boleta: {str(e)}")
 
+# Columna de la factura (Exentas / 5% / 10%) para cada tasa de IVA
+COLUMNA_IVA = {0: 'exenta', 5: 'iva_5', 10: 'iva_10'}
+
+def _subtotales_por_tasa(desglose: dict, venta) -> dict:
+    """Subtotales impresos por columna (montos de los ítems, antes del descuento). Con una sola
+    tasa es total + descuento, como siempre se imprimió."""
+    subtotales = {'subtotal_exenta': 0, 'subtotal_iva_5': 0, 'subtotal_iva_10': 0}
+    for tasa, d in desglose.items():
+        subtotales['subtotal_' + COLUMNA_IVA[tasa]] = float(d['bruto'])
+    if len(desglose) == 1:
+        subtotales['subtotal_' + COLUMNA_IVA[next(iter(desglose))]] = float(venta.total + venta.descuento)
+    return subtotales
+
 @api_router.get("/ventas/{venta_id}/factura")
 async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
     """Generate factura data for printing and mark the venta as facturada"""
@@ -3793,6 +3816,7 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
         )
         
         items = []
+        montos_iva = []
         for item_row in items_result.all():
             item, producto, materia = item_row
             
@@ -3803,18 +3827,20 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
             else:
                 descripcion = 'Item'
             
+            # Cada ítem en la columna de su tasa de IVA
+            columnas = {'exenta': 0, 'iva_5': 0, 'iva_10': 0}
+            columnas[COLUMNA_IVA[item.tasa_iva]] = float(item.total)
             items.append({
                 'cantidad': float(item.cantidad),
                 'descripcion': descripcion,
                 'precio_unitario': float(item.precio_unitario),
-                'exenta': 0,
-                'iva_5': 0,
-                'iva_10': float(item.total)
+                **columnas,
             })
+            montos_iva.append((item.total, item.tasa_iva))
         
-        # Calculate IVA breakdown
-        base_imponible = float(venta.total) / 1.10
-        iva_10 = float(venta.total) - base_imponible
+        desglose = desglose_iva(montos_iva, venta.total)
+        subtotales = _subtotales_por_tasa(desglose, venta)
+        liquidacion = liquidacion_impresa(desglose)
         
         # Fecha de impresion (respeta correccion manual, hora original intacta)
         creado_en_py_f, fecha_modificada_f = fecha_documento(venta, 'FACTURA')
@@ -3837,19 +3863,13 @@ async def generar_factura(venta_id: int, db: AsyncSession = Depends(get_db)):
                 'telefono': cliente.telefono or ''
             },
             'items': items,
-            'subtotal_exenta': 0,
-            'subtotal_iva_5': 0,
-            'subtotal_iva_10': float(venta.total + venta.descuento),
+            **subtotales,
             'descuento': float(venta.descuento),
             'descuento_porcentaje': float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0,
-            'iva_10': round(iva_10, 0),
+            'iva_10': liquidacion['iva_10'],
             'total': float(venta.total),
             'total_letras': numero_a_letras(int(venta.total)),
-            'liquidacion_iva': {
-                'iva_5': 0,
-                'iva_10': round(iva_10, 0),
-                'total_iva': round(iva_10, 0)
-            }
+            'liquidacion_iva': liquidacion,
         }
     except HTTPException:
         raise
@@ -4229,7 +4249,7 @@ async def generar_pdf_boleta(venta: Venta, cliente: Cliente, vendedor: Usuario, 
             codigo[:10],  # Limitar código
             f"{item.cantidad:.2f}",
             descripcion[:30],  # Limitar descripción para caber en 75mm
-            '10',
+            str(item.tasa_iva),
             f"{int(item.precio_unitario):,}",
             f"{int(item.total):,}"
         ])
@@ -4428,7 +4448,7 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
     
     # Items
     items_data = [['Cant.', 'Descripción', 'P. Unit.', 'Exenta', 'IVA 5%', 'IVA 10%']]
-    subtotal_iva_10 = 0
+    montos_iva = []
     
     for item_row in items_result.all():
         item, producto, materia = item_row
@@ -4440,15 +4460,18 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
         else:
             descripcion = 'Item'
         
-        subtotal_iva_10 += float(item.total)
+        montos_iva.append((item.total, item.tasa_iva))
+        # El monto va en la columna de su tasa de IVA
+        columnas = {0: '0', 5: '0', 10: '0'}
+        columnas[item.tasa_iva] = f"{int(item.total):,}"
         
         items_data.append([
             f"{item.cantidad:.2f}",
             descripcion[:40],  # Limitar descripción
             f"{int(item.precio_unitario):,}",
-            '0',
-            '0',
-            f"{int(item.total):,}"
+            columnas[0],
+            columnas[5],
+            columnas[10],
         ])
     
     items_table = Table(items_data, colWidths=[18*mm, 95*mm, 25*mm, 18*mm, 18*mm, 25*mm])
@@ -4470,21 +4493,24 @@ async def generar_pdf_factura(venta: Venta, cliente: Cliente, vendedor: Usuario,
     elements.append(items_table)
     elements.append(Spacer(1, 3*mm))
     
-    # Totales
-    base_imponible = float(venta.total) / 1.10
-    iva_10 = float(venta.total) - base_imponible
+    # Totales: subtotal de cada columna (antes del descuento) y liquidación del IVA
+    desglose = desglose_iva(montos_iva, venta.total)
+    subtotales = _subtotales_por_tasa(desglose, venta)
+    liquidacion = liquidacion_impresa(desglose)
     descuento_porcentaje = float(cliente.descuento_porcentaje) if cliente.descuento_porcentaje else 0
     total_letras = numero_a_letras(int(venta.total))
     
-    totales_data = [
-        ['Subtotal IVA 10%:', f"Gs. {int(subtotal_iva_10 + venta.descuento):,}"]
-    ]
+    etiquetas = {'subtotal_exenta': 'Subtotal exentas:', 'subtotal_iva_5': 'Subtotal IVA 5%:',
+                 'subtotal_iva_10': 'Subtotal IVA 10%:'}
+    totales_data = [[etiquetas[k], f"Gs. {int(v):,}"] for k, v in subtotales.items() if v or k == 'subtotal_iva_10']
     
     if venta.descuento > 0:
         totales_data.append([f'Descuento ({descuento_porcentaje}%):', f"-Gs. {int(venta.descuento):,}"])
     
+    if 5 in desglose:
+        totales_data.append(['Liquidación IVA 5%:', f"Gs. {liquidacion['iva_5']:,.0f}"])
     totales_data.extend([
-        ['Liquidación IVA 10%:', f"Gs. {round(iva_10, 0):,.0f}"],
+        ['Liquidación IVA 10%:', f"Gs. {liquidacion['iva_10']:,.0f}"],
         ['Son:', f"{total_letras.upper()} GUARANÍES"],
         ['TOTAL A PAGAR:', f'Gs. {int(venta.total):,}']
     ])
@@ -4872,6 +4898,25 @@ async def boletas_pendientes_cliente(cliente_id: int, empresa_id: int, db: Async
         for v in ventas
     ]
 
+async def _desglose_de_ventas(db: AsyncSession, ventas) -> dict:
+    """Desglose de IVA de varias ventas juntas (factura grupal): el de cada una, con su descuento."""
+    if not ventas:
+        return {}
+    filas = (await db.execute(
+        select(VentaItem.venta_id, VentaItem.total, VentaItem.tasa_iva)
+        .where(VentaItem.venta_id.in_([v.id for v in ventas]))
+    )).all()
+    por_venta = defaultdict(list)
+    for venta_id, monto, tasa in filas:
+        por_venta[venta_id].append((monto, tasa))
+    combinado = {}
+    for venta in ventas:
+        for tasa, d in desglose_iva(por_venta.get(venta.id, []), venta.total).items():
+            acum = combinado.setdefault(tasa, {"bruto": Decimal(0), "neto": Decimal(0), "iva": Decimal(0)})
+            for k in acum:
+                acum[k] += d[k]
+    return combinado
+
 @api_router.post("/facturas/grupal", response_model=FacturaGrupalResponse)
 async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Depends(get_db)):
     """Crea una factura que engloba múltiples boletas de un cliente y las marca como facturadas"""
@@ -4912,8 +4957,7 @@ async def crear_factura_grupal(data: FacturaGrupalCreate, db: AsyncSession = Dep
 
     # Calculate totals
     total = sum(v.total for v in ventas)
-    base_imponible = total / Decimal('1.10')
-    iva = total - base_imponible
+    iva = iva_total(await _desglose_de_ventas(db, ventas))
 
     # Generate numero based on current count
     count_result = await db.execute(select(func_sql.count(FacturaGrupal.id)))
@@ -4988,17 +5032,23 @@ async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(ge
     nums_boletas = [f"#{v.id}" for v in ventas_sorted]
     total_general = float(factura.total)
     NUMS_POR_LINEA = 6
+    desglose = await _desglose_de_ventas(db, ventas_sorted)
+    if not desglose:
+        desglose = {10: {"bruto": factura.total, "neto": factura.total, "iva": factura.iva}}
 
     items = []
-    # Fila principal: descripción + total agrupado
-    items.append({
-        'cantidad': 1,
-        'descripcion': 'Compras de insumos y materiales',
-        'precio_unitario': total_general,
-        'exenta': 0,
-        'iva_5': 0,
-        'iva_10': total_general
-    })
+    # Filas principales: una por tasa de IVA, con lo que se cobró a esa tasa (ya con descuentos)
+    sufijo = {0: ' (exentas)', 5: ' (IVA 5%)', 10: ''} if len(desglose) > 1 else {0: '', 5: '', 10: ''}
+    for tasa in sorted(desglose, reverse=True):
+        monto = total_general if len(desglose) == 1 else float(desglose[tasa]["neto"])
+        columnas = {'exenta': 0, 'iva_5': 0, 'iva_10': 0}
+        columnas[COLUMNA_IVA[tasa]] = monto
+        items.append({
+            'cantidad': 1,
+            'descripcion': 'Compras de insumos y materiales' + sufijo[tasa],
+            'precio_unitario': monto,
+            **columnas,
+        })
     # Filas de continuación con los números de boletas agrupados
     for i in range(0, len(nums_boletas), NUMS_POR_LINEA):
         chunk = nums_boletas[i:i + NUMS_POR_LINEA]
@@ -5013,7 +5063,16 @@ async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(ge
             'es_continuacion': True
         })
 
-    iva_10 = round(float(factura.iva), 0)
+    if len(desglose) == 1 and 10 in desglose:
+        iva_10 = round(float(factura.iva), 0)
+        liquidacion = {'iva_5': 0, 'iva_10': iva_10, 'total_iva': iva_10}
+    else:
+        liquidacion = liquidacion_impresa(desglose)
+    subtotales = {'subtotal_exenta': 0, 'subtotal_iva_5': 0, 'subtotal_iva_10': 0}
+    for fila in items:
+        if not fila.get('es_continuacion'):
+            for col in COLUMNA_IVA.values():
+                subtotales['subtotal_' + col] += fila[col]
     return {
         'tipo': 'FACTURA',
         'numero': factura.numero,
@@ -5032,18 +5091,12 @@ async def imprimir_factura_grupal(factura_id: int, db: AsyncSession = Depends(ge
             'telefono': factura.cliente.telefono or ''
         },
         'items': items,
-        'subtotal_exenta': 0,
-        'subtotal_iva_5': 0,
-        'subtotal_iva_10': float(factura.total),
+        **subtotales,
         'descuento': 0,
         'total': float(factura.total),
         'total_letras': numero_a_letras(int(factura.total)),
         'creado_en': factura.creado_en.isoformat(),
-        'liquidacion_iva': {
-            'iva_5': 0,
-            'iva_10': iva_10,
-            'total_iva': iva_10
-        }
+        'liquidacion_iva': liquidacion,
     }
 
 @api_router.get("/facturas/grupales")

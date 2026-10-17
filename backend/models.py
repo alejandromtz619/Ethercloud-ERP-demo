@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table, JSON
+    CheckConstraint, Column, Integer, SmallInteger, String, Boolean, DateTime, Numeric, Text, ForeignKey, Enum, Date, Table, JSON
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -305,6 +305,9 @@ class Producto(Base):
     activo = Column(Boolean, default=True)
     imagen_url = Column(String(500))
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+    # IVA incluido en el precio: 10, 5 o 0 (exento)
+    tasa_iva = Column(SmallInteger, CheckConstraint("tasa_iva IN (0, 5, 10)", name="ck_productos_tasa_iva"),
+                      nullable=False, default=10, server_default="10")
 
     empresa = relationship("Empresa", back_populates="productos")
     categoria = relationship("Categoria", back_populates="productos")
@@ -421,6 +424,8 @@ class VentaItem(Base):
     precio_costo = Column(Numeric(15, 2), default=0)
     total = Column(Numeric(15, 2), nullable=False)
     observaciones = Column(Text)
+    # Tasa de IVA del producto al momento de la venta (si después cambia, la venta no)
+    tasa_iva = Column(SmallInteger, nullable=False, default=10, server_default="10")
     
     venta = relationship("Venta", back_populates="items")
     producto = relationship("Producto", back_populates="venta_items")
@@ -456,6 +461,7 @@ class PresupuestoItem(Base):
     cantidad = Column(Integer, nullable=False)
     precio_venta_unitario = Column(Numeric(15, 2), nullable=False)
     subtotal = Column(Numeric(15, 2), nullable=False)
+    tasa_iva = Column(SmallInteger, nullable=False, default=10, server_default="10")
 
     presupuesto = relationship("Presupuesto", back_populates="items")
     producto = relationship("Producto")

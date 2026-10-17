@@ -12,8 +12,10 @@ Reglas:
   se avisa en el log y no se vuelve a correr.
 - Cada migración corre en su propia transacción. Si falla, el backend no arranca (el código nuevo
   necesitaría esos cambios) y en Coolify queda andando el contenedor anterior.
-- create_all() sigue creando las tablas que falten en una instalación nueva; las migraciones
-  agregan columnas, índices y datos, y conviene escribirlas idempotentes (IF NOT EXISTS).
+- create_all() crea las tablas que falten desde los modelos, que ya tienen el esquema al día. Por
+  eso en una base NUEVA las migraciones se registran como aplicadas sin correrlas (base_nueva):
+  sólo corren sobre bases que ya existían. Lo que una instalación nueva necesite como datos va en
+  el seed, no sólo en una migración.
 - server.py las corre dentro del candado de arranque: con varios procesos de API, una sola vez.
 """
 import hashlib
@@ -73,8 +75,9 @@ def pendientes_en_disco(dialecto: str, directorio: Path = None) -> list:
     return elegidas
 
 
-async def aplicar_migraciones(engine: AsyncEngine, directorio: Path = None) -> list:
-    """Aplica las migraciones pendientes. Devuelve las versiones aplicadas."""
+async def aplicar_migraciones(engine: AsyncEngine, directorio: Path = None, base_nueva: bool = False) -> list:
+    """Aplica las migraciones pendientes. Devuelve las versiones aplicadas. Con base_nueva, sólo las
+    registra: las tablas recién creadas desde los modelos ya tienen esos cambios."""
     dialecto = engine.dialect.name
     async with engine.begin() as conn:
         await conn.execute(text(
@@ -90,6 +93,12 @@ async def aplicar_migraciones(engine: AsyncEngine, directorio: Path = None) -> l
             if aplicadas[mig.version] != mig.checksum:
                 logger.error(f"La migración {mig.ruta.name} cambió después de aplicada; no se vuelve a "
                              f"correr. Los cambios van en una migración nueva.")
+            continue
+        if base_nueva:
+            async with engine.begin() as conn:
+                await conn.execute(text("INSERT INTO migraciones_aplicadas (version, nombre, checksum) VALUES (:v, :n, :c)"),
+                                   {"v": mig.version, "n": mig.nombre, "c": mig.checksum})
+            nuevas.append(mig.version)
             continue
         logger.info(f"Aplicando migración {mig.ruta.name}")
         try:

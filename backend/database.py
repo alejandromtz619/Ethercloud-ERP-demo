@@ -1,8 +1,10 @@
 import os
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from dotenv import load_dotenv
 from pathlib import Path
+from migraciones import aplicar_migraciones
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -43,5 +45,10 @@ async def get_db():
             await session.close()
 
 async def init_db():
+    """Crea las tablas que falten. En una base nueva, además registra las migraciones como aplicadas:
+    las tablas recién creadas desde los modelos ya tienen esos cambios (ver migraciones.py)."""
     async with engine.begin() as conn:
+        base_nueva = not await conn.run_sync(lambda c: inspect(c).has_table("productos"))
         await conn.run_sync(Base.metadata.create_all)
+    if base_nueva:
+        await aplicar_migraciones(engine, base_nueva=True)
