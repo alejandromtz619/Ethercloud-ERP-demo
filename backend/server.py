@@ -44,6 +44,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
 from database import get_db, init_db, engine, Base, async_session_maker, DATABASE_URL
+from migraciones import aplicar_migraciones
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
@@ -8378,6 +8379,10 @@ async def startup():
 async def _preparar_base():
     await init_db()
     await ensure_columnas()
+    # Cambios de esquema nuevos: archivos SQL en migraciones/ (ver migraciones.py)
+    aplicadas = await aplicar_migraciones(engine)
+    if aplicadas:
+        logger.info(f"Migraciones aplicadas: {aplicadas}")
 
     # Auto-migration: ensure bi.ver permission exists and is assigned to ADMIN roles
     try:
