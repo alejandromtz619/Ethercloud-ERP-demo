@@ -44,6 +44,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 # Local imports
 from database import get_db, init_db, engine, Base, async_session_maker, DATABASE_URL
+from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
     Cliente, CreditoCliente, PagoCredito, Proveedor, ProveedorProducto, DeudaProveedor,
@@ -287,6 +288,19 @@ async def verificar_es_admin(
         raise HTTPException(status_code=403, detail="Solo un administrador puede realizar esta acción")
     return usuario
 
+async def _tiene_algun_permiso(db: AsyncSession, usuario_id: int, claves) -> bool:
+    """True si el usuario es administrador o tiene alguno de los permisos `claves`."""
+    if await _es_admin(db, usuario_id):
+        return True
+    result = await db.execute(
+        select(Permiso.id)
+        .join(RolPermiso, Permiso.id == RolPermiso.permiso_id)
+        .join(UsuarioRol, RolPermiso.rol_id == UsuarioRol.rol_id)
+        .where(UsuarioRol.usuario_id == usuario_id, Permiso.clave.in_(claves))
+        .limit(1)
+    )
+    return result.first() is not None
+
 def requiere_permiso(*claves: str):
     """Dependency: el usuario debe tener al menos uno de los permisos `claves`.
     Los roles administrador pasan siempre."""
@@ -294,23 +308,33 @@ def requiere_permiso(*claves: str):
         usuario: Usuario = Depends(get_current_usuario),
         db: AsyncSession = Depends(get_db)
     ) -> Usuario:
-        if await _es_admin(db, usuario.id):
-            return usuario
-        result = await db.execute(
-            select(Permiso.id)
-            .join(RolPermiso, Permiso.id == RolPermiso.permiso_id)
-            .join(UsuarioRol, RolPermiso.rol_id == UsuarioRol.rol_id)
-            .where(UsuarioRol.usuario_id == usuario.id, Permiso.clave.in_(claves))
-            .limit(1)
-        )
-        if result.first() is None:
+        if not await _tiene_algun_permiso(db, usuario.id, claves):
             raise HTTPException(status_code=403, detail="No tiene permisos para realizar esta acción")
         return usuario
     return _verificar
 
-# Todas las rutas de este router exigen un token válido. Una ruta nueva queda protegida
-# aunque se olvide declarar get_current_usuario; las públicas van en public_router.
-api_router = APIRouter(prefix="/api", dependencies=[Depends(get_current_usuario)])
+async def verificar_permiso_de_ruta(
+    request: Request,
+    usuario: Usuario = Depends(get_current_usuario),
+    db: AsyncSession = Depends(get_db)
+) -> Usuario:
+    """Exige el permiso que PERMISOS_POR_RUTA (permisos_rutas.py) asigna a la ruta: el de alguna
+    de las pantallas que la usan. Sin esto, cualquier usuario con sesión podía usar por la API
+    módulos que no ve en el menú (BI, stock, funcionarios...)."""
+    ruta = request.scope.get("route")
+    metodo = "GET" if request.method == "HEAD" else request.method
+    clave = (metodo, ruta.path[len("/api"):] if ruta else "")
+    if clave not in PERMISOS_POR_RUTA:
+        logger.error(f"Ruta sin entrada en PERMISOS_POR_RUTA: {clave}")
+        raise HTTPException(status_code=403, detail="No tiene permisos para realizar esta acción")
+    permisos = PERMISOS_POR_RUTA[clave]
+    if permisos and not await _tiene_algun_permiso(db, usuario.id, permisos):
+        raise HTTPException(status_code=403, detail="No tiene permisos para realizar esta acción")
+    return usuario
+
+# Todas las rutas de este router exigen un token válido y el permiso de la ruta. Una ruta nueva
+# queda protegida aunque se olvide declararlo; las públicas van en public_router.
+api_router = APIRouter(prefix="/api", dependencies=[Depends(verificar_permiso_de_ruta)])
 
 # ==================== LÍMITE DE INTENTOS DE LOGIN ====================
 class LimitadorIntentos:
