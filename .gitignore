@@ -86,3 +86,6 @@ frontend/node_modules/.cache/default-development/6.pack
 # Environment files
 *.env
 *.env.*
+
+# Archivos que genera el backend en tiempo de ejecución (PDF de enlaces, imágenes)
+backend/uploads/
