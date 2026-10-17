@@ -99,6 +99,16 @@ class UsuarioResponse(UsuarioBase):
     activo: bool
     creado_en: Optional[datetime] = None
 
+class UsuarioConPermisos(UsuarioResponse):
+    """Usuario de la sesión con sus permisos (el CRM los lee de /auth/me para no duplicar usuarios)."""
+    permisos: List[str] = []
+    es_admin: bool = False
+
+class TokenServicioCreate(BaseModel):
+    nombre: str
+    perfil: Literal['crm-interno', 'crm-bot']
+    usuario_id: Optional[int] = None  # usuario a cuyo nombre quedan los pedidos
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

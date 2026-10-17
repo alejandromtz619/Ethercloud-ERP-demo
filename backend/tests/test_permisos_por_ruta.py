@@ -11,6 +11,8 @@ import server
 from permisos_rutas import PERMISOS_POR_RUTA
 
 PUBLICAS = {r.path for r in server.public_router.routes}
+# La API de integración tiene sus propios scopes (integracion.py, tests/test_integracion.py)
+INTEGRACION = "/api/integracion/v1"
 
 
 def _token(client, email, password):
@@ -22,6 +24,7 @@ def _token(client, email, password):
 def test_toda_ruta_tiene_entrada_y_no_sobran():
     registradas = {(m, r.path[len("/api"):]) for r in server.app.routes
                    if isinstance(r, APIRoute) and r.path.startswith("/api") and r.path not in PUBLICAS
+                   and not r.path.startswith(INTEGRACION)
                    for m in r.methods}
     assert registradas - set(PERMISOS_POR_RUTA) == set(), "rutas nuevas sin permiso en permisos_rutas.py"
     assert set(PERMISOS_POR_RUTA) - registradas == set(), "entradas de rutas que ya no existen"
@@ -30,7 +33,8 @@ def test_toda_ruta_tiene_entrada_y_no_sobran():
 def test_con_control_propio_coincide_con_requiere_permiso():
     """None en la tabla sólo para rutas que declaran requiere_permiso(...) en server.py."""
     for r in server.app.routes:
-        if not isinstance(r, APIRoute) or r.path in PUBLICAS or not r.path.startswith("/api"):
+        if (not isinstance(r, APIRoute) or r.path in PUBLICAS or not r.path.startswith("/api")
+                or r.path.startswith(INTEGRACION)):
             continue
         propio = any("requiere_permiso" in getattr(d.call, "__qualname__", "") for d in r.dependant.dependencies)
         for m in r.methods:

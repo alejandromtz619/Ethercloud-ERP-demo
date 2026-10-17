@@ -45,6 +45,7 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 # Local imports
 from database import get_db, init_db, engine, Base, async_session_maker, DATABASE_URL
 from migraciones import aplicar_migraciones
+from integracion import crear_router as crear_router_integracion, generar_token, PERFILES
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
@@ -58,11 +59,11 @@ from models import (
     Vehiculo, TipoVehiculo, Entrega, EstadoEntrega,
     Factura, DocumentoElectronico, PreferenciaUsuario,
     DocumentoTemporal, TipoDocumento, Gasto,
-    FacturaGrupal, factura_grupal_ventas, AjusteSistema, IntentoLoginFallido
+    FacturaGrupal, factura_grupal_ventas, AjusteSistema, IntentoLoginFallido, TokenServicio
 )
 from schemas import (
     EmpresaCreate, EmpresaUpdate, EmpresaResponse,
-    UsuarioCreate, UsuarioResponse, UsuarioLogin, TokenResponse,
+    UsuarioCreate, UsuarioResponse, UsuarioLogin, TokenResponse, UsuarioConPermisos, TokenServicioCreate,
     RolCreate, RolResponse, PermisoResponse,
     ClienteCreate, ClienteResponse, CreditoClienteCreate, CreditoClienteResponse,
     ProveedorCreate, ProveedorResponse, DeudaProveedorCreate, DeudaProveedorResponse,
@@ -256,7 +257,11 @@ async def get_current_usuario(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token de autenticación requerido."
         )
-    payload = decode_token(credentials.credentials)
+    return await usuario_desde_jwt(credentials.credentials, db)
+
+async def usuario_desde_jwt(token: str, db: AsyncSession) -> Usuario:
+    """Usuario activo dueño del JWT; 401 si el token no sirve. También la usa la API de integración."""
+    payload = decode_token(token)
     try:
         usuario_id = int(payload.get("sub", 0))
     except (TypeError, ValueError):
@@ -534,10 +539,18 @@ async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
     token = create_token(usuario.id)
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
 
-@api_router.get("/auth/me", response_model=UsuarioResponse)
-async def obtener_usuario_actual(usuario: Usuario = Depends(get_current_usuario)):
-    """Validate JWT token and return current user data."""
-    return usuario
+@api_router.get("/auth/me", response_model=UsuarioConPermisos)
+async def obtener_usuario_actual(usuario: Usuario = Depends(get_current_usuario), db: AsyncSession = Depends(get_db)):
+    """Usuario de la sesión, con sus permisos. El CRM valida con esto el token del ERP (inicio de
+    sesión compartido) y aplica los mismos permisos."""
+    permisos = (await db.execute(
+        select(Permiso.clave).distinct()
+        .join(RolPermiso, Permiso.id == RolPermiso.permiso_id)
+        .join(UsuarioRol, RolPermiso.rol_id == UsuarioRol.rol_id)
+        .where(UsuarioRol.usuario_id == usuario.id)
+    )).scalars().all()
+    return UsuarioConPermisos(**UsuarioResponse.model_validate(usuario).model_dump(),
+                              permisos=sorted(permisos), es_admin=await _es_admin(db, usuario.id))
 
 # ==================== USUARIOS ====================
 @api_router.get("/usuarios", response_model=List[UsuarioResponse])
@@ -8012,6 +8025,44 @@ async def _asignar_permisos_requeridos_a_admins(db: AsyncSession) -> int:
                 assigned += 1
     return assigned
 
+# ---------- Tokens de la API de integración ----------
+def _token_servicio_publico(t: TokenServicio) -> dict:
+    return {"id": t.id, "nombre": t.nombre, "prefijo": t.prefijo, "scopes": t.scopes, "usuario_id": t.usuario_id,
+            "activo": t.activo, "creado_en": t.creado_en, "ultimo_uso": t.ultimo_uso}
+
+@api_router.get("/integracion/tokens", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
+async def listar_tokens_servicio(usuario: Usuario = Depends(get_current_usuario), db: AsyncSession = Depends(get_db)):
+    tokens = (await db.execute(select(TokenServicio).where(TokenServicio.empresa_id == usuario.empresa_id)
+                               .order_by(TokenServicio.id))).scalars().all()
+    return [_token_servicio_publico(t) for t in tokens]
+
+@api_router.post("/integracion/tokens", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
+async def crear_token_servicio(data: TokenServicioCreate, usuario: Usuario = Depends(get_current_usuario),
+                               db: AsyncSession = Depends(get_db)):
+    """Crea un token para el CRM ("crm-interno") o el bot ("crm-bot"). El token se devuelve sólo
+    esta vez: después no se puede recuperar, sólo revocar y crear otro."""
+    if data.usuario_id:
+        dueno = await db.get(Usuario, data.usuario_id)
+        if not dueno or dueno.empresa_id != usuario.empresa_id:
+            raise HTTPException(status_code=400, detail="Usuario inválido")
+    token, hash_ = generar_token()
+    fila = TokenServicio(empresa_id=usuario.empresa_id, nombre=data.nombre.strip(), prefijo=token[:12], hash=hash_,
+                         scopes=list(PERFILES[data.perfil]), usuario_id=data.usuario_id)
+    db.add(fila)
+    await db.commit()
+    await db.refresh(fila)
+    return {**_token_servicio_publico(fila), "token": token}
+
+@api_router.delete("/integracion/tokens/{token_id}", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
+async def revocar_token_servicio(token_id: int, usuario: Usuario = Depends(get_current_usuario),
+                                 db: AsyncSession = Depends(get_db)):
+    fila = await db.get(TokenServicio, token_id)
+    if not fila or fila.empresa_id != usuario.empresa_id:
+        raise HTTPException(status_code=404, detail="Token no encontrado")
+    fila.activo = False
+    await db.commit()
+    return {"message": "Token revocado"}
+
 @api_router.get("/sistema/modulos")
 async def modulos_de_la_instancia():
     """Qué módulos opcionales tiene activos esta instancia."""
@@ -8421,6 +8472,8 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
 # Include routers
 app.include_router(public_router)
 app.include_router(api_router)
+# API de integración para el CRM y el bot (integracion.py): autenticación y permisos propios
+app.include_router(crear_router_integracion(usuario_desde_jwt, _tiene_algun_permiso))
 
 # Health check sin datos internos (rutas de disco ni variables de entorno)
 @app.get("/health")

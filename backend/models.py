@@ -633,3 +633,21 @@ class IntentoLoginFallido(Base):
     id = Column(Integer, primary_key=True)
     clave = Column(String(255), nullable=False, index=True)
     creado_en = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class TokenServicio(Base):
+    """Token con el que otro servicio (CRM, bot) usa la API de integración (/api/integracion/v1).
+    Se guarda sólo el hash; el token se muestra una vez, al crearlo."""
+    __tablename__ = "tokens_servicio"
+
+    id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    nombre = Column(String(100), nullable=False)
+    prefijo = Column(String(16), nullable=False)  # comienzo del token, para reconocerlo en la lista
+    hash = Column(String(64), nullable=False, unique=True, index=True)
+    scopes = Column(JSON, nullable=False)
+    # Usuario a cuyo nombre quedan los pedidos que crea el token (p. ej. un usuario "Bot WhatsApp")
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    activo = Column(Boolean, nullable=False, default=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+    ultimo_uso = Column(DateTime(timezone=True), nullable=True)
