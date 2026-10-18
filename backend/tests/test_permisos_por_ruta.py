@@ -11,8 +11,9 @@ import server
 from permisos_rutas import PERMISOS_POR_RUTA
 
 PUBLICAS = {r.path for r in server.public_router.routes}
-# La API de integración tiene sus propios scopes (integracion.py, tests/test_integracion.py)
-INTEGRACION = "/api/integracion/v1"
+# Con control propio: la API de integración (scopes, tests/test_integracion.py) y la facturación
+# electrónica (fiscal/rutas.py, tests/test_fiscal.py)
+INTEGRACION = ("/api/integracion/v1", "/api/fiscal")
 
 
 def _token(client, email, password):

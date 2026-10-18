@@ -49,6 +49,10 @@ from integracion import (
     crear_router as crear_router_integracion, depurar_eventos as depurar_eventos_integracion, generar_token, PERFILES,
 )
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
+from fiscal import config as config_fiscal
+from fiscal.rutas import crear_router as crear_router_fiscal
+from fiscal.servicio import ServicioFiscal
+from fiscal.sifensis import SifenSis
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
@@ -8492,6 +8496,7 @@ app.include_router(public_router)
 app.include_router(api_router)
 # API de integración para el CRM y el bot (integracion.py): autenticación y permisos propios
 app.include_router(crear_router_integracion(usuario_desde_jwt, _tiene_algun_permiso, armar_venta))
+app.include_router(crear_router_fiscal(usuario_desde_jwt, _tiene_algun_permiso))
 
 # Health check sin datos internos (rutas de disco ni variables de entorno)
 @app.get("/health")
@@ -8508,13 +8513,26 @@ CANDADO_ARRANQUE = 7_311_002_026
 async def startup():
     if 'postgresql' not in str(engine.url):
         await _preparar_base()
-        return
-    async with engine.connect() as candado:
-        await candado.execute(text("SELECT pg_advisory_lock(:k)"), {"k": CANDADO_ARRANQUE})
-        try:
-            await _preparar_base()
-        finally:
-            await candado.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": CANDADO_ARRANQUE})
+    else:
+        async with engine.connect() as candado:
+            await candado.execute(text("SELECT pg_advisory_lock(:k)"), {"k": CANDADO_ARRANQUE})
+            try:
+                await _preparar_base()
+            finally:
+                await candado.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": CANDADO_ARRANQUE})
+    _iniciar_facturacion_electronica()
+
+def _iniciar_facturacion_electronica():
+    """Módulo fe: con SIFENSIS_API_KEY queda listo y arranca el seguimiento de documentos en segundo plano."""
+    if "fe" not in MODULOS_ACTIVOS:
+        app.state.fiscal_estado = "apagado"
+    elif not config_fiscal.SIFENSIS_API_KEY:
+        app.state.fiscal_estado = "sin_clave"
+        logger.warning("MODULOS incluye fe pero falta SIFENSIS_API_KEY: la facturación electrónica no emite")
+    else:
+        app.state.fiscal = ServicioFiscal(SifenSis())
+        app.state.fiscal_estado = "listo"
+        app.state.tarea_fiscal = asyncio.create_task(app.state.fiscal.seguir())
 
 async def _preparar_base():
     await init_db()
@@ -8654,5 +8672,8 @@ async def ensure_permisos():
 
 @app.on_event("shutdown")
 async def shutdown():
+    tarea = getattr(app.state, "tarea_fiscal", None)
+    if tarea:
+        tarea.cancel()
     await engine.dispose()
     logger.info("Database connection closed")

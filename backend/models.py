@@ -681,3 +681,58 @@ class PedidoIntegracion(Base):
     token_id = Column(Integer, ForeignKey("tokens_servicio.id"), nullable=True)  # quién lo creó
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+
+
+# ---------------------------------------------------------------- Facturación electrónica (módulo fe)
+# Diseño en backend/fiscal/__init__.py. La tabla documentos_electronicos (de la primera versión)
+# nunca se usó y queda como está; los documentos de SIFEN van en documentos_fiscales.
+
+class SecuenciaDocumento(Base):
+    """Último número usado por tipo de documento, establecimiento y punto de expedición. La
+    numeración es independiente en cada ambiente de SIFEN (SANDBOX, HOMOLOGACION, PRODUCCION)."""
+    __tablename__ = "secuencias_documento"
+    __table_args__ = (UniqueConstraint("empresa_id", "ambiente", "tipo_documento", "establecimiento", "punto",
+                                       name="uq_secuencias_documento"),)
+
+    id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False)
+    ambiente = Column(String(20), nullable=False)
+    tipo_documento = Column(SmallInteger, nullable=False)  # 1 factura, 5 nota de crédito, 6 nota de débito...
+    establecimiento = Column(String(3), nullable=False)
+    punto = Column(String(3), nullable=False)
+    ultimo_numero = Column(Integer, nullable=False, default=0)
+
+
+class DocumentoFiscal(Base):
+    """Un documento electrónico (factura, nota de crédito...) con su numeración, lo que se envió al
+    proveedor y en qué estado está en SIFEN.
+
+    Estados: POR_ENVIAR (tiene número, falta que el proveedor confirme la recepción; se reintenta
+    solo), GENERADO / ENVIADO (en camino a SIFEN), APROBADO, RECHAZADO (se corrige y se reemite con
+    el mismo número), INVALIDO (el proveedor lo rechazó por datos; ídem) y CANCELADO."""
+    __tablename__ = "documentos_fiscales"
+    __table_args__ = (UniqueConstraint("empresa_id", "ambiente", "tipo_documento", "establecimiento", "punto", "numero",
+                                       name="uq_documentos_fiscales_numeracion"),)
+
+    id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    ambiente = Column(String(20), nullable=False)
+    tipo_documento = Column(SmallInteger, nullable=False)
+    establecimiento = Column(String(3), nullable=False)
+    punto = Column(String(3), nullable=False)
+    numero = Column(Integer, nullable=False)
+    origen = Column(String(20), nullable=False)  # venta | factura_grupal | nota_credito
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=True, index=True)
+    factura_grupal_id = Column(Integer, ForeignKey("facturas_grupales.id"), nullable=True, index=True)
+    documento_asociado_id = Column(Integer, ForeignKey("documentos_fiscales.id"), nullable=True)
+    estado = Column(String(15), nullable=False, default="POR_ENVIAR", index=True)
+    cdc = Column(String(44), nullable=True, unique=True)
+    total = Column(Numeric(15, 2), nullable=False, default=0)
+    datos = Column(JSON, nullable=False)       # el "data" enviado (los reintentos mandan exactamente esto)
+    respuesta = Column(JSON, nullable=True)    # última respuesta del proveedor
+    mensaje = Column(Text, nullable=True)      # motivo de rechazo, errores o advertencias
+    intentos = Column(Integer, nullable=False, default=0)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+    actualizado_en = Column(DateTime(timezone=True), default=now_paraguay, onupdate=now_paraguay)
+    aprobado_en = Column(DateTime(timezone=True), nullable=True)
