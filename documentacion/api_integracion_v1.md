@@ -87,6 +87,9 @@ Nunca devuelve costos, proveedores ni márgenes.
   `+595 981 555 123` son el mismo número.
 - Documento: el RUC con o sin dígito verificador, o la cédula.
 
+También **`GET /clientes?desde_id=0&limite=200`** lista todos de a páginas, en orden de id, y devuelve
+`cursor`. Sirve para la importación inicial al CRM; después se mantienen al día con los eventos.
+
 Cada cliente tiene esta forma:
 `{id, nombre, apellido, ruc, cedula, telefono, email, direccion, activo}`.
 

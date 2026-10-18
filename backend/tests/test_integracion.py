@@ -323,3 +323,17 @@ def test_metricas_de_ventas(client, tokens, contacto):
     assert sum(p["total"] for p in mes["series"]) == sum(p["total"] for p in series)
     largo = {**params, "desde": (hoy - timedelta(days=400)).isoformat()}
     assert client.get(f"{V1}/metricas/ventas", headers=interno, params=largo).status_code == 400
+
+
+def test_listar_todos_los_clientes_de_a_paginas(client, tokens, contacto):
+    interno = _bearer(tokens["interno"]["token"])
+    vistos, cursor = [], 0
+    while True:
+        r = client.get(f"{V1}/clientes", headers=interno, params={"desde_id": cursor, "limite": 3}).json()
+        if not r["items"]:
+            break
+        assert len(r["items"]) <= 3 and r["cursor"] == r["items"][-1]["id"]
+        vistos += [c["id"] for c in r["items"]]
+        cursor = r["cursor"]
+    assert vistos == sorted(vistos) and len(vistos) == len(set(vistos))
+    assert contacto["id"] in vistos

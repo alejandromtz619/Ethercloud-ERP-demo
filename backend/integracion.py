@@ -308,14 +308,20 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, arm
     async def buscar_clientes(
         telefono: Optional[str] = None,
         documento: Optional[str] = None,
+        desde_id: Optional[int] = Query(None, ge=0),
+        limite: int = Query(200, ge=1, le=1000),
         cred: Credencial = Depends(requiere_scope("clientes.leer")),
         db: AsyncSession = Depends(get_db),
     ):
         """Clientes por teléfono (se comparan los últimos 9 dígitos: "0981 111-222" y "595981111222"
-        son el mismo) o por documento (RUC con o sin dígito verificador, o cédula)."""
-        if not (telefono and telefono.strip()) and not (documento and documento.strip()):
-            raise HTTPException(status_code=400, detail="Indique telefono o documento")
+        son el mismo), por documento (RUC con o sin dígito verificador, o cédula), o todos de a
+        páginas con desde_id (los de id mayor, en orden; para importarlos al CRM)."""
         consulta = select(Cliente).where(Cliente.empresa_id == cred.empresa_id)
+        if desde_id is not None:
+            filas = (await db.execute(consulta.where(Cliente.id > desde_id).order_by(Cliente.id).limit(limite))).scalars().all()
+            return {"items": [_cliente_publico(c) for c in filas], "cursor": filas[-1].id if filas else desde_id}
+        if not (telefono and telefono.strip()) and not (documento and documento.strip()):
+            raise HTTPException(status_code=400, detail="Indique telefono, documento o desde_id")
         if telefono and telefono.strip():
             digitos = re.sub(r"\D", "", telefono)[-9:]
             if len(digitos) < 6:
