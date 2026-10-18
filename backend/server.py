@@ -8016,6 +8016,15 @@ PERMISOS_REQUERIDOS = [
     ("presupuestos.editar", "Editar presupuestos"),
     ("presupuestos.eliminar", "Eliminar presupuestos"),
 ]
+# Permisos del CRM (repo ethercloud-crm): sólo en instancias con el módulo. Se asignan a los roles
+# desde Permisos; los administradores los reciben solos.
+if "crm" in MODULOS_ACTIVOS:
+    PERMISOS_REQUERIDOS += [
+        ("crm.ver", "Entrar al CRM"),
+        ("crm.atender", "Atender conversaciones del CRM"),
+        ("crm.gestionar", "Gestionar contactos, oportunidades y tareas del CRM"),
+        ("crm.configurar", "Configurar canales e integraciones del CRM"),
+    ]
 
 async def _asignar_permisos_requeridos_a_admins(db: AsyncSession) -> int:
     """Asigna a los roles administrador los permisos requeridos que les falten.

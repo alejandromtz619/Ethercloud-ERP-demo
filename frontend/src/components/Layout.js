@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
   Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2, Receipt,
-  FileSpreadsheet
+  FileSpreadsheet, MessagesSquare
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -45,7 +45,12 @@ const allMenuItems = [
 ];
 
 const Layout = ({ children }) => {
-  const { user, empresa, logout, theme, setTheme, canAccessRoute, primaryColor } = useApp();
+  const { user, empresa, logout, theme, setTheme, canAccessRoute, primaryColor, api, hasPermission } = useApp();
+  // Módulos de la instancia (MODULOS en el backend): el CRM aparece sólo si está instalado
+  const [modulos, setModulos] = React.useState({});
+  React.useEffect(() => {
+    api('/sistema/modulos').then(setModulos).catch(() => setModulos({}));
+  }, [api]);
 
   const getInitials = (nombre) => {
     if (!nombre) return '?';
@@ -125,6 +130,20 @@ const Layout = ({ children }) => {
                 {item.label}
               </NavLink>
             ))}
+            {modulos.crm && hasPermission('crm.ver') && (
+              // El CRM es otra aplicación en /crm del mismo dominio (comparte la sesión): enlace normal
+              <a
+                href="/crm/"
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors text-neutral-300 hover:text-white",
+                  primaryColor === 'ether' ? "hover:bg-[#2a2a2a]" : "hover:bg-neutral-800"
+                )}
+                data-testid="menu-crm"
+              >
+                <MessagesSquare className="h-5 w-5" />
+                CRM
+              </a>
+            )}
           </nav>
         </ScrollArea>
       </aside>
