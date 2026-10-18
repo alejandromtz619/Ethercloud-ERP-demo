@@ -169,7 +169,7 @@ def test_eventos_de_cada_cambio(client, admin, tokens, catalogo, monkeypatch):
     confirmada = next(e for e in nuevos if e["tipo"] == "venta.confirmada")
     assert confirmada["datos"]["venta_id"] == venta["id"] and confirmada["datos"]["es_delivery"] is True
     entregado = [e for e in nuevos if e["tipo"] == "entrega.estado" and e["datos"]["estado"] == "ENTREGADO"]
-    assert entregado and entregado[0]["datos"]["venta_id"] == venta["id"]
+    assert entregado and entregado[0]["datos"]["venta_id"] == venta["id"] and entregado[0]["datos"]["cliente_id"] == cli["id"]
     entrada = [e for e in nuevos if e["tipo"] == "stock.entrada" and e["datos"]["cantidad"] == 3]
     assert entrada and entrada[0]["datos"]["producto_id"] == pid
     assert [e["id"] for e in nuevos] == sorted(e["id"] for e in nuevos)

@@ -157,7 +157,7 @@ de id. Para seguir leyendo, se pasa como `desde` el `cursor` devuelto.
 | `cliente.creado` | `cliente_id` |
 | `cliente.actualizado` | `cliente_id, activo` |
 | `presupuesto.creado` | `presupuesto_id, cliente_id` |
-| `entrega.estado` | `entrega_id, venta_id, estado` |
+| `entrega.estado` | `entrega_id, venta_id, cliente_id, estado` |
 | `stock.entrada` | `producto_id, almacen_id, cantidad` (útil para avisar "volvió a haber stock") |
 
 Garantías:

@@ -77,8 +77,8 @@ def _eventos_del_flush(session: Session) -> list:
     eventos = []
     conexion = session.connection()
 
-    def empresa_de_venta(venta_id):
-        return conexion.execute(select(Venta.empresa_id).where(Venta.id == venta_id)).scalar()
+    def empresa_y_cliente_de_venta(venta_id):
+        return conexion.execute(select(Venta.empresa_id, Venta.cliente_id).where(Venta.id == venta_id)).first() or (None, None)
 
     for obj in list(session.new) + list(session.dirty):
         nuevo = obj in session.new
@@ -100,8 +100,9 @@ def _eventos_del_flush(session: Session) -> list:
                             {"presupuesto_id": obj.id, "cliente_id": obj.cliente_id}))
         elif isinstance(obj, Entrega) and (nuevo or _cambio(obj, "estado") is not None):
             estado = obj.estado.value if obj.estado else None
-            eventos.append((empresa_de_venta(obj.venta_id), "entrega.estado", obj.id,
-                            {"entrega_id": obj.id, "venta_id": obj.venta_id, "estado": estado}))
+            empresa_id, cliente_id = empresa_y_cliente_de_venta(obj.venta_id)
+            eventos.append((empresa_id, "entrega.estado", obj.id,
+                            {"entrega_id": obj.id, "venta_id": obj.venta_id, "cliente_id": cliente_id, "estado": estado}))
         elif isinstance(obj, MovimientoStock) and nuevo and obj.tipo == TipoMovimientoStock.ENTRADA                 and obj.referencia_tipo != "ANULACION_VENTA":
             empresa_id = conexion.execute(select(Almacen.empresa_id).where(Almacen.id == obj.almacen_id)).scalar()
             eventos.append((empresa_id, "stock.entrada", obj.producto_id,
