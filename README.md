@@ -51,7 +51,10 @@ cliente (datos de la empresa, RUC, claves de APIs, conexiones) se carga desde la
 | `WEB_CONCURRENCY` | Procesos de la API (2 por defecto) |
 | `PERMITIR_ENDPOINTS_DESARROLLO=true` | Sólo desarrollo: habilita `POST /api/seed` y `POST /api/reset-database` (en producción, 404) |
 
-Frontend: `REACT_APP_BACKEND_URL`.
+Frontend: ninguna. La web llama a `/api` en su mismo dominio, así el mismo build sirve para todos
+los clientes. `REACT_APP_BACKEND_URL` queda sólo para desarrollo y para instancias viejas con el
+backend en otro dominio. `BACKEND_URL` (backend) ya no hace falta: los enlaces de documentos usan el
+dominio de la petición.
 
 ## Módulos Principales
 
@@ -76,6 +79,16 @@ pytest backend/tests/
 El proyecto se despliega mediante **Docker** (Coolify). Cada servicio tiene su propio `dockerfile`:
 - `backend/dockerfile` — FastAPI con uvicorn
 - `frontend/dockerfile` — Build React + serve estático
+
+Un solo dominio por cliente (por ejemplo `erp.cliente.com`), repartido por ruta en Coolify (Traefik):
+
+| Ruta | Servicio |
+|---|---|
+| `/api` | backend (sin quitar el prefijo) |
+| `/crm` | CRM, si el cliente lo contrató |
+| `/` | frontend |
+
+Mismo dominio también es lo que permite que el CRM use la sesión del ERP.
 
 ## Alta de una instancia nueva
 

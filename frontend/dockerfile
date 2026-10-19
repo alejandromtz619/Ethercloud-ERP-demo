@@ -3,9 +3,12 @@ FROM node:20.18.0 AS builder
 
 WORKDIR /app
 
-# Build argument para la URL del backend (se inyecta en build time)
-ARG REACT_APP_BACKEND_URL=http://localhost:8000
+# Sin REACT_APP_BACKEND_URL (recomendado) la web llama a /api en su mismo dominio: el mismo build sirve
+# para todos los clientes (en Coolify, /api del dominio va al backend). Con la variable, a esa URL
+# (instancias viejas con el backend en otro dominio).
+ARG REACT_APP_BACKEND_URL=
 ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+# Obsoleta: la ciudad de la factura se carga en Sistema › Configuración. Sólo respaldo de instancias viejas.
 ARG REACT_APP_CIUDAD_FACTURA=
 ENV REACT_APP_CIUDAD_FACTURA=$REACT_APP_CIUDAD_FACTURA
 

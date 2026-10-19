@@ -3960,9 +3960,21 @@ DOCS_DIR = ROOT_DIR / 'uploads' / 'documentos'
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"Directorio de documentos temporales (persistente): {DOCS_DIR}")
 
+def url_publica(request: Request) -> str:
+    """Dirección pública de la instancia, para enlaces que se mandan afuera (documentos por WhatsApp).
+    Sale de la petición (el proxy de Coolify informa el dominio y el protocolo); BACKEND_URL, si
+    está, gana (instancias viejas)."""
+    fija = os.getenv("BACKEND_URL", "").strip().rstrip("/")
+    if fija:
+        return fija
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    protocolo = request.headers.get("x-forwarded-proto") or request.url.scheme
+    return f"{protocolo.split(',')[0].strip()}://{host.split(',')[0].strip()}"
+
 @api_router.post("/ventas/{venta_id}/generar-enlace")
 async def generar_enlace_documento(
     venta_id: int,
+    request: Request,
     tipo_documento: TipoDocumento = Query(...),
     db: AsyncSession = Depends(get_db)
 ):
@@ -4007,7 +4019,7 @@ async def generar_enlace_documento(
             file_exists = Path(existing_doc.file_path).exists() if existing_doc.file_path else False
             if file_exists:
                 logger.info(f"Documento existente encontrado con archivo en disco: {existing_doc.token}")
-                base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+                base_url = url_publica(request)
                 return {
                     "url": f"{base_url}/api/documentos/{existing_doc.token}",
                     "token": existing_doc.token,
@@ -4097,7 +4109,7 @@ async def generar_enlace_documento(
         logger.info(f"Documento guardado en BD con ID: {nuevo_doc.id}, token: {token}")
         
         # Retornar URL pública
-        base_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+        base_url = url_publica(request)
         logger.info(f"Enlace generado: {base_url}/api/documentos/{token}")
         
         return {

@@ -476,7 +476,7 @@ const Proveedores = () => {
     setExportingExcel(true);
     try {
       const response = await fetch(
-        `${process.env.REACT_APP_BACKEND_URL}/api/proveedores/comparacion-mercado/excel?empresa_id=${empresa.id}`,
+        `${(process.env.REACT_APP_BACKEND_URL || '').replace(/\/+$/, '')}/api/proveedores/comparacion-mercado/excel?empresa_id=${empresa.id}`,
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       );
       if (!response.ok) throw new Error('Error al exportar');

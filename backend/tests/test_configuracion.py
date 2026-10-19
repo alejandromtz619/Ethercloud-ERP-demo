@@ -234,3 +234,19 @@ def test_el_historial_solo_registra_cambios_reales(client, admin):
     cambiar(client, admin, "facturacion_electronica", {"fe.api_key": None})
     ultimo = client.get("/api/configuracion/cambios", headers=admin).json()[0]
     assert ultimo["clave"] == "fe.api_key" and ultimo["valor_anterior"] == "…1234" and ultimo["valor_nuevo"] == "(quitada)"
+
+
+def test_url_publica_sale_del_dominio_de_la_peticion(monkeypatch):
+    """Los enlaces que se mandan por WhatsApp usan el dominio por el que entró la persona (C4)."""
+    from starlette.requests import Request
+
+    def peticion(encabezados, host="backend:8000", esquema="http"):
+        return Request({"type": "http", "scheme": esquema, "server": (host.split(":")[0], 8000), "path": "/",
+                        "headers": [(k.lower().encode(), v.encode()) for k, v in {"host": host, **encabezados}.items()]})
+
+    monkeypatch.delenv("BACKEND_URL", raising=False)
+    assert server.url_publica(peticion({"X-Forwarded-Host": "erp.cliente.com", "X-Forwarded-Proto": "https"})) == "https://erp.cliente.com"
+    assert server.url_publica(peticion({}, host="erp.otro.com.py")) == "http://erp.otro.com.py"
+    assert server.url_publica(peticion({"X-Forwarded-Host": "a.com, proxy.interno", "X-Forwarded-Proto": "https,http"})) == "https://a.com"
+    monkeypatch.setenv("BACKEND_URL", "https://fijo.com/")  # instancias viejas: la variable gana
+    assert server.url_publica(peticion({"X-Forwarded-Host": "erp.cliente.com"})) == "https://fijo.com"

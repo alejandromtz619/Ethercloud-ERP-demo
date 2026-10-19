@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 
-const API_URL = `${process.env.REACT_APP_BACKEND_URL}/api`;
+// Sin REACT_APP_BACKEND_URL la API está en el mismo dominio (/api): el mismo build sirve para todas las
+// instancias (Coolify enruta /api al backend). La variable queda para desarrollo e instancias viejas.
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/+$/, '');
+const API_URL = `${BACKEND_URL}/api`;
 
 const AppContext = createContext(null);
 
