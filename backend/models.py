@@ -736,3 +736,16 @@ class DocumentoFiscal(Base):
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
     actualizado_en = Column(DateTime(timezone=True), default=now_paraguay, onupdate=now_paraguay)
     aprobado_en = Column(DateTime(timezone=True), nullable=True)
+
+
+class CambioConfiguracion(Base):
+    """Registro de cada cambio de la configuración de la instancia (configuracion.py): quién, cuándo
+    y qué. Los valores secretos se guardan enmascarados."""
+    __tablename__ = "cambios_configuracion"
+
+    id = Column(Integer, primary_key=True)
+    clave = Column(String(100), nullable=False, index=True)
+    valor_anterior = Column(Text, nullable=True)
+    valor_nuevo = Column(Text, nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay, index=True)

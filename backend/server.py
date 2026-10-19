@@ -49,6 +49,7 @@ from integracion import (
     crear_router as crear_router_integracion, depurar_eventos as depurar_eventos_integracion, generar_token, PERFILES,
 )
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
+import configuracion
 from fiscal import config as config_fiscal
 from fiscal.rutas import crear_router as crear_router_fiscal
 from fiscal.servicio import ServicioFiscal
@@ -158,7 +159,6 @@ PERMITIR_ENDPOINTS_DESARROLLO = os.environ.get('PERMITIR_ENDPOINTS_DESARROLLO', 
 
 # Margen de ganancia fijo de las materias de laboratorio: su costo se registra como
 # precio * (1 - margen). Regulable por variable de entorno (0.30 = 30 %).
-LAB_MARGEN_GANANCIA = Decimal(os.environ.get('LAB_MARGEN_GANANCIA', '0.30'))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2475,7 +2475,7 @@ async def historial_stock_producto(producto_id: int, db: AsyncSession = Depends(
 # ==================== VENTAS ====================
 async def _costo_y_tasa_iva(db: AsyncSession, item) -> tuple:
     """Costo y tasa de IVA de un ítem de venta. Productos: su costo real y su tasa; materias de
-    laboratorio: precio * (1 - LAB_MARGEN_GANANCIA) y 10 %."""
+    laboratorio: precio * (1 - margen de laboratorio, ver configuracion.py) y 10 %."""
     if item.producto_id:
         fila = (await db.execute(
             select(Producto.precio_costo, Producto.tasa_iva).where(Producto.id == item.producto_id)
@@ -2484,7 +2484,8 @@ async def _costo_y_tasa_iva(db: AsyncSession, item) -> tuple:
             return Decimal(str(fila.precio_costo or 0)), fila.tasa_iva
         return Decimal('0'), 10
     if item.materia_laboratorio_id:
-        return item.precio_unitario * (Decimal('1') - LAB_MARGEN_GANANCIA), 10
+        margen = Decimal(str(await configuracion.obtener('laboratorio.margen')))
+        return item.precio_unitario * (Decimal('1') - margen), 10
     return Decimal('0'), 10
 
 @api_router.post("/ventas", response_model=VentaResponse)
@@ -8019,6 +8020,7 @@ PERMISOS_REQUERIDOS = [
     ("presupuestos.crear", "Crear presupuestos"),
     ("presupuestos.editar", "Editar presupuestos"),
     ("presupuestos.eliminar", "Eliminar presupuestos"),
+    ("sistema.integraciones", "Configurar integraciones y claves de APIs (SIFEN SIS, canales)"),
 ]
 # Permisos del CRM (repo ethercloud-crm): sólo en instancias con el módulo. Se asignan a los roles
 # desde Permisos; los administradores los reciben solos.
@@ -8497,6 +8499,7 @@ app.include_router(api_router)
 # API de integración para el CRM y el bot (integracion.py): autenticación y permisos propios
 app.include_router(crear_router_integracion(usuario_desde_jwt, _tiene_algun_permiso, armar_venta))
 app.include_router(crear_router_fiscal(usuario_desde_jwt, _tiene_algun_permiso))
+app.include_router(configuracion.crear_router(usuario_desde_jwt, _tiene_algun_permiso))
 
 # Health check sin datos internos (rutas de disco ni variables de entorno)
 @app.get("/health")
@@ -8520,7 +8523,12 @@ async def startup():
                 await _preparar_base()
             finally:
                 await candado.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": CANDADO_ARRANQUE})
+    _avisos_de_configuracion()
     _iniciar_facturacion_electronica()
+
+def _avisos_de_configuracion():
+    if not configuracion.cifrado_disponible():
+        logger.warning("Falta CLAVE_CIFRADO (32+ caracteres): no se pueden guardar API keys desde la pantalla Configuración")
 
 def _iniciar_facturacion_electronica():
     """Módulo fe: con SIFENSIS_API_KEY queda listo y arranca el seguimiento de documentos en segundo plano."""
