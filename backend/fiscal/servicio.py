@@ -9,6 +9,7 @@ reemitir:    un documento INVALIDO o RECHAZADO se corrige y se manda de nuevo co
 seguir:      en segundo plano, reenvía los POR_ENVIAR y consulta los que van camino a SIFEN.
 """
 import asyncio
+import hashlib
 import logging
 import time
 from datetime import datetime
@@ -17,11 +18,13 @@ from typing import Awaitable, Callable, Optional
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import configuracion
 from database import async_session_maker, engine
 from fiscal import config, numerador
 from fiscal.puerto import (
     ConflictoFiscal, CredencialFiscalInvalida, DocumentoInvalido, DocumentoNoEncontrado, EmisorFiscal, ErrorFiscal, ProveedorNoDisponible,
 )
+from fiscal.sifensis import SifenSis
 from models import PARAGUAY_TZ, AjusteSistema, DocumentoFiscal, Venta, now_paraguay
 
 logger = logging.getLogger(__name__)
@@ -45,10 +48,13 @@ def metadata(usuario=None) -> dict:
 
 
 class ServicioFiscal:
-    def __init__(self, emisor: EmisorFiscal):
+    def __init__(self, emisor: EmisorFiscal, identidad: str = ""):
+        """identidad: huella de la API key. Los últimos datos del emisor se guardan por key, así al
+        pasar de SANDBOX a PRODUCCION nunca se numera con los datos del ambiente anterior."""
         self.emisor = emisor
         self._info: Optional[dict] = None
         self._info_vence = 0.0
+        self._clave_emisor = f"{CLAVE_EMISOR}.{identidad}" if identidad else CLAVE_EMISOR
 
     async def info(self, refrescar: bool = False) -> dict:
         """Datos del emisor en el proveedor (ambiente, establecimientos), guardados unos minutos. Si
@@ -61,7 +67,7 @@ class ServicioFiscal:
         except ProveedorNoDisponible:
             if self._info is None:
                 async with async_session_maker() as db:
-                    guardado = await db.get(AjusteSistema, CLAVE_EMISOR)
+                    guardado = await db.get(AjusteSistema, self._clave_emisor)
                 if guardado is None:
                     raise
                 self._info = guardado.valor
@@ -70,9 +76,9 @@ class ServicioFiscal:
             return self._info
         self._info_vence = time.monotonic() + SEGUNDOS_CACHE_EMISOR
         async with async_session_maker() as db:
-            fila = await db.get(AjusteSistema, CLAVE_EMISOR)
+            fila = await db.get(AjusteSistema, self._clave_emisor)
             if fila is None:
-                db.add(AjusteSistema(clave=CLAVE_EMISOR, valor=self._info))
+                db.add(AjusteSistema(clave=self._clave_emisor, valor=self._info))
             elif fila.valor != self._info:
                 fila.valor = self._info
             await db.commit()
@@ -82,11 +88,11 @@ class ServicioFiscal:
         """(ambiente, establecimiento, punto) desde donde emite esta instancia."""
         info = await self.info()
         codigos = [e["codigo"] for e in info.get("establecimientos", [])]
-        establecimiento = config.SIFEN_ESTABLECIMIENTO.zfill(3) if config.SIFEN_ESTABLECIMIENTO else (codigos or [""])[0]
+        establecimiento = await configuracion.obtener("fe.establecimiento") or (codigos or [""])[0]
         if establecimiento not in codigos:
             raise ErrorFiscal(f"El establecimiento {establecimiento or '(ninguno)'} no está configurado en SIFEN SIS "
                               f"(configurados: {', '.join(codigos) or 'ninguno'})")
-        return info["ambiente"], establecimiento, config.SIFEN_PUNTO
+        return info["ambiente"], establecimiento, await configuracion.obtener("fe.punto")
 
     # ------------------------------------------------------------ emisión
 
@@ -211,8 +217,36 @@ class ServicioFiscal:
             consultados += 1
         return {"enviados": enviados, "consultados": consultados}
 
+
+class FacturacionElectronica:
+    """El servicio fiscal vigente según la configuración. Si se carga o se cambia la API key en
+    Sistema › Configuración, el próximo uso ya trabaja con la nueva, sin reiniciar el servidor (con
+    varios procesos, en hasta 30 s: la caché de configuracion.py)."""
+
+    def __init__(self, fabrica: Optional[Callable[[str], EmisorFiscal]] = None, fijo: Optional[ServicioFiscal] = None):
+        self._fabrica = fabrica or (lambda api_key: SifenSis(api_key=api_key))
+        self._fijo = fijo          # las pruebas inyectan un servicio con el emisor falso
+        self._huella: Optional[str] = None
+        self._servicio: Optional[ServicioFiscal] = None
+
+    async def servicio(self) -> Optional[ServicioFiscal]:
+        """None si todavía no se cargó la API key."""
+        if self._fijo is not None:
+            return self._fijo
+        api_key = await configuracion.obtener("fe.api_key")
+        if not api_key:
+            return None
+        huella = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+        if huella != self._huella:
+            anterior = self._servicio
+            self._servicio, self._huella = ServicioFiscal(self._fabrica(api_key), identidad=huella), huella
+            if anterior is not None and hasattr(anterior.emisor, "cerrar"):
+                asyncio.create_task(anterior.emisor.cerrar())
+        return self._servicio
+
     async def seguir(self) -> None:
-        """Seguimiento cada SEGUNDOS_SEGUIMIENTO. Con varios procesos lo corre uno solo (candado)."""
+        """Seguimiento cada SEGUNDOS_SEGUIMIENTO. Con varios procesos lo corre uno solo (candado).
+        Sin API key cargada no hace nada y vuelve a mirar en la vuelta siguiente."""
         es_postgres = engine.dialect.name == "postgresql"
         while True:
             conexion = None
@@ -228,8 +262,10 @@ class ServicioFiscal:
                         continue
                 while True:
                     try:
-                        async with async_session_maker() as db:
-                            await self.una_vuelta(db)
+                        servicio = await self.servicio()
+                        if servicio is not None:
+                            async with async_session_maker() as db:
+                                await servicio.una_vuelta(db)
                     except Exception:
                         logger.exception("Facturación: error en el seguimiento de documentos")
                     await asyncio.sleep(config.SEGUNDOS_SEGUIMIENTO)

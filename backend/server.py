@@ -50,10 +50,8 @@ from integracion import (
 )
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
 import configuracion
-from fiscal import config as config_fiscal
 from fiscal.rutas import crear_router as crear_router_fiscal
-from fiscal.servicio import ServicioFiscal
-from fiscal.sifensis import SifenSis
+from fiscal.servicio import FacturacionElectronica
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
@@ -8499,7 +8497,7 @@ app.include_router(api_router)
 # API de integración para el CRM y el bot (integracion.py): autenticación y permisos propios
 app.include_router(crear_router_integracion(usuario_desde_jwt, _tiene_algun_permiso, armar_venta))
 app.include_router(crear_router_fiscal(usuario_desde_jwt, _tiene_algun_permiso))
-app.include_router(configuracion.crear_router(usuario_desde_jwt, _tiene_algun_permiso))
+app.include_router(configuracion.crear_router(usuario_desde_jwt, _tiene_algun_permiso, MODULOS_ACTIVOS))
 
 # Health check sin datos internos (rutas de disco ni variables de entorno)
 @app.get("/health")
@@ -8531,16 +8529,13 @@ def _avisos_de_configuracion():
         logger.warning("Falta CLAVE_CIFRADO (32+ caracteres): no se pueden guardar API keys desde la pantalla Configuración")
 
 def _iniciar_facturacion_electronica():
-    """Módulo fe: con SIFENSIS_API_KEY queda listo y arranca el seguimiento de documentos en segundo plano."""
+    """Módulo fe: la API key se carga en Sistema › Configuración (o SIFENSIS_API_KEY); el seguimiento
+    de documentos arranca igual y empieza a trabajar cuando haya key."""
     if "fe" not in MODULOS_ACTIVOS:
-        app.state.fiscal_estado = "apagado"
-    elif not config_fiscal.SIFENSIS_API_KEY:
-        app.state.fiscal_estado = "sin_clave"
-        logger.warning("MODULOS incluye fe pero falta SIFENSIS_API_KEY: la facturación electrónica no emite")
-    else:
-        app.state.fiscal = ServicioFiscal(SifenSis())
-        app.state.fiscal_estado = "listo"
-        app.state.tarea_fiscal = asyncio.create_task(app.state.fiscal.seguir())
+        app.state.facturacion = None
+        return
+    app.state.facturacion = FacturacionElectronica()
+    app.state.tarea_fiscal = asyncio.create_task(app.state.facturacion.seguir())
 
 async def _preparar_base():
     await init_db()

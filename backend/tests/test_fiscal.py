@@ -13,7 +13,7 @@ import server
 from fiscal import constructor
 from fiscal.falso import SifenFalso
 from fiscal.puerto import DocumentoInvalido
-from fiscal.servicio import ServicioFiscal
+from fiscal.servicio import FacturacionElectronica, ServicioFiscal
 
 PREFIJO = "FISCAL"
 
@@ -25,10 +25,13 @@ def ruc(base: str) -> str:
 @pytest.fixture
 def falso(client):
     emisor = SifenFalso()
-    server.app.state.fiscal = ServicioFiscal(emisor)
-    server.app.state.fiscal_estado = "listo"
+    server.app.state.facturacion = FacturacionElectronica(fijo=ServicioFiscal(emisor))
     yield emisor
-    server.app.state.fiscal_estado = "apagado"
+    server.app.state.facturacion = None
+
+
+def servicio_de_prueba() -> ServicioFiscal:
+    return server.app.state.facturacion._fijo
 
 
 @pytest.fixture(scope="module")
@@ -168,7 +171,7 @@ def test_proveedor_caido_queda_por_enviar_y_el_seguimiento_lo_completa(client, a
     doc = facturar(client, admin, escenario["vender"]()["id"]).json()
     assert doc["estado"] == "POR_ENVIAR" and doc["cdc"] is None and "no respondió" in doc["mensaje"]
     falso.caido = False
-    servicio = server.app.state.fiscal
+    servicio = servicio_de_prueba()
 
     async def vuelta():
         from database import async_session_maker
@@ -230,7 +233,7 @@ def test_kude_y_xml(client, admin, falso, escenario):
 def test_cincuenta_facturas_simultaneas_numeros_correlativos(client, admin, falso, escenario):
     """50 emisiones a la vez (servicio directo, una sesión cada una): 50 números distintos y seguidos."""
     from database import async_session_maker
-    servicio = server.app.state.fiscal
+    servicio = servicio_de_prueba()
     contenido = {"tipoEmision": 1, "tipoTransaccion": 1, "tipoImpuesto": 1, "moneda": "PYG", "factura": {"presencia": 1},
                  "cliente": {"contribuyente": False, "documentoTipo": 5, "documentoNumero": "0", "razonSocial": "Sin Nombre",
                              "tipoOperacion": 2, "pais": "PRY"},
@@ -268,7 +271,47 @@ def test_permisos_y_modulo(client, admin, falso, escenario):
     sin_permiso = {"Authorization": f"Bearer {token}"}
     assert client.post("/api/fiscal/ventas/1/factura", headers=sin_permiso).status_code == 403
     assert client.post("/api/fiscal/numeracion/sincronizar", headers=sin_permiso).status_code == 403
-    server.app.state.fiscal_estado = "sin_clave"
-    assert client.get("/api/fiscal/estado", headers=admin).status_code == 503
-    server.app.state.fiscal_estado = "apagado"
+    server.app.state.facturacion = None  # módulo fe no contratado
     assert client.get("/api/fiscal/estado", headers=admin).status_code == 404
+
+
+def test_la_api_key_se_carga_desde_la_pantalla_sin_reiniciar(client, admin, escenario, monkeypatch):
+    """Sin key: 503 con el aviso. Al cargarla en Configuración se emite; al cambiarla se usa la nueva."""
+    import configuracion
+    monkeypatch.setenv("CLAVE_CIFRADO", "clave-de-cifrado-de-prueba-0123456789abcdef")
+    monkeypatch.delenv("SIFENSIS_API_KEY", raising=False)
+    monkeypatch.setattr(server, "MODULOS_ACTIVOS", server.MODULOS_ACTIVOS)
+    server.MODULOS_ACTIVOS.add("fe")
+    creados = {}
+
+    def fabrica(api_key):
+        creados[api_key] = SifenFalso()
+        return creados[api_key]
+
+    server.app.state.facturacion = FacturacionElectronica(fabrica=fabrica)
+    try:
+        client.put("/api/configuracion/facturacion_electronica", headers=admin, json={"valores": {"fe.api_key": None}})
+        r = client.get("/api/fiscal/estado", headers=admin)
+        assert r.status_code == 503 and "Configuración" in r.json()["detail"]
+        assert client.post("/api/configuracion/facturacion_electronica/probar", headers=admin).json()["ok"] is False
+
+        r = client.put("/api/configuracion/facturacion_electronica", headers=admin,
+                       json={"valores": {"fe.api_key": "gk_primera_key_0001", "fe.punto": "33"}})
+        assert r.status_code == 200, r.text
+        probar = client.post("/api/configuracion/facturacion_electronica/probar", headers=admin).json()
+        assert probar["ok"] and probar["ambiente"] == "SANDBOX" and probar["punto"] == "033"
+        doc = facturar(client, admin, escenario["vender"]()["id"]).json()
+        assert doc["estado"] == "GENERADO" and doc["numero"].startswith("001-033-")
+        assert len(creados["gk_primera_key_0001"].documentos) == 1
+
+        client.put("/api/configuracion/facturacion_electronica", headers=admin,
+                   json={"valores": {"fe.api_key": "gk_segunda_key_0002"}})
+        doc = facturar(client, admin, escenario["vender"]()["id"]).json()
+        assert doc["estado"] == "GENERADO" and len(creados["gk_segunda_key_0002"].documentos) == 1
+        assert len(creados["gk_primera_key_0001"].documentos) == 1  # la key vieja ya no se usa
+    finally:
+        client.put("/api/configuracion/facturacion_electronica", headers=admin,
+                   json={"valores": {"fe.api_key": None, "fe.punto": None}})
+        server.MODULOS_ACTIVOS.discard("fe")
+        server.app.state.facturacion = None
+        configuracion.invalidar_cache()

@@ -31,9 +31,9 @@ def _mensaje(datos: dict, defecto: str) -> str:
 
 
 class SifenSis:
-    def __init__(self, api_key: str = None, base_url: str = None, transport: httpx.AsyncBaseTransport = None):
+    def __init__(self, api_key: str, base_url: str = None, transport: httpx.AsyncBaseTransport = None):
         self._http = httpx.AsyncClient(base_url=(base_url or config.SIFENSIS_URL) + "/api/v1",
-                                       headers={"X-API-Key": api_key or config.SIFENSIS_API_KEY},
+                                       headers={"X-API-Key": api_key},
                                        timeout=httpx.Timeout(30, connect=10), transport=transport)
 
     async def cerrar(self):

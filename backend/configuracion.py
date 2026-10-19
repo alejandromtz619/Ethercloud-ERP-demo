@@ -94,10 +94,11 @@ class Clave:
     ayuda: str = ""
 
 
+# sección -> (título, módulo de MODULOS que la habilita; None = siempre)
 SECCIONES = {
-    "documentos": "Documentos impresos",
-    "facturacion_electronica": "Facturación electrónica (SIFEN)",
-    "laboratorio": "Laboratorio",
+    "documentos": ("Documentos impresos", None),
+    "facturacion_electronica": ("Facturación electrónica (SIFEN)", "fe"),
+    "laboratorio": ("Laboratorio", None),
 }
 
 CLAVES = {c.nombre: c for c in (
@@ -283,8 +284,13 @@ class Cambios(BaseModel):
     valores: dict[str, Any]
 
 
-def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> APIRouter:
+def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, modulos_activos: set) -> APIRouter:
+    """modulos_activos: el conjunto MODULOS de la instancia (las secciones de un módulo no contratado no
+    se muestran)."""
     router = APIRouter(prefix="/api/configuracion", tags=["configuración"])
+
+    def visibles() -> dict:
+        return {s: t for s, (t, modulo) in SECCIONES.items() if modulo is None or modulo in modulos_activos}
 
     async def autenticar(request: Request, db: AsyncSession = Depends(get_db)) -> tuple:
         encabezado = request.headers.get("Authorization", "")
@@ -301,7 +307,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         """Todas las secciones con sus valores (sin secretos) y qué puede editar la persona."""
         _, permisos = sesion
         secciones = []
-        for seccion, titulo in SECCIONES.items():
+        for seccion, titulo in visibles().items():
             campos = [await describir(c.nombre, lambda p: p in permisos) for c in CLAVES.values() if c.seccion == seccion]
             secciones.append({"seccion": seccion, "titulo": titulo, "campos": campos,
                               "se_puede_probar": seccion in PROBADORES})
@@ -310,7 +316,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
     @router.put("/{seccion}")
     async def cambiar(seccion: str, datos: Cambios, sesion: tuple = Depends(autenticar), db: AsyncSession = Depends(get_db)):
         usuario, permisos = sesion
-        if seccion not in SECCIONES:
+        if seccion not in visibles():
             raise HTTPException(status_code=404, detail="Sección desconocida")
         for nombre in datos.valores:
             clave = CLAVES.get(nombre)
@@ -328,7 +334,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
     @router.post("/{seccion}/probar")
     async def probar(seccion: str, request: Request, sesion: tuple = Depends(autenticar)):
         """Prueba la conexión con lo configurado en la sección (p. ej. la API key de SIFEN SIS)."""
-        if seccion not in PROBADORES:
+        if seccion not in PROBADORES or seccion not in visibles():
             raise HTTPException(status_code=404, detail="Esta sección no tiene prueba de conexión")
         return await PROBADORES[seccion](request)
 

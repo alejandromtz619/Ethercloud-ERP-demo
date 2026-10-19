@@ -7,18 +7,31 @@ nunca salen por la API, variables de entorno que ganan, permisos por clave y reg
 import pytest
 
 import configuracion
+import server
 
 CLAVE_CIFRADO = "clave-de-cifrado-de-prueba-0123456789abcdef"
 API_KEY = "gk_prueba_super_secreta_1234"
 
 
+async def _borrar_configuracion():
+    from sqlalchemy import delete
+    from database import async_session_maker
+    from models import AjusteSistema
+    async with async_session_maker() as db:
+        await db.execute(delete(AjusteSistema).where(AjusteSistema.clave.like(configuracion.PREFIJO + "%")))
+        await db.commit()
+
+
 @pytest.fixture(autouse=True)
-def cifrado(monkeypatch):
+def cifrado(client, monkeypatch):
     monkeypatch.setenv("CLAVE_CIFRADO", CLAVE_CIFRADO)
     for variable in ("SIFENSIS_API_KEY", "SIFEN_PUNTO", "SIFEN_ESTABLECIMIENTO", "SIFEN_PLAZO_CREDITO", "LAB_MARGEN_GANANCIA"):
         monkeypatch.delenv(variable, raising=False)
     configuracion.invalidar_cache()
+    server.MODULOS_ACTIVOS.add("fe")  # la sección de facturación electrónica es del módulo fe
     yield
+    server.MODULOS_ACTIVOS.discard("fe")
+    client.portal.call(_borrar_configuracion)  # cada prueba deja la configuración como la encontró
     configuracion.invalidar_cache()
 
 
@@ -171,3 +184,10 @@ def test_permisos(client, admin):
     integrador = usuario_con(client, admin, "config-integra@test.com", ["sistema.integraciones"])
     assert cambiar(client, integrador, "facturacion_electronica", {"fe.api_key": API_KEY}).status_code == 200
     assert cambiar(client, integrador, "documentos", {"documentos.ciudad_factura": "Luque"}).status_code == 403
+
+
+def test_seccion_de_un_modulo_no_contratado_no_aparece(client, admin):
+    server.MODULOS_ACTIVOS.discard("fe")
+    assert [x["seccion"] for x in ver(client, admin)["secciones"]] == ["documentos", "laboratorio"]
+    assert cambiar(client, admin, "facturacion_electronica", {"fe.punto": "002"}).status_code == 404
+    assert client.post("/api/configuracion/facturacion_electronica/probar", headers=admin).status_code == 404

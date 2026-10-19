@@ -5,19 +5,25 @@ con el certificado del cliente, calcula el CDC, lo envía a SIFEN y genera el Ku
 documento desde la venta, lleva la numeración y guarda cada documento con su estado. El código está
 en `backend/fiscal/` y su diseño se explica en `backend/fiscal/__init__.py`.
 
-## Activarlo en una instancia (Coolify, backend)
+## Activarlo en una instancia
 
-| Variable | Ejemplo | Para qué |
-|---|---|---|
-| `MODULOS` | `fe` (o `fe,crm`) | Activa el módulo |
-| `SIFENSIS_API_KEY` | `gk_…` | API key del cliente en SIFEN SIS. **Secreto**: sólo en variables de entorno. El ambiente (SANDBOX, HOMOLOGACION, PRODUCCION) lo define la key |
-| `SIFEN_PUNTO` | `001` | Punto de expedición de esta instancia. Uno distinto por cada sistema que emita con el mismo RUC |
-| `SIFEN_ESTABLECIMIENTO` | `001` | Opcional. Vacío = el primero configurado en SIFEN SIS |
-| `SIFEN_PLAZO_CREDITO` | `30 días` | Plazo que se informa en las facturas a crédito |
+1. **Coolify (backend, lo hace Ether):** `MODULOS=fe` (o `fe,crm`) y `CLAVE_CIFRADO` (32+ caracteres
+   al azar, una por instancia; cifra las API keys guardadas en la base).
+2. **Pantalla Sistema › Configuración › Facturación electrónica** (permiso `sistema.integraciones`):
+   - API key de SIFEN SIS (se guarda cifrada y no se vuelve a mostrar; el ambiente lo define la key).
+   - Punto de expedición (uno distinto por cada sistema que emita con el mismo RUC), establecimiento
+     (vacío = el primero configurado en SIFEN SIS) y plazo de las ventas a crédito.
+   - **Probar conexión** muestra ambiente, RUC, timbrado y establecimientos.
+
+Al guardar una key nueva (por ejemplo, al pasar de SANDBOX a PRODUCCION) se usa desde la próxima
+factura, sin reiniciar. La numeración es independiente por ambiente.
+
+Las variables de entorno `SIFENSIS_API_KEY`, `SIFEN_PUNTO`, `SIFEN_ESTABLECIMIENTO` y
+`SIFEN_PLAZO_CREDITO` siguen funcionando: si existen, ganan sobre la pantalla (que las muestra como
+"fijadas en el servidor").
 
 Los datos del emisor (RUC, timbrado, establecimientos, actividades, certificado, CSC) se cargan en el
-portal de SIFEN SIS, no en el ERP. `GET /api/fiscal/estado` muestra con qué ambiente y datos quedó
-conectada la instancia.
+portal de SIFEN SIS, no en el ERP.
 
 ## Cómo se emite
 
@@ -56,7 +62,8 @@ registra), transferencia; crédito como condición crédito a plazo.
 ## Pruebas
 
 - `backend/tests/test_fiscal.py`: con el emisor falso (`fiscal/falso.py`), sin red.
-- `backend/tests/test_fiscal_sandbox.py`: contra el SANDBOX real; sólo corre con la key en el entorno:
+- `backend/tests/test_fiscal_sandbox.py`: contra el SANDBOX real; la prueba carga la key por la
+  pantalla de Configuración (no como variable del servidor). Sólo corre con la key en el entorno:
 
   ```bash
   SIFENSIS_API_KEY=gk_... SIFEN_PRUEBA_PUNTO=901 pytest backend/tests/test_fiscal_sandbox.py -s

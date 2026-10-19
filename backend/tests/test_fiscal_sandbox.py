@@ -3,6 +3,9 @@ Facturación electrónica contra el SANDBOX real de SIFEN SIS (aprueba solo, sin
 con la API key de sandbox en el entorno; usa un punto de expedición propio de las pruebas.
 
     SIFENSIS_API_KEY=gk_... SIFEN_PRUEBA_PUNTO=901 pytest backend/tests/test_fiscal_sandbox.py -s
+
+La key NO se usa como variable de entorno del servidor: la prueba la carga por la pantalla
+Configuración (PUT /api/configuracion), como lo haría el cliente.
 """
 import asyncio
 import os
@@ -11,24 +14,38 @@ import time
 import pytest
 
 import server
-from fiscal import config, constructor
-from fiscal.servicio import ServicioFiscal
+import configuracion
+from fiscal.servicio import FacturacionElectronica
 from fiscal.sifensis import SifenSis
 
 pytestmark = pytest.mark.skipif(not os.environ.get("SIFENSIS_API_KEY"), reason="sin SIFENSIS_API_KEY de sandbox")
 PREFIJO = "SANDBOX"
 SALIDA = os.environ.get("SIFEN_PRUEBA_SALIDA")  # carpeta donde guardar los KuDE para mirarlos
+PUNTO = os.environ.get("SIFEN_PRUEBA_PUNTO", "901").zfill(3)
 
 
 @pytest.fixture(scope="module")
-def sandbox(client):
-    config.SIFEN_PUNTO = os.environ.get("SIFEN_PRUEBA_PUNTO", "901").zfill(3)
-    emisor = SifenSis(api_key=os.environ["SIFENSIS_API_KEY"])
-    server.app.state.fiscal = ServicioFiscal(emisor)
-    server.app.state.fiscal_estado = "listo"
-    yield emisor
-    server.app.state.fiscal_estado = "apagado"
-    config.SIFEN_PUNTO = "001"
+def sandbox(client, admin):
+    api_key = os.environ.pop("SIFENSIS_API_KEY")  # que no la pise la variable de entorno
+    os.environ.setdefault("CLAVE_CIFRADO", "clave-de-cifrado-de-prueba-sandbox-0123456789")
+    server.MODULOS_ACTIVOS.add("fe")
+    server.app.state.facturacion = FacturacionElectronica()
+    r = client.put("/api/configuracion/facturacion_electronica", headers=admin,
+                   json={"valores": {"fe.api_key": api_key, "fe.punto": PUNTO}})
+    assert r.status_code == 200, r.text
+    yield SifenSis(api_key=api_key)
+    client.put("/api/configuracion/facturacion_electronica", headers=admin,
+               json={"valores": {"fe.api_key": None, "fe.punto": None}})
+    server.app.state.facturacion = None
+    server.MODULOS_ACTIVOS.discard("fe")
+    os.environ["SIFENSIS_API_KEY"] = api_key
+    configuracion.invalidar_cache()
+
+
+def test_probar_conexion_desde_la_pantalla(client, admin, sandbox):
+    r = client.post("/api/configuracion/facturacion_electronica/probar", headers=admin).json()
+    print("\nprobar conexión:", r)
+    assert r["ok"] and r["ambiente"] == "SANDBOX" and r["punto"] == PUNTO
 
 
 @pytest.fixture(scope="module")
@@ -129,20 +146,3 @@ def test_reintento_identico_devuelve_el_mismo_documento(client, admin, vender, s
     r = client.portal.call(reenviar)
     print("\nreintento:", r.duplicado, r.cdc == doc["cdc"], r.estado)
     assert r.duplicado and r.cdc == doc["cdc"]
-
-
-def test_cheque_sin_datos_del_cheque(sandbox):
-    """El ERP no registra número de cheque ni banco: ¿lo acepta el proveedor así?"""
-    data = {"tipoDocumento": 1, "establecimiento": "001", "punto": config.SIFEN_PUNTO, "numero": 1,
-            "fecha": "2026-10-18T10:00:00", "tipoEmision": 1, "tipoTransaccion": 1, "tipoImpuesto": 1, "moneda": "PYG",
-            "factura": {"presencia": 1},
-            "cliente": {"contribuyente": False, "documentoTipo": 5, "documentoNumero": "0", "razonSocial": "Sin Nombre",
-                        "tipoOperacion": 2, "pais": "PRY"},
-            "items": [{"codigo": "1", "descripcion": "x", "unidadMedida": 77, "cantidad": 1, "precioUnitario": 1000,
-                       "ivaTipo": 1, "ivaBase": 100, "iva": 10}],
-            "condicion": {"tipo": 1, "entregas": [{"tipo": 2, "monto": "1000", "moneda": "PYG"}]}}
-    try:
-        asyncio.run(SifenSis(api_key=os.environ["SIFENSIS_API_KEY"]).validar(data))
-        print("\ncheque sin datos: aceptado")
-    except Exception as e:
-        print("\ncheque sin datos:", e)

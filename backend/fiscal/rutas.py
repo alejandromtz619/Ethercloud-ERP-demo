@@ -12,8 +12,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import configuracion
 from database import get_db
-from fiscal import config, constructor, numerador
+from fiscal import constructor, numerador
 from fiscal.puerto import ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, ErrorFiscal
 from fiscal.servicio import EN_CAMINO, ServicioFiscal
 from models import Cliente, DocumentoFiscal, EstadoVenta, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem
@@ -64,16 +65,35 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             usuario = await usuario_desde_jwt(encabezado[7:].strip(), db)
             if not await tiene_algun_permiso(db, usuario.id, permisos):
                 raise HTTPException(status_code=403, detail="No tiene permisos para realizar esta acción")
-            estado = getattr(request.app.state, "fiscal_estado", "apagado")
-            if estado == "apagado":
+            facturacion = getattr(request.app.state, "facturacion", None)
+            if facturacion is None:
                 raise HTTPException(status_code=404, detail="La facturación electrónica no está habilitada en esta instancia")
-            if estado == "sin_clave":
-                raise HTTPException(status_code=503, detail="Falta configurar SIFENSIS_API_KEY en el servidor")
+            request.state.servicio_fiscal = await facturacion.servicio()
+            if request.state.servicio_fiscal is None:
+                raise HTTPException(status_code=503, detail="Falta cargar la API key de SIFEN SIS en Sistema › Configuración")
             return usuario
         return _dep
 
     def servicio(request: Request) -> ServicioFiscal:
-        return request.app.state.fiscal
+        return request.state.servicio_fiscal
+
+    async def probar_conexion(request: Request) -> dict:
+        """Prueba de la sección Facturación electrónica de la pantalla Configuración."""
+        facturacion = getattr(request.app.state, "facturacion", None)
+        srv = await facturacion.servicio() if facturacion else None
+        if srv is None:
+            return {"ok": False, "error": "Falta cargar la API key de SIFEN SIS"}
+        try:
+            info = await srv.info(refrescar=True)
+            ambiente, establecimiento, punto = await srv.origen()
+        except ErrorFiscal as e:
+            return {"ok": False, "error": e.mensaje}
+        return {"ok": True, "ambiente": ambiente, "ruc": f"{info.get('ruc')}-{info.get('dv')}",
+                "razon_social": info.get("razonSocial"), "timbrado": (info.get("timbrado") or {}).get("numero"),
+                "establecimientos": [e["codigo"] for e in info.get("establecimientos", [])],
+                "establecimiento": establecimiento, "punto": punto}
+
+    configuracion.PROBADORES["facturacion_electronica"] = probar_conexion
 
     async def _documento(db: AsyncSession, documento_id: int, usuario: Usuario) -> DocumentoFiscal:
         doc = await db.get(DocumentoFiscal, documento_id)
@@ -88,7 +108,8 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
                                   .outerjoin(Producto, VentaItem.producto_id == Producto.id)
                                   .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
                                   .where(VentaItem.venta_id == venta.id).order_by(VentaItem.id))).all()
-        contenido = constructor.factura_de_venta(venta, cliente, filas, vendedor, config.SIFEN_PLAZO_CREDITO, cheque)
+        contenido = constructor.factura_de_venta(venta, cliente, filas, vendedor,
+                                                 await configuracion.obtener("fe.plazo_credito"), cheque)
         return contenido, constructor.total_de(contenido["items"], contenido.get("descuentoGlobal", 0))
 
     async def _vigente(db: AsyncSession, venta_id: int) -> Optional[DocumentoFiscal]:
