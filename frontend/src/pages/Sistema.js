@@ -10,7 +10,7 @@ import { Badge } from '../components/ui/badge';
 import { Settings, Sun, Moon, Palette, Phone, User, DollarSign, RefreshCw, Loader2, ShieldCheck, Building2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
-import { resolverImagenUrl } from '../lib/imagenes';
+import { useNavigate } from 'react-router-dom';
 
 const colorOptions = [
   { id: 'blue', name: 'Azul', hex: '#0044CC' },
@@ -23,17 +23,9 @@ const colorOptions = [
 ];
 
 const Sistema = () => {
-  const { user, empresa, setEmpresa, theme, setTheme, primaryColor, setPrimaryColor, api } = useApp();
+  const { user, theme, setTheme, primaryColor, setPrimaryColor, api } = useApp();
+  const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
-  const [logoUrl, setLogoUrl] = useState('');
-  const [savingLogo, setSavingLogo] = useState(false);
-  const [logoPreviewError, setLogoPreviewError] = useState(false);
-
-  // Keep logoUrl in sync with empresa
-  React.useEffect(() => {
-    setLogoUrl(empresa?.logo_url || '');
-    setLogoPreviewError(false);
-  }, [empresa?.logo_url]);
   
   // Currency exchange state
   const [cotizacion, setCotizacion] = useState(null);
@@ -125,23 +117,6 @@ const Sistema = () => {
   };
 
   const [syncingPermisos, setSyncingPermisos] = useState(false);
-
-  const handleSaveLogo = async () => {
-    if (!empresa?.id) return;
-    setSavingLogo(true);
-    try {
-      const data = await api(`/empresas/${empresa.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ logo_url: logoUrl.trim() || null })
-      });
-      setEmpresa(data);
-      toast.success('Logo actualizado correctamente');
-    } catch (e) {
-      toast.error('Error al guardar el logo');
-    } finally {
-      setSavingLogo(false);
-    }
-  };
 
   const handleSyncPermisos = async () => {
     setSyncingPermisos(true);
@@ -359,48 +334,19 @@ const Sistema = () => {
         </CardContent>
       </Card>
 
-      {/* Empresa Logo */}
+      {/* Datos de la empresa, logo, facturación electrónica e integraciones: pantalla Configuración */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Building2 className="h-5 w-5" />
-            Logo de la Empresa
+            Empresa e integraciones
           </CardTitle>
           <CardDescription>
-            URL directa de la imagen que aparece en el login, inicio y barra lateral.
-            Para Nextcloud usa el formato: <code className="text-xs bg-secondary px-1 rounded">/index.php/s/TOKEN/download?path=%2F&files=nombre.png</code>
+            Los datos de la empresa, el logo, la facturación electrónica y las conexiones con otros servicios se cargan en Configuración.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-xl bg-primary flex items-center justify-center overflow-hidden shrink-0">
-              {logoUrl && !logoPreviewError ? (
-                <img
-                  src={resolverImagenUrl(logoUrl)}
-                  alt="Vista previa"
-                  className="w-full h-full object-contain p-1"
-                  onError={() => setLogoPreviewError(true)}
-                />
-              ) : (
-                <span className="text-xl font-bold text-white">
-                  {empresa?.nombre ? empresa.nombre.substring(0, 2).toUpperCase() : '?'}
-                </span>
-              )}
-            </div>
-            <div className="flex-1">
-              <Label>URL del logo</Label>
-              <Input
-                placeholder="https://storage.ethercloud.co/index.php/s/.../download?path=%2F&files=logo.png"
-                value={logoUrl}
-                onChange={(e) => { setLogoUrl(e.target.value); setLogoPreviewError(false); }}
-                className="mt-1 font-mono text-xs"
-              />
-            </div>
-          </div>
-          <Button onClick={handleSaveLogo} disabled={savingLogo} className="w-full">
-            {savingLogo && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-            Guardar Logo
-          </Button>
+        <CardContent>
+          <Button variant="outline" className="w-full" onClick={() => navigate('/configuracion')}>Ir a Configuración</Button>
         </CardContent>
       </Card>
 

@@ -28,6 +28,7 @@ const ROUTE_PERMISSIONS = {
   '/usuarios': 'usuarios.ver',
   '/permisos': 'usuarios.gestionar',
   '/sistema': 'sistema.configurar',
+  '/configuracion': ['sistema.configurar', 'sistema.integraciones'],
   '/historial-ventas': 'ventas.ver_historial',
   '/reportes': 'reportes.ver',
   '/bi': 'bi.ver',
@@ -302,6 +303,8 @@ export const AppProvider = ({ children }) => {
   // Check if user can access a route
   const canAccessRoute = useCallback((path) => {
     const requiredPermission = ROUTE_PERMISSIONS[path];
+    // Una lista: alcanza con tener alguno
+    if (Array.isArray(requiredPermission)) return requiredPermission.some((p) => hasPermission(p));
     return hasPermission(requiredPermission);
   }, [hasPermission]);
 

@@ -25,6 +25,7 @@ const Flota = lazy(() => import('./pages/Flota'));
 const Facturas = lazy(() => import('./pages/Facturas'));
 const Usuarios = lazy(() => import('./pages/Usuarios'));
 const Sistema = lazy(() => import('./pages/Sistema'));
+const Configuracion = lazy(() => import('./pages/Configuracion'));
 const Marcas = lazy(() => import('./pages/Marcas'));
 const Categorias = lazy(() => import('./pages/Categorias'));
 const Permisos = lazy(() => import('./pages/Permisos'));
@@ -313,6 +314,16 @@ const AppRoutes = () => {
           <ProtectedRoute permission="gastos.ver">
             <Layout>
               <Gastos />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/configuracion"
+        element={
+          <ProtectedRoute permission={['sistema.configurar', 'sistema.integraciones']}>
+            <Layout>
+              <Configuracion />
             </Layout>
           </ProtectedRoute>
         }

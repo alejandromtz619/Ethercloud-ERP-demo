@@ -12,8 +12,11 @@ import { DatePickerInput } from '../components/ui/date-picker-input';
 import { Loader2, Printer, Receipt, FileText, Send, CalendarDays, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 
-// Ciudad que se imprime junto a la fecha en la factura pre-impresa
-const CIUDAD_FACTURA = process.env.REACT_APP_CIUDAD_FACTURA || 'Ciudad del Este';
+import { useAjustesImpresion } from '../lib/ajustesImpresion';
+
+// Ciudad que se imprime junto a la fecha en la factura pre-impresa: Sistema › Configuración › Documentos
+// impresos. REACT_APP_CIUDAD_FACTURA queda sólo para instancias que todavía no la cargaron.
+const CIUDAD_FACTURA_ANTERIOR = process.env.REACT_APP_CIUDAD_FACTURA || '';
 
 // Formatea "YYYY-MM-DD" como "dd/MM/yyyy" sin depender de la zona horaria del navegador
 const formatFechaISO = (iso) => {
@@ -131,7 +134,9 @@ const BoletaPrint = React.forwardRef(({ data }, ref) => {
 //   - Si los datos quedan muy a la izquierda, aumentar el 'left'
 // ═══════════════════════════════════════════════════════════════════════════════
 const FacturaPrint = React.forwardRef(({ data }, ref) => {
+  const ajustes = useAjustesImpresion();
   if (!data) return null;
+  const ciudad = ajustes.ciudad_factura || CIUDAD_FACTURA_ANTERIOR;
 
   // ---------- Parsear fecha en componentes (día, mes, año) ----------
   const mesesES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -179,12 +184,15 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
       margin: '0',
       lineHeight: '1.2'
     }}>
+     {/* Corrimiento fino para que lo impreso caiga en los casilleros de este papel (Configuración) */}
+     <div style={{ position: 'absolute', inset: 0,
+                   transform: `translate(${Number(ajustes.ajuste_x_mm) || 0}mm, ${Number(ajustes.ajuste_y_mm) || 0}mm)` }}>
 
       {/* ═══ LÍNEA DE FECHA + CONDICIÓN DE VENTA ═══ */}
       {/* Campos: Ciudad+día | mes | año | X Contado | X Crédito */}
       <div style={{ position: 'absolute', top: '38mm', left: '0', width: '240mm' }}>
         {/* Ciudad y día */}
-        <span style={{ position: 'absolute', left: '17mm', fontSize: '14px' }}>{CIUDAD_FACTURA}, {dia}</span>
+        <span style={{ position: 'absolute', left: '17mm', fontSize: '14px' }}>{ciudad ? `${ciudad}, ` : ''}{dia}</span>
         {/* Mes */}
         <span style={{ position: 'absolute', left: '80mm', fontSize: '14px' }}>{mes}</span>
         {/* Año */}
@@ -299,6 +307,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
         </span>
       </div>
 
+     </div>
     </div>
   );
 });

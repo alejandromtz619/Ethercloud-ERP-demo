@@ -191,3 +191,46 @@ def test_seccion_de_un_modulo_no_contratado_no_aparece(client, admin):
     assert [x["seccion"] for x in ver(client, admin)["secciones"]] == ["documentos", "laboratorio"]
     assert cambiar(client, admin, "facturacion_electronica", {"fe.punto": "002"}).status_code == 404
     assert client.post("/api/configuracion/facturacion_electronica/probar", headers=admin).status_code == 404
+
+
+def test_ajustes_de_impresion_para_cualquier_sesion(client, admin):
+    assert client.get("/api/configuracion/impresion").status_code == 401
+    cajero = usuario_con(client, admin, "config-cajero@test.com", ["ventas.crear"])
+    cambiar(client, admin, "documentos", {"documentos.ciudad_factura": "Encarnación", "documentos.ajuste_y_mm": -2.5})
+    r = client.get("/api/configuracion/impresion", headers=cajero)
+    assert r.status_code == 200 and r.json() == {"ciudad_factura": "Encarnación", "ajuste_x_mm": 0.0, "ajuste_y_mm": -2.5}
+    assert client.get("/api/configuracion", headers=cajero).status_code == 403  # el resto, no
+
+
+def test_tokens_de_integracion_piden_sistema_integraciones(client, admin):
+    configurador = usuario_con(client, admin, "tokens-sistema@test.com", ["sistema.configurar"])
+    assert client.get("/api/integracion/tokens", headers=configurador).status_code == 403
+    integrador = usuario_con(client, admin, "tokens-integra@test.com", ["sistema.integraciones"])
+    r = client.post("/api/integracion/tokens", headers=integrador, json={"nombre": "CRM prueba", "perfil": "crm-interno"})
+    assert r.status_code == 200 and r.json()["token"].startswith("ecs_")
+    assert client.delete(f"/api/integracion/tokens/{r.json()['id']}", headers=integrador).status_code == 200
+
+
+def test_datos_de_la_empresa_con_ruc_validado(client, admin):
+    original = client.get("/api/empresas/1", headers=admin).json()
+    try:
+        r = client.put("/api/empresas/1", headers=admin, json={"ruc": "80012345-5"})
+        assert r.status_code == 422 and "debería ser 0" in r.json()["detail"]
+        assert client.put("/api/empresas/1", headers=admin, json={"nombre": "  "}).status_code == 422
+        r = client.put("/api/empresas/1", headers=admin, json={"ruc": "80.012.345", "nombre": "Cliente Nuevo S.A.",
+                                                               "direccion": "Ruta 2 km 20", "telefono": "021 555 000"})
+        assert r.status_code == 200 and r.json()["ruc"] == "80012345-0" and r.json()["nombre"] == "Cliente Nuevo S.A."
+    finally:
+        client.put("/api/empresas/1", headers=admin, json={k: original[k] for k in ("nombre", "ruc", "direccion", "telefono", "email")})
+
+
+def test_el_historial_solo_registra_cambios_reales(client, admin):
+    antes = len(client.get("/api/configuracion/cambios", headers=admin).json())
+    cambiar(client, admin, "facturacion_electronica", {"fe.punto": None, "fe.api_key": None})  # ya estaban por defecto
+    cambiar(client, admin, "documentos", {"documentos.ajuste_x_mm": "0"})                     # el mismo valor efectivo
+    cambiar(client, admin, "documentos", {"documentos.ajuste_x_mm": "0,0"})
+    assert len(client.get("/api/configuracion/cambios", headers=admin).json()) == antes
+    cambiar(client, admin, "facturacion_electronica", {"fe.api_key": API_KEY})
+    cambiar(client, admin, "facturacion_electronica", {"fe.api_key": None})
+    ultimo = client.get("/api/configuracion/cambios", headers=admin).json()[0]
+    assert ultimo["clave"] == "fe.api_key" and ultimo["valor_anterior"] == "…1234" and ultimo["valor_nuevo"] == "(quitada)"

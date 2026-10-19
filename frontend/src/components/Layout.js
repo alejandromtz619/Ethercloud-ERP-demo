@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
   Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2, Receipt,
-  FileSpreadsheet, MessagesSquare
+  FileSpreadsheet, MessagesSquare, SlidersHorizontal
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -41,6 +41,7 @@ const allMenuItems = [
   { path: '/bi', icon: BarChart2, label: 'B.I.' },
   { path: '/usuarios', icon: Users, label: 'Usuarios' },
   { path: '/permisos', icon: Shield, label: 'Permisos' },
+  { path: '/configuracion', icon: SlidersHorizontal, label: 'Configuración' },
   { path: '/sistema', icon: Settings, label: 'Sistema' },
 ];
 

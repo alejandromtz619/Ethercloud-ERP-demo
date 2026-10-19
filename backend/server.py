@@ -50,6 +50,8 @@ from integracion import (
 )
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
 import configuracion
+from fiscal.constructor import ruc_con_dv
+from fiscal.puerto import DocumentoInvalido
 from fiscal.rutas import crear_router as crear_router_fiscal
 from fiscal.servicio import FacturacionElectronica
 from permisos_rutas import PERMISOS_POR_RUTA
@@ -487,6 +489,17 @@ async def actualizar_empresa(
     if not empresa:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
     update_data = data.model_dump(exclude_unset=True)
+    if "nombre" in update_data and not (update_data["nombre"] or "").strip():
+        raise HTTPException(status_code=422, detail="La razón social no puede quedar vacía")
+    if update_data.get("ruc"):
+        # Mismo control que la factura electrónica: con DV correcto (si falta, se calcula)
+        try:
+            ruc = ruc_con_dv(update_data["ruc"])
+        except DocumentoInvalido as e:
+            raise HTTPException(status_code=422, detail=e.errores[0])
+        if not ruc:
+            raise HTTPException(status_code=422, detail="RUC inválido (formato: 80012345-6)")
+        update_data["ruc"] = ruc
     for key, value in update_data.items():
         setattr(empresa, key, value)
     await db.commit()
@@ -709,7 +722,12 @@ async def quitar_rol_usuario(usuario_id: int, rol_id: int, db: AsyncSession = De
 
 @api_router.get("/usuarios/{usuario_id}/permisos")
 async def obtener_permisos_usuario(usuario_id: int, db: AsyncSession = Depends(get_db)):
-    """Get all permissions for a user through their roles"""
+    """Permisos del usuario por sus roles. Un administrador los tiene todos, igual que en el control
+    del backend (_tiene_algun_permiso): así ve las pantallas de un permiso nuevo aunque su rol todavía
+    no lo tenga asignado."""
+    if await _es_admin(db, usuario_id):
+        result = await db.execute(select(Permiso).order_by(Permiso.id))
+        return [{"id": p.id, "clave": p.clave, "descripcion": p.descripcion} for p in result.scalars().all()]
     result = await db.execute(
         select(Permiso)
         .join(RolPermiso, Permiso.id == RolPermiso.permiso_id)
@@ -8052,13 +8070,13 @@ def _token_servicio_publico(t: TokenServicio) -> dict:
     return {"id": t.id, "nombre": t.nombre, "prefijo": t.prefijo, "scopes": t.scopes, "usuario_id": t.usuario_id,
             "activo": t.activo, "creado_en": t.creado_en, "ultimo_uso": t.ultimo_uso}
 
-@api_router.get("/integracion/tokens", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
+@api_router.get("/integracion/tokens", dependencies=[Depends(requiere_permiso("sistema.integraciones"))])
 async def listar_tokens_servicio(usuario: Usuario = Depends(get_current_usuario), db: AsyncSession = Depends(get_db)):
     tokens = (await db.execute(select(TokenServicio).where(TokenServicio.empresa_id == usuario.empresa_id)
                                .order_by(TokenServicio.id))).scalars().all()
     return [_token_servicio_publico(t) for t in tokens]
 
-@api_router.post("/integracion/tokens", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
+@api_router.post("/integracion/tokens", dependencies=[Depends(requiere_permiso("sistema.integraciones"))])
 async def crear_token_servicio(data: TokenServicioCreate, usuario: Usuario = Depends(get_current_usuario),
                                db: AsyncSession = Depends(get_db)):
     """Crea un token para el CRM ("crm-interno") o el bot ("crm-bot"). El token se devuelve sólo
@@ -8075,7 +8093,7 @@ async def crear_token_servicio(data: TokenServicioCreate, usuario: Usuario = Dep
     await db.refresh(fila)
     return {**_token_servicio_publico(fila), "token": token}
 
-@api_router.delete("/integracion/tokens/{token_id}", dependencies=[Depends(requiere_permiso("sistema.configurar"))])
+@api_router.delete("/integracion/tokens/{token_id}", dependencies=[Depends(requiere_permiso("sistema.integraciones"))])
 async def revocar_token_servicio(token_id: int, usuario: Usuario = Depends(get_current_usuario),
                                  db: AsyncSession = Depends(get_db)):
     fila = await db.get(TokenServicio, token_id)

@@ -104,9 +104,9 @@ SECCIONES = {
 CLAVES = {c.nombre: c for c in (
     Clave("documentos.ciudad_factura", "documentos", "Ciudad que se imprime en la factura", defecto="",
           validar=texto(0, 60), ayuda="Va junto a la fecha en la factura pre-impresa"),
-    Clave("documentos.ajuste_x_mm", "documentos", "Corrimiento horizontal de la impresión (mm)", tipo="decimal",
-          defecto=0.0, validar=decimal_entre(-30, 30), ayuda="Positivo mueve todo a la derecha"),
-    Clave("documentos.ajuste_y_mm", "documentos", "Corrimiento vertical de la impresión (mm)", tipo="decimal",
+    Clave("documentos.ajuste_x_mm", "documentos", "Corrimiento horizontal de la factura en papel (mm)", tipo="decimal",
+          defecto=0.0, validar=decimal_entre(-30, 30), ayuda="Si lo impreso no cae en los casilleros: positivo mueve todo a la derecha"),
+    Clave("documentos.ajuste_y_mm", "documentos", "Corrimiento vertical de la factura en papel (mm)", tipo="decimal",
           defecto=0.0, validar=decimal_entre(-30, 30), ayuda="Positivo mueve todo hacia abajo"),
     Clave("fe.api_key", "facturacion_electronica", "API key de SIFEN SIS", secreta=True, entorno="SIFENSIS_API_KEY",
           permiso="sistema.integraciones", validar=texto(10, 200),
@@ -252,8 +252,9 @@ async def guardar(db: AsyncSession, valores: dict, usuario_id: Optional[int]) ->
         fila = await db.get(AjusteSistema, PREFIJO + clave.nombre)
         anterior = await obtener(clave.nombre)
         if valor is None:
-            if fila is not None:
-                await db.delete(fila)
+            if fila is None:
+                continue  # ya estaba en el valor por defecto: no hay cambio que registrar
+            await db.delete(fila)
             nuevo_visible = None if clave.secreta else clave.defecto
         else:
             almacenado = {"cifrado": _cifrar(valor)} if clave.secreta else {"v": valor}
@@ -262,11 +263,13 @@ async def guardar(db: AsyncSession, valores: dict, usuario_id: Optional[int]) ->
             else:
                 fila.valor = almacenado
             nuevo_visible = valor
-        if anterior == nuevo_visible and valor is not None:
+        if anterior == nuevo_visible:
             continue
-        mostrar = _enmascarar if clave.secreta else (lambda v: None if v is None else str(v))
-        db.add(CambioConfiguracion(clave=clave.nombre, valor_anterior=mostrar(anterior),
-                                   valor_nuevo=mostrar(nuevo_visible), usuario_id=usuario_id))
+        if clave.secreta:
+            antes, despues = _enmascarar(anterior), _enmascarar(nuevo_visible) if nuevo_visible else "(quitada)"
+        else:
+            antes, despues = (None if anterior is None else str(anterior)), (None if nuevo_visible is None else str(nuevo_visible))
+        db.add(CambioConfiguracion(clave=clave.nombre, valor_anterior=antes, valor_nuevo=despues, usuario_id=usuario_id))
         cambios.append(clave.nombre)
     await db.commit()
     invalidar_cache()
@@ -301,6 +304,18 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, mod
         if not permisos:
             raise HTTPException(status_code=403, detail="No tiene permisos para ver la configuración")
         return usuario, permisos
+
+    @router.get("/impresion")
+    async def impresion(request: Request, db: AsyncSession = Depends(get_db)):
+        """Lo que necesita la impresión de la factura en papel. Lo usa cualquier persona que imprime
+        (cajeros), por eso no pide permisos de configuración, sólo sesión."""
+        encabezado = request.headers.get("Authorization", "")
+        if not encabezado.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="Sesión requerida")
+        await usuario_desde_jwt(encabezado[7:].strip(), db)
+        return {"ciudad_factura": await obtener("documentos.ciudad_factura"),
+                "ajuste_x_mm": await obtener("documentos.ajuste_x_mm"),
+                "ajuste_y_mm": await obtener("documentos.ajuste_y_mm")}
 
     @router.get("")
     async def ver(sesion: tuple = Depends(autenticar)):
