@@ -35,12 +35,23 @@ yarn install
 yarn start
 ```
 
-### Variables de Entorno
+### Variables de Entorno (infraestructura; las carga Ether al crear la instancia)
 
-**Backend:** `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGINS`, `PORT`  
-- `JWT_SECRET` es **obligatorio** con PostgreSQL: el backend no arranca si falta o si usa un valor por defecto público. Generarlo con `openssl rand -hex 32`.
-- `PERMITIR_ENDPOINTS_DESARROLLO=true` habilita `POST /api/seed` y `POST /api/reset-database` (sólo desarrollo; en producción responden 404).  
-**Frontend:** `REACT_APP_BACKEND_URL`
+Cada cliente tiene su propia instancia. Las variables son sólo de infraestructura: lo que es del
+cliente (datos de la empresa, RUC, claves de APIs, conexiones) se carga desde la web, en
+**Sistema › Configuración** (`backend/configuracion.py`). Plan: `PLAN_CONFIGURACION_POR_INSTANCIA.md`.
+
+| Variable | Para qué |
+|---|---|
+| `DATABASE_URL` | Base PostgreSQL de la instancia |
+| `JWT_SECRET` | **Obligatorio** con PostgreSQL (el backend no arranca sin él). `openssl rand -hex 32` |
+| `CLAVE_CIFRADO` | 32+ caracteres al azar, uno por instancia. Cifra las API keys que se guardan desde la pantalla. Si cambia, hay que volver a cargarlas |
+| `CODIGO_ALTA` | 12+ caracteres al azar. Lo pide el alta de la instancia (ver abajo); después del alta se puede quitar |
+| `MODULOS` | Módulos contratados: `fe` (facturación electrónica), `crm`… separados por coma |
+| `WEB_CONCURRENCY` | Procesos de la API (2 por defecto) |
+| `PERMITIR_ENDPOINTS_DESARROLLO=true` | Sólo desarrollo: habilita `POST /api/seed` y `POST /api/reset-database` (en producción, 404) |
+
+Frontend: `REACT_APP_BACKEND_URL`.
 
 ## Módulos Principales
 
@@ -66,8 +77,20 @@ El proyecto se despliega mediante **Docker** (Coolify). Cada servicio tiene su p
 - `backend/dockerfile` — FastAPI con uvicorn
 - `frontend/dockerfile` — Build React + serve estático
 
-## Credenciales de Prueba
+## Alta de una instancia nueva
 
-`admin@ether.com` / `admin123` (empresa_id: 1)
+1. En Coolify, con las variables de arriba (incluido un `CODIGO_ALTA` nuevo).
+2. Abrir la web: con la base vacía aparece **Configuración inicial** (`/alta`). Se cargan el código de
+   alta, los datos de la empresa (RUC con su dígito verificador) y el primer administrador con su propia
+   contraseña. Crea los roles base (ADMIN, GERENTE, VENDEDOR, DELIVERY) y entra.
+3. En **Sistema › Configuración**: logo, documentos impresos, facturación electrónica (API key de
+   SIFEN SIS) y tokens de integración.
 
-En una instancia **nueva**, el primer administrador se crea dentro del contenedor del backend con `python seed_data.py`. No borra datos, pero si no encuentra la empresa y el usuario por defecto los crea: no usarlo en instancias en uso. **Cambiar la contraseña después del primer ingreso.**
+El alta funciona una sola vez: con un usuario en la base responde 404. Los intentos con un código
+equivocado se limitan igual que los del login.
+
+## Datos de desarrollo
+
+`python seed_data.py --desarrollo` (o `POST /api/seed` con `PERMITIR_ENDPOINTS_DESARROLLO=true`)
+crea una empresa de ejemplo y el usuario `admin@ether.com` / `admin123`. **Nunca en la instancia de un
+cliente**: sin `--desarrollo` el script no corre.

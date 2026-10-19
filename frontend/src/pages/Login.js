@@ -38,7 +38,9 @@ const Login = () => {
       } catch (_) {}
     };
     fetchEmpresa();
-  }, [API_URL]);
+    // Instancia nueva (sin usuarios): primero el alta
+    fetch(`${API_URL}/alta`).then((r) => r.json()).then((a) => a.pendiente && navigate('/alta', { replace: true })).catch(() => {});
+  }, [API_URL, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

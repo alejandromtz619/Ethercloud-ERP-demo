@@ -49,6 +49,8 @@ from integracion import (
     crear_router as crear_router_integracion, depurar_eventos as depurar_eventos_integracion, generar_token, PERFILES,
 )
 from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
+import alta
+import catalogo
 import configuracion
 from fiscal.constructor import ruc_con_dv
 from fiscal.puerto import DocumentoInvalido
@@ -529,6 +531,36 @@ async def registrar_usuario(data: UsuarioCreate, db: AsyncSession = Depends(get_
     
     token = create_token(usuario.id)
     return TokenResponse(access_token=token, usuario=UsuarioResponse.model_validate(usuario))
+
+# ==================== ALTA DE UNA INSTANCIA NUEVA ====================
+@public_router.get("/alta")
+async def estado_del_alta(db: AsyncSession = Depends(get_db)):
+    """Si la instancia todavía no tiene usuarios (la web muestra el alta) y si el servidor tiene
+    CODIGO_ALTA. No expone nada más."""
+    return {"pendiente": await alta.pendiente(db), "codigo_configurado": alta.codigo_configurado() is not None}
+
+@public_router.post("/alta")
+async def dar_de_alta(pedido: alta.PedidoAlta, db: AsyncSession = Depends(get_db)):
+    """Primer uso de la instancia: empresa, roles base y primer administrador (alta.py). Pide el
+    CODIGO_ALTA del servidor; los intentos fallidos cuentan como los del login. Sólo funciona una vez."""
+    if not await alta.pendiente(db):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not alta.codigo_configurado():
+        raise HTTPException(status_code=503, detail="Falta CODIGO_ALTA en el servidor: pedíselo a soporte de Ether")
+    if await LOGIN_FALLOS_POR_EMAIL.bloqueado(db, "alta"):
+        raise HTTPException(status_code=429, detail="Demasiados intentos fallidos. Espere unos minutos e intente de nuevo.")
+    if not alta.codigo_correcto(pedido.codigo):
+        await LOGIN_FALLOS_POR_EMAIL.registrar_fallo(db, "alta")
+        raise HTTPException(status_code=403, detail="El código de alta no es correcto")
+    try:
+        usuario = await alta.dar_de_alta(db, pedido, hash_password)
+    except alta.AltaInvalida as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except alta.AltaYaHecha:
+        raise HTTPException(status_code=404, detail="Not Found")
+    await LOGIN_FALLOS_POR_EMAIL.limpiar(db, "alta")
+    logger.info(f"Alta de la instancia hecha: empresa {pedido.empresa.nombre!r}, administrador {usuario.email}")
+    return {"ok": True, "email": usuario.email}
 
 @public_router.post("/auth/login", response_model=TokenResponse)
 async def login(data: UsuarioLogin, db: AsyncSession = Depends(get_db)):
@@ -8161,169 +8193,10 @@ async def seed_data(db: AsyncSession = Depends(get_db)):
     )
     db.add(admin)
     
-    # Create comprehensive permissions
-    permisos_data = [
-        # Dashboard
-        ("dashboard.ver", "Ver dashboard"),
-        # Ventas
-        ("ventas.crear", "Crear ventas"),
-        ("ventas.ver", "Ver ventas"),
-        ("ventas.anular", "Anular ventas"),
-        ("ventas.modificar_precio", "Modificar precios en ventas"),
-        ("ventas.aplicar_descuento", "Aplicar descuentos"),
-        ("ventas.imprimir_boleta", "Imprimir boletas"),
-        ("ventas.imprimir_factura", "Imprimir facturas"),
-        # Productos
-        ("productos.crear", "Crear productos"),
-        ("productos.editar", "Editar productos"),
-        ("productos.eliminar", "Eliminar productos"),
-        ("productos.modificar_precio", "Modificar precios de productos"),
-        ("productos.ver_costo", "Ver costos de productos"),
-        # Stock
-        ("stock.ver", "Ver inventario"),
-        ("stock.entrada", "Registrar entradas de stock"),
-        ("stock.salida", "Registrar salidas de stock"),
-        ("stock.ajustar", "Ajustar stock"),
-        ("stock.traspasar", "Traspasar entre almacenes"),
-        ("stock.configurar_alertas", "Configurar alertas de stock"),
-        # Clientes
-        ("clientes.crear", "Crear clientes"),
-        ("clientes.editar", "Editar clientes"),
-        ("clientes.eliminar", "Eliminar clientes"),
-        ("clientes.ver_creditos", "Ver créditos de clientes"),
-        ("clientes.modificar_descuento", "Modificar descuento de cliente"),
-        # Proveedores
-        ("proveedores.crear", "Crear proveedores"),
-        ("proveedores.editar", "Editar proveedores"),
-        ("proveedores.eliminar", "Eliminar proveedores"),
-        ("proveedores.gestionar_deudas", "Gestionar deudas a proveedores"),
-        # Funcionarios
-        ("funcionarios.ver", "Ver funcionarios"),
-        ("funcionarios.crear", "Crear funcionarios"),
-        ("funcionarios.editar", "Editar funcionarios"),
-        ("funcionarios.ver_salarios", "Ver salarios"),
-        ("funcionarios.adelantos", "Registrar adelantos de salario"),
-        ("funcionarios.pagar_salarios", "Marcar salarios como pagados"),
-        # Delivery
-        ("delivery.ver", "Ver entregas"),
-        ("delivery.crear", "Crear entregas"),
-        ("delivery.actualizar_estado", "Actualizar estado de entregas"),
-        # Flota
-        ("flota.ver", "Ver flota"),
-        ("flota.gestionar", "Gestionar vehículos"),
-        # Laboratorio
-        ("laboratorio.crear", "Crear materias de laboratorio"),
-        ("laboratorio.ver", "Ver materias de laboratorio"),
-        ("laboratorio.editar", "Editar materias de laboratorio"),
-        ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
-        # Sistema
-        ("usuarios.ver", "Ver usuarios"),
-        ("usuarios.gestionar", "Gestionar usuarios"),
-        ("roles.gestionar", "Gestionar roles y permisos"),
-        ("sistema.configurar", "Configurar sistema"),
-        ("reportes.ver", "Ver reportes"),
-        ("reportes.exportar", "Exportar reportes"),
-        # Business Intelligence
-        ("bi.ver", "Ver Business Intelligence"),
-        # Additional view permissions
-        ("productos.ver", "Ver productos"),
-        ("proveedores.ver", "Ver proveedores"),
-        ("clientes.ver", "Ver clientes"),
-        ("facturas.ver", "Ver facturas"),
-        ("ventas.ver_historial", "Ver historial de ventas"),
-        # Gastos operativos
-        ("gastos.ver", "Ver gastos operativos"),
-        ("gastos.gestionar", "Gestionar gastos operativos"),
-        # Presupuestos
-        ("presupuestos.ver", "Ver presupuestos"),
-        ("presupuestos.crear", "Crear presupuestos"),
-        ("presupuestos.editar", "Editar presupuestos"),
-        ("presupuestos.eliminar", "Eliminar presupuestos"),
-    ]
-    # El arranque (ensure_permisos) ya crea algunos: sólo se agregan los que falten
-    existentes = set((await db.execute(select(Permiso.clave))).scalars().all())
-    for clave, desc in permisos_data:
-        if clave not in existentes:
-            db.add(Permiso(clave=clave, descripcion=desc))
-    
-    # Create roles
-    for rol_nombre in ["ADMIN", "GERENTE", "VENDEDOR", "DELIVERY"]:
-        db.add(Rol(empresa_id=empresa.id, nombre=rol_nombre, descripcion=f"Rol {rol_nombre}"))
-    
-    await db.flush()  # Flush to get IDs
-    
-    # Assign all permissions to ADMIN role
-    admin_rol_result = await db.execute(select(Rol).where(Rol.nombre == "ADMIN", Rol.empresa_id == empresa.id))
-    admin_rol = admin_rol_result.scalar_one_or_none()
-    
-    if admin_rol:
-        permisos_result = await db.execute(select(Permiso))
-        all_permisos = permisos_result.scalars().all()
-        for permiso in all_permisos:
-            db.add(RolPermiso(rol_id=admin_rol.id, permiso_id=permiso.id))
-        db.add(UsuarioRol(usuario_id=admin.id, rol_id=admin_rol.id))
-    
-    # Assign permissions to GERENTE role
-    gerente_rol_result = await db.execute(select(Rol).where(Rol.nombre == "GERENTE", Rol.empresa_id == empresa.id))
-    gerente_rol = gerente_rol_result.scalar_one_or_none()
-    gerente_permisos = [
-        "dashboard.ver",
-        "ventas.crear", "ventas.ver", "ventas.anular", "ventas.modificar_precio", "ventas.aplicar_descuento",
-        "ventas.imprimir_boleta", "ventas.imprimir_factura", "ventas.ver_historial",
-        "productos.ver", "productos.crear", "productos.editar", "productos.modificar_precio",
-        "stock.ver", "stock.entrada", "stock.salida", "stock.traspasar",
-        "clientes.ver", "clientes.crear", "clientes.editar", "clientes.ver_creditos",
-        "proveedores.ver", "proveedores.gestionar_deudas",
-        "funcionarios.ver", "funcionarios.ver_salarios", "funcionarios.adelantos",
-        "delivery.ver", "delivery.crear", "delivery.actualizar_estado",
-        "flota.ver", "laboratorio.ver", "laboratorio.crear", "laboratorio.editar",
-        "reportes.ver", "reportes.exportar",
-        "bi.ver",
-        "gastos.ver", "gastos.gestionar",
-        "presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"
-    ]
-    if gerente_rol:
-        for perm_clave in gerente_permisos:
-            perm_result = await db.execute(select(Permiso).where(Permiso.clave == perm_clave))
-            perm = perm_result.scalar_one_or_none()
-            if perm:
-                db.add(RolPermiso(rol_id=gerente_rol.id, permiso_id=perm.id))
-    
-    # Assign permissions to VENDEDOR role
-    vendedor_rol_result = await db.execute(select(Rol).where(Rol.nombre == "VENDEDOR", Rol.empresa_id == empresa.id))
-    vendedor_rol = vendedor_rol_result.scalar_one_or_none()
-    vendedor_permisos = [
-        "dashboard.ver",
-        "ventas.crear", "ventas.ver", "ventas.imprimir_boleta", "ventas.imprimir_factura", "ventas.ver_historial",
-        "productos.ver", "stock.ver",
-        "clientes.ver", "clientes.crear",
-        "delivery.ver", "delivery.crear",
-        "laboratorio.ver",
-        "presupuestos.ver", "presupuestos.crear", "presupuestos.editar"
-    ]
-    if vendedor_rol:
-        for perm_clave in vendedor_permisos:
-            perm_result = await db.execute(select(Permiso).where(Permiso.clave == perm_clave))
-            perm = perm_result.scalar_one_or_none()
-            if perm:
-                db.add(RolPermiso(rol_id=vendedor_rol.id, permiso_id=perm.id))
-    
-    # Assign permissions to DELIVERY role
-    delivery_rol_result = await db.execute(select(Rol).where(Rol.nombre == "DELIVERY", Rol.empresa_id == empresa.id))
-    delivery_rol = delivery_rol_result.scalar_one_or_none()
-    delivery_permisos = [
-        "delivery.ver", "delivery.actualizar_estado",
-        "flota.ver"
-    ]
-    if delivery_rol:
-        for perm_clave in delivery_permisos:
-            perm_result = await db.execute(select(Permiso).where(Permiso.clave == perm_clave))
-            perm = perm_result.scalar_one_or_none()
-            if perm:
-                db.add(RolPermiso(rol_id=delivery_rol.id, permiso_id=perm.id))
-    
-    # Assign admin user to ADMIN role
-    admin.rol_id = admin_rol.id if admin_rol else None
+    # Permisos y roles base: catalogo.py (los mismos que crea el alta de una instancia)
+    await catalogo.asegurar_permisos(db, catalogo.PERMISOS_BASE)
+    roles = await catalogo.crear_roles_base(db, empresa.id)
+    db.add(UsuarioRol(usuario_id=admin.id, rol_id=roles["ADMIN"].id))
     
     # Create categories
     categorias = ["Pinturas", "Herramientas", "Materiales", "Accesorios"]
@@ -8378,17 +8251,9 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
         db.add(empresa)
         await db.flush()
         
-        # Create admin role
-        rol_admin = Rol(
-            empresa_id=empresa.id,
-            nombre="ADMIN",
-            descripcion="Administrador del sistema",
-            estado=True
-        )
-        db.add(rol_admin)
-        await db.flush()
-        
-        # Create admin user
+        # Permisos y roles base (catalogo.py) y el usuario de desarrollo
+        await catalogo.asegurar_permisos(db, catalogo.PERMISOS_BASE)
+        roles = await catalogo.crear_roles_base(db, empresa.id)
         admin = Usuario(
             empresa_id=empresa.id,
             email="admin@ether.com",
@@ -8400,76 +8265,7 @@ async def reset_database(db: AsyncSession = Depends(get_db)):
         )
         db.add(admin)
         await db.flush()
-        
-        # Assign role to user via UsuarioRol
-        usuario_rol = UsuarioRol(
-            usuario_id=admin.id,
-            rol_id=rol_admin.id
-        )
-        db.add(usuario_rol)
-        
-        # Create permissions
-        permisos_data = [
-            ("ventas.crear", "Crear ventas"),
-            ("ventas.ver", "Ver ventas"),
-            ("ventas.anular", "Anular ventas"),
-            ("productos.crear", "Crear productos"),
-            ("productos.editar", "Editar productos"),
-            ("productos.eliminar", "Eliminar productos"),
-            ("stock.ajustar", "Ajustar stock"),
-            ("clientes.crear", "Crear clientes"),
-            ("clientes.editar", "Editar clientes"),
-            ("funcionarios.ver", "Ver funcionarios"),
-            ("funcionarios.editar", "Editar funcionarios"),
-            ("usuarios.gestionar", "Gestionar usuarios"),
-            ("sistema.configurar", "Configurar sistema"),
-            ("gastos.ver", "Ver gastos operativos"),
-            ("gastos.gestionar", "Gestionar gastos operativos"),
-            ("presupuestos.ver", "Ver presupuestos"),
-            ("presupuestos.crear", "Crear presupuestos"),
-            ("presupuestos.editar", "Editar presupuestos"),
-            ("presupuestos.eliminar", "Eliminar presupuestos"),
-        ]
-        permisos_creados = {}
-        for clave, desc in permisos_data:
-            permiso = Permiso(clave=clave, descripcion=desc, estado=True)
-            db.add(permiso)
-            await db.flush()
-            permisos_creados[clave] = permiso
-
-            # Assign all permissions to admin role
-            rol_permiso = RolPermiso(rol_id=rol_admin.id, permiso_id=permiso.id)
-            db.add(rol_permiso)
-
-        # Create other roles
-        rol_gerente = Rol(
-            empresa_id=empresa.id,
-            nombre="GERENTE",
-            descripcion="Rol GERENTE",
-            estado=True
-        )
-        db.add(rol_gerente)
-        await db.flush()
-        for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar", "presupuestos.eliminar"):
-            db.add(RolPermiso(rol_id=rol_gerente.id, permiso_id=permisos_creados[clave].id))
-
-        rol_vendedor = Rol(
-            empresa_id=empresa.id,
-            nombre="VENDEDOR",
-            descripcion="Rol VENDEDOR",
-            estado=True
-        )
-        db.add(rol_vendedor)
-        await db.flush()
-        for clave in ("presupuestos.ver", "presupuestos.crear", "presupuestos.editar"):
-            db.add(RolPermiso(rol_id=rol_vendedor.id, permiso_id=permisos_creados[clave].id))
-
-        db.add(Rol(
-            empresa_id=empresa.id,
-            nombre="DELIVERY",
-            descripcion="Rol DELIVERY",
-            estado=True
-        ))
+        db.add(UsuarioRol(usuario_id=admin.id, rol_id=roles["ADMIN"].id))
 
         # Create categories
         categorias = ["Pinturas", "Herramientas", "Materiales", "Accesorios"]
@@ -8539,10 +8335,16 @@ async def startup():
                 await _preparar_base()
             finally:
                 await candado.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": CANDADO_ARRANQUE})
-    _avisos_de_configuracion()
+    await _avisos_de_configuracion()
     _iniciar_facturacion_electronica()
 
-def _avisos_de_configuracion():
+async def _avisos_de_configuracion():
+    async with async_session_maker() as db:
+        sin_usuarios = await alta.pendiente(db)
+    if sin_usuarios and not alta.codigo_configurado():
+        logger.warning("Instancia sin usuarios y sin CODIGO_ALTA (12+ caracteres): no se puede hacer el alta desde la web")
+    elif not sin_usuarios and alta.codigo_configurado():
+        logger.info("El alta ya está hecha: CODIGO_ALTA se puede quitar de las variables de la instancia")
     if not configuracion.cifrado_disponible():
         logger.warning("Falta CLAVE_CIFRADO (32+ caracteres): no se pueden guardar API keys desde la pantalla Configuración")
 
@@ -8680,6 +8482,7 @@ async def ensure_indices():
 async def ensure_permisos():
     """Ensure all required permissions exist in the DB (handles migrations for existing installs)"""
     async with async_session_maker() as db:
+        await catalogo.asegurar_permisos(db, catalogo.PERMISOS_BASE)
         for clave, descripcion in PERMISOS_REQUERIDOS:
             existing = await db.execute(select(Permiso).where(Permiso.clave == clave))
             if not existing.scalar_one_or_none():

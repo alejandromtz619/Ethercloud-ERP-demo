@@ -20,6 +20,8 @@ RUTAS_PUBLICAS = {
     ("POST", "/api/auth/login"),
     ("GET", "/api/documentos/{token}"),
     ("POST", "/api/seed"),  # público, pero 404 salvo PERMITIR_ENDPOINTS_DESARROLLO=true
+    ("GET", "/api/alta"),   # sólo dice si la instancia todavía no tiene usuarios
+    ("POST", "/api/alta"),  # 404 una vez hecha; antes pide CODIGO_ALTA
 }
 
 

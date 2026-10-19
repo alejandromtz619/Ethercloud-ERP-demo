@@ -8,6 +8,7 @@ import './App.css';
 // Login y Home van en el bundle inicial: son la primera pantalla y partirlas
 // solo anadiria una ida y vuelta mas antes de poder entrar.
 import Login from './pages/Login';
+import Alta from './pages/Alta';
 import Home from './pages/Home';
 
 // El resto de paginas se cargan bajo demanda. Antes las 22 viajaban en un unico
@@ -84,6 +85,8 @@ const AppRoutes = () => {
   return (
     <Routes>
       {/* Public Routes */}
+      {/* Con sesión (recién hecha el alta) sigue en Configuración: logo, facturación electrónica... */}
+      <Route path="/alta" element={user ? <Navigate to="/configuracion" replace /> : <Alta />} />
       <Route 
         path="/login" 
         element={user ? <Navigate to="/home" replace /> : <Login />} 

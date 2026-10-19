@@ -1,12 +1,19 @@
 """
-Script para poblar la base de datos con datos iniciales
-Ejecutar: python seed_data.py
+Datos para DESARROLLO: empresa de ejemplo y usuario admin@ether.com / admin123.
+
+    python seed_data.py --desarrollo
+
+No se usa en las instancias de los clientes: una instancia nueva se da de alta desde la web (/alta),
+con sus propios datos y la contraseña que elija su administrador (alta.py).
 """
 import asyncio
+import os
+import sys
 from sqlalchemy import select
 from database import init_db, async_session_maker
 from models import Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol
 import bcrypt
+import catalogo
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -104,81 +111,7 @@ async def seed_database():
         # agrega lo que falta, así sirve para crear el primer admin y se puede repetir.)
 
         # 6. Crear permisos con formato compuesto (igual a main)
-        permisos_data = [
-            # Ventas
-            ("ventas.crear", "Crear ventas"),
-            ("ventas.ver", "Ver ventas"),
-            ("ventas.anular", "Anular ventas"),
-            ("ventas.modificar_precio", "Modificar precios en ventas"),
-            ("ventas.aplicar_descuento", "Aplicar descuentos"),
-            ("ventas.imprimir_boleta", "Imprimir boletas"),
-            ("ventas.imprimir_factura", "Imprimir facturas"),
-            ("ventas.ver_historial", "Ver historial de ventas"),
-            # Gastos operativos
-            ("gastos.ver", "Ver gastos operativos"),
-            ("gastos.gestionar", "Gestionar gastos operativos"),
-            # Productos
-            ("productos.ver", "Ver productos"),
-            ("productos.crear", "Crear productos"),
-            ("productos.editar", "Editar productos"),
-            ("productos.eliminar", "Eliminar productos"),
-            ("productos.modificar_precio", "Modificar precios de productos"),
-            # Stock
-            ("stock.ver", "Ver stock"),
-            ("stock.entrada", "Registrar entrada de stock"),
-            ("stock.salida", "Registrar salida de stock"),
-            ("stock.traspasar", "Traspasar stock entre almacenes"),
-            ("stock.ajustar", "Ajustar stock manualmente"),
-            # Clientes
-            ("clientes.ver", "Ver clientes"),
-            ("clientes.crear", "Crear clientes"),
-            ("clientes.editar", "Editar clientes"),
-            ("clientes.ver_creditos", "Ver créditos de clientes"),
-            # Proveedores
-            ("proveedores.ver", "Ver proveedores"),
-            ("proveedores.crear", "Crear proveedores"),
-            ("proveedores.editar", "Editar proveedores"),
-            ("proveedores.gestionar_deudas", "Gestionar deudas con proveedores"),
-            # Funcionarios
-            ("funcionarios.ver", "Ver funcionarios"),
-            ("funcionarios.crear", "Crear funcionarios"),
-            ("funcionarios.editar", "Editar funcionarios"),
-            ("funcionarios.ver_salarios", "Ver salarios"),
-            ("funcionarios.adelantos", "Registrar adelantos de salario"),
-            ("funcionarios.pagar_salarios", "Marcar salarios como pagados"),
-            # Delivery
-            ("delivery.ver", "Ver entregas"),
-            ("delivery.crear", "Crear entregas"),
-            ("delivery.actualizar_estado", "Actualizar estado de entregas"),
-            ("delivery.eliminar", "Eliminar entregas"),
-            # Flota
-            ("flota.ver", "Ver flota"),
-            ("flota.gestionar", "Gestionar vehículos"),
-            # Laboratorio
-            ("laboratorio.crear", "Crear materias de laboratorio"),
-            ("laboratorio.ver", "Ver materias de laboratorio"),
-            ("laboratorio.editar", "Editar materias de laboratorio"),
-            ("laboratorio.eliminar", "Eliminar materias de laboratorio"),
-            # Presupuestos
-            ("presupuestos.ver", "Ver presupuestos"),
-            ("presupuestos.crear", "Crear presupuestos"),
-            ("presupuestos.editar", "Editar presupuestos"),
-            ("presupuestos.eliminar", "Eliminar presupuestos"),
-            # Dashboard
-            ("dashboard.ver", "Ver dashboard"),
-            # Sistema
-            ("usuarios.ver", "Ver usuarios"),
-            ("usuarios.gestionar", "Gestionar usuarios"),
-            ("roles.gestionar", "Gestionar roles y permisos"),
-            ("sistema.configurar", "Configurar sistema"),
-            # Reportes
-            ("reportes.ver", "Ver reportes"),
-            ("reportes.exportar", "Exportar reportes"),
-            # Business Intelligence
-            ("bi.ver", "Ver Business Intelligence"),
-            # Facturas
-            ("facturas.ver", "Ver facturas"),
-        ]
+        permisos_data = catalogo.PERMISOS_BASE
         
         print(f"\n📝 Creando {len(permisos_data)} permisos...")
         # El backend crea algunos permisos al arrancar: sólo se agregan los que falten
@@ -223,4 +156,7 @@ async def seed_database():
         print("="*50 + "\n")
 
 if __name__ == "__main__":
+    if "--desarrollo" not in sys.argv and os.environ.get("PERMITIR_ENDPOINTS_DESARROLLO", "").lower() != "true":
+        sys.exit("seed_data.py crea un usuario con contraseña conocida y es sólo para desarrollo "
+                 "(python seed_data.py --desarrollo). Una instancia nueva se da de alta desde la web: /alta")
     asyncio.run(seed_database())
