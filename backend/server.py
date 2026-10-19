@@ -59,6 +59,7 @@ from fiscal.rutas import crear_router as crear_router_fiscal
 from fiscal.servicio import FacturacionElectronica
 from permisos_rutas import PERMISOS_POR_RUTA
 from models import (
+    DocumentoFiscal,
     Empresa, Usuario, Rol, Permiso, RolPermiso, UsuarioRol,
     Cliente, CreditoCliente, PagoCredito, Proveedor, ProveedorProducto, DeudaProveedor,
     Categoria, Marca, Producto, MateriaLaboratorio, EstadoMateria,
@@ -3161,8 +3162,29 @@ async def obtener_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
     venta_dict['cliente_ruc'] = cliente.ruc
     return VentaConDetalles(**venta_dict)
 
+async def _factura_electronica_de(db: AsyncSession, venta_id: int):
+    """Factura electrónica vigente de una venta (o None)."""
+    return (await db.execute(select(DocumentoFiscal).where(
+        DocumentoFiscal.venta_id == venta_id, DocumentoFiscal.tipo_documento == 1,
+        DocumentoFiscal.estado.notin_(("CANCELADO", "INUTILIZADO"))).order_by(DocumentoFiscal.id.desc()))).scalars().first()
+
+async def _regularizar_factura_electronica(request: Request, db: AsyncSession, documento_id: int, venta_id: int, usuario) -> str:
+    facturacion = getattr(request.app.state, "facturacion", None)
+    servicio_fe = await facturacion.servicio() if facturacion else None
+    if servicio_fe is None:
+        return "La venta tiene factura electrónica, pero la facturación electrónica no está configurada: anulala desde SIFEN SIS"
+    try:
+        factura = await db.get(DocumentoFiscal, documento_id)
+        return await servicio_fe.regularizar_anulacion(db, factura, f"Anulación de la venta N° {venta_id} en el ERP", usuario)
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Anulación de venta: no se pudo regularizar la factura electrónica")
+        mensaje = getattr(e, "mensaje", str(e))
+        return f"La venta se anuló, pero la factura electrónica no se pudo cancelar ni compensar ({mensaje}). Hacelo desde la factura."
+
 @api_router.post("/ventas/{venta_id}/anular", response_model=VentaResponse)
-async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
+async def anular_venta(venta_id: int, request: Request, db: AsyncSession = Depends(get_db),
+                       usuario: Usuario = Depends(get_current_usuario)):
     try:
         result = await db.execute(select(Venta).where(Venta.id == venta_id))
         venta = result.scalar_one_or_none()
@@ -3171,6 +3193,12 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
         
         if venta.estado == EstadoVenta.ANULADA:
             raise HTTPException(status_code=400, detail="La venta ya está anulada")
+
+        # Factura electrónica: si está camino a SIFEN todavía no se puede cancelar ni hacerle nota de crédito
+        factura_fe = await _factura_electronica_de(db, venta_id)
+        if factura_fe and factura_fe.estado in ("POR_ENVIAR", "GENERADO", "ENVIADO"):
+            raise HTTPException(status_code=409, detail="La factura electrónica de esta venta todavía está en camino a "
+                                                        "SIFEN: esperá unos segundos a que se apruebe y volvé a anular")
         
         # 1. Devolver stock de productos
         items_result = await db.execute(
@@ -3276,7 +3304,12 @@ async def anular_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
         
         await db.commit()
         await db.refresh(venta)
-        return venta
+        respuesta = VentaResponse.model_validate(venta)
+        # La venta ya quedó anulada; ahora la factura electrónica (cancelación o nota de crédito). Si el
+        # proveedor falla, la anulación vale igual y se avisa para hacerlo desde la factura.
+        if factura_fe:
+            respuesta.aviso_fiscal = await _regularizar_factura_electronica(request, db, factura_fe.id, venta_id, usuario)
+        return respuesta
     except HTTPException:
         raise
     except Exception as e:

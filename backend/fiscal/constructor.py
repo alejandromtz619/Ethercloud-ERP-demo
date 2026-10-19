@@ -177,3 +177,21 @@ def factura_de_grupal(grupal, cliente, ventas_y_filas, plazo_credito: str = "30 
     numeros = ", ".join(str(v.id) for v, _ in ventas_y_filas)
     return _factura(cliente, items, descuento, tipo_pago, f"Factura agrupada {grupal.numero} · Ventas N° {numeros}",
                     plazo_credito, cheque)
+
+
+MOTIVOS_NOTA_CREDITO = {1: "Devolución y ajuste de precios", 2: "Devolución", 3: "Descuento", 4: "Bonificación",
+                        5: "Crédito incobrable", 6: "Recupero de costo", 7: "Recupero de gasto", 8: "Ajuste de precio"}
+
+
+def nota_de_credito_total(factura_datos: dict, cdc: str, numero_factura: str, motivo: int = 2) -> dict:
+    """Nota de crédito (tipo 5) por el total de una factura aprobada: mismo receptor, mismos ítems y mismo
+    descuento que se facturaron (se copian del documento enviado, no de la venta, que pudo cambiar)."""
+    if motivo not in MOTIVOS_NOTA_CREDITO:
+        raise DocumentoInvalido([f"Motivo de nota de crédito inválido: {motivo}"])
+    datos = {k: factura_datos[k] for k in ("tipoEmision", "tipoImpuesto", "moneda", "cliente", "items") if k in factura_datos}
+    if factura_datos.get("descuentoGlobal"):
+        datos["descuentoGlobal"] = factura_datos["descuentoGlobal"]
+    datos["notaCreditoDebito"] = {"motivo": motivo}
+    datos["documentoAsociado"] = {"formato": 1, "cdc": cdc}
+    datos["observacion"] = f"{MOTIVOS_NOTA_CREDITO[motivo]} · anula la factura {numero_factura}"
+    return datos

@@ -734,7 +734,7 @@ class DocumentoFiscal(Base):
     venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=True, index=True)
     factura_grupal_id = Column(Integer, ForeignKey("facturas_grupales.id"), nullable=True, index=True)
     documento_asociado_id = Column(Integer, ForeignKey("documentos_fiscales.id"), nullable=True)
-    estado = Column(String(15), nullable=False, default="POR_ENVIAR", index=True)
+    estado = Column(String(15), nullable=False, default="POR_ENVIAR", index=True)  # ... | CANCELADO | INUTILIZADO
     cdc = Column(String(44), nullable=True, unique=True)
     total = Column(Numeric(15, 2), nullable=False, default=0)
     datos = Column(JSON, nullable=False)       # el "data" enviado (los reintentos mandan exactamente esto)
@@ -758,3 +758,27 @@ class CambioConfiguracion(Base):
     valor_nuevo = Column(Text, nullable=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay, index=True)
+
+
+
+class EventoFiscal(Base):
+    """Evento ante SIFEN sobre un documento o la numeración: cancelación (anula un documento aprobado,
+    48 h para facturas) o inutilización (números que no se van a usar)."""
+    __tablename__ = "eventos_fiscales"
+
+    id = Column(Integer, primary_key=True)
+    empresa_id = Column(Integer, ForeignKey("empresas.id"), nullable=False, index=True)
+    ambiente = Column(String(20), nullable=False)
+    tipo = Column(String(20), nullable=False)               # cancelacion | inutilizacion
+    documento_id = Column(Integer, ForeignKey("documentos_fiscales.id"), nullable=True, index=True)
+    tipo_documento = Column(SmallInteger, nullable=False)
+    establecimiento = Column(String(3), nullable=False)
+    punto = Column(String(3), nullable=False)
+    desde = Column(Integer, nullable=False)
+    hasta = Column(Integer, nullable=False)
+    motivo = Column(String(500), nullable=False)
+    estado = Column(String(15), nullable=False)             # APROBADO | RECHAZADO
+    mensaje = Column(Text, nullable=True)
+    respuesta = Column(JSON, nullable=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=now_paraguay)

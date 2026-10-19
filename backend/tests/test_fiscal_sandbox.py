@@ -149,3 +149,34 @@ def test_reintento_identico_devuelve_el_mismo_documento(client, admin, vender, s
     r = client.portal.call(reenviar)
     print("\nreintento:", r.duplicado, r.cdc == doc["cdc"], r.estado)
     assert r.duplicado and r.cdc == doc["cdc"]
+
+
+def test_cancelacion_nota_de_credito_e_inutilizacion(client, admin, vender):
+    """Etapa 2.3 contra el SANDBOX: cancelar una factura aprobada, nota de crédito sobre otra e
+    inutilizar números salteados (el SANDBOX registra los eventos sin enviarlos a SIFEN)."""
+    def emitida_y_aprobada():
+        venta = vender("empresa", ("diez",))
+        doc = client.post(f"/api/fiscal/ventas/{venta['id']}/factura", headers=admin).json()
+        doc, _ = esperar_aprobacion(client, admin, doc["id"])
+        assert doc["estado"] == "APROBADO", doc
+        return doc
+
+    doc = emitida_y_aprobada()
+    r = client.post(f"/api/fiscal/documentos/{doc['id']}/cancelar", headers=admin, json={"motivo": "Prueba de cancelación del ERP"})
+    print("\ncancelación:", r.status_code, r.json())
+    assert r.status_code == 200 and r.json()["documento"]["estado"] == "CANCELADO"
+
+    doc = emitida_y_aprobada()
+    r = client.post(f"/api/fiscal/documentos/{doc['id']}/nota-credito", headers=admin, json={"motivo": 2})
+    assert r.status_code == 200, r.text
+    nc, segundos = esperar_aprobacion(client, admin, r.json()["id"])
+    print("nota de crédito:", nc["numero"], nc["estado"], f"en {segundos:.0f} s" if segundos else "", nc["mensaje"])
+    assert nc["estado"] == "APROBADO" and nc["tipo_documento"] == 5
+    pdf = client.get(f"/api/fiscal/documentos/{nc['id']}/kude", headers=admin, params={"formato": "a4"})
+    assert pdf.content.startswith(b"%PDF")
+    if SALIDA:
+        open(os.path.join(SALIDA, "kude_nota_credito.pdf"), "wb").write(pdf.content)
+
+    r = client.post("/api/fiscal/inutilizaciones", headers=admin, json={"desde": 9001, "hasta": 9003, "motivo": "Prueba de inutilización del ERP"})
+    print("inutilización:", r.status_code, r.json())
+    assert r.status_code == 200 and r.json()["estado"] == "APROBADO"

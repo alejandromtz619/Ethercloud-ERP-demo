@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Optional
 
 from sqlalchemy import select, text, update
@@ -20,16 +20,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import configuracion
 from database import async_session_maker, engine
-from fiscal import config, numerador
+from fiscal import config, constructor, numerador
 from fiscal.puerto import (
     ConflictoFiscal, CredencialFiscalInvalida, DocumentoInvalido, DocumentoNoEncontrado, EmisorFiscal, ErrorFiscal, ProveedorNoDisponible,
 )
 from fiscal.sifensis import SifenSis
-from models import PARAGUAY_TZ, AjusteSistema, DocumentoFiscal, Venta, now_paraguay
+from models import PARAGUAY_TZ, AjusteSistema, DocumentoFiscal, EventoFiscal, Venta, now_paraguay
 
 logger = logging.getLogger(__name__)
 
 EN_CAMINO = ("GENERADO", "ENVIADO")
+# Plazo para cancelar desde la aprobación (Manual Técnico de SIFEN): 48 h facturas, 168 h el resto. Se deja
+# una hora de margen; si igual SIFEN dice que venció, se hace la nota de crédito.
+PLAZO_CANCELACION = {1: timedelta(hours=47)}
+PLAZO_CANCELACION_OTROS = timedelta(hours=167)
 CORREGIBLES = ("INVALIDO", "RECHAZADO")
 CANDADO_SEGUIMIENTO = 7_311_002_027
 SEGUNDOS_CACHE_EMISOR = 600
@@ -183,6 +187,104 @@ class ServicioFiscal:
             doc.mensaje = None
         await db.commit()
         return doc
+
+    # ------------------------------------------------------------ eventos y notas (etapa 2.3)
+
+    async def _evento(self, db: AsyncSession, *, doc: Optional[DocumentoFiscal], tipo: str, tipo_documento: int,
+                      establecimiento: str, punto: str, desde: int, hasta: int, motivo: str, resultado, usuario,
+                      ambiente: str, empresa_id: int) -> EventoFiscal:
+        evento = EventoFiscal(empresa_id=empresa_id, ambiente=ambiente, tipo=tipo, documento_id=getattr(doc, "id", None),
+                              tipo_documento=tipo_documento, establecimiento=establecimiento, punto=punto, desde=desde,
+                              hasta=hasta, motivo=motivo, estado=resultado.estado or "RECHAZADO", mensaje=resultado.mensaje,
+                              respuesta=resultado.respuesta, usuario_id=getattr(usuario, "id", None))
+        db.add(evento)
+        return evento
+
+    def dentro_del_plazo(self, doc: DocumentoFiscal) -> bool:
+        if not doc.aprobado_en:
+            return True  # que lo decida SIFEN
+        aprobado = doc.aprobado_en if doc.aprobado_en.tzinfo else doc.aprobado_en.replace(tzinfo=timezone.utc)
+        plazo = PLAZO_CANCELACION.get(doc.tipo_documento, PLAZO_CANCELACION_OTROS)
+        return datetime.now(timezone.utc) - aprobado < plazo
+
+    async def cancelar(self, db: AsyncSession, doc: DocumentoFiscal, motivo: str, usuario=None) -> EventoFiscal:
+        """Evento de cancelación de un documento APROBADO (dentro del plazo). Si SIFEN lo aprueba, el
+        documento queda CANCELADO y, si era la factura de una venta, la venta se puede volver a facturar."""
+        if doc.estado != "APROBADO" or not doc.cdc:
+            raise ConflictoFiscal(f"Sólo se cancela un documento aprobado (este está {doc.estado})")
+        r = await self.emisor.cancelar(doc.cdc, motivo, metadata(usuario))
+        evento = await self._evento(db, doc=doc, tipo="cancelacion", tipo_documento=doc.tipo_documento,
+                                    establecimiento=doc.establecimiento, punto=doc.punto, desde=doc.numero, hasta=doc.numero,
+                                    motivo=motivo, resultado=r, usuario=usuario, ambiente=doc.ambiente, empresa_id=doc.empresa_id)
+        if r.estado == "APROBADO":
+            doc.estado, doc.mensaje = "CANCELADO", f"Cancelado: {motivo}"
+            if doc.venta_id and doc.tipo_documento == 1:
+                await db.execute(update(Venta).where(Venta.id == doc.venta_id).values(facturada=False))
+        await db.commit()
+        return evento
+
+    async def inutilizar(self, db: AsyncSession, doc: DocumentoFiscal, motivo: str, usuario=None) -> EventoFiscal:
+        """Inutiliza el número de un documento que no llegó a valer (inválido, rechazado o sin enviar) y no
+        se va a reemitir. El número queda marcado ante SIFEN como no usado."""
+        if doc.estado not in ("INVALIDO", "RECHAZADO", "POR_ENVIAR"):
+            raise ConflictoFiscal(f"Sólo se inutiliza el número de un documento inválido o rechazado (este está {doc.estado})")
+        if doc.estado == "POR_ENVIAR" and doc.cdc:
+            raise ConflictoFiscal("El documento puede haber llegado al proveedor: reintentá el envío antes de inutilizarlo")
+        r = await self.emisor.inutilizar(doc.tipo_documento, doc.establecimiento, doc.punto, doc.numero, doc.numero,
+                                         motivo, metadata(usuario))
+        evento = await self._evento(db, doc=doc, tipo="inutilizacion", tipo_documento=doc.tipo_documento,
+                                    establecimiento=doc.establecimiento, punto=doc.punto, desde=doc.numero, hasta=doc.numero,
+                                    motivo=motivo, resultado=r, usuario=usuario, ambiente=doc.ambiente, empresa_id=doc.empresa_id)
+        if r.estado == "APROBADO":
+            doc.estado, doc.mensaje = "INUTILIZADO", f"Número inutilizado: {motivo}"
+            if doc.venta_id and doc.tipo_documento == 1:
+                await db.execute(update(Venta).where(Venta.id == doc.venta_id).values(facturada=False))
+        await db.commit()
+        return evento
+
+    async def inutilizar_rango(self, db: AsyncSession, empresa_id: int, tipo_documento: int, desde: int, hasta: int,
+                               motivo: str, usuario=None) -> EventoFiscal:
+        """Números salteados (de este establecimiento y punto) que no tienen documento."""
+        ambiente, establecimiento, punto = await self.origen()
+        r = await self.emisor.inutilizar(tipo_documento, establecimiento, punto, desde, hasta, motivo, metadata(usuario))
+        evento = await self._evento(db, doc=None, tipo="inutilizacion", tipo_documento=tipo_documento,
+                                    establecimiento=establecimiento, punto=punto, desde=desde, hasta=hasta, motivo=motivo,
+                                    resultado=r, usuario=usuario, ambiente=ambiente, empresa_id=empresa_id)
+        await db.commit()
+        return evento
+
+    async def nota_de_credito(self, db: AsyncSession, factura: DocumentoFiscal, motivo: int = 2, usuario=None) -> DocumentoFiscal:
+        """Nota de crédito electrónica por el total de una factura aprobada (con su CDC como documento asociado)."""
+        if factura.tipo_documento != 1 or factura.estado != "APROBADO":
+            raise ConflictoFiscal("La nota de crédito se hace sobre una factura aprobada")
+        numero = f"{factura.establecimiento}-{factura.punto}-{factura.numero:07d}"
+        contenido = constructor.nota_de_credito_total(factura.datos, factura.cdc, numero, motivo)
+        return await self.emitir(db, empresa_id=factura.empresa_id, tipo=5, contenido=contenido, origen="nota_credito",
+                                 total=factura.total, usuario=usuario, venta_id=factura.venta_id,
+                                 factura_grupal_id=factura.factura_grupal_id, documento_asociado_id=factura.id)
+
+    async def regularizar_anulacion(self, db: AsyncSession, factura: DocumentoFiscal, motivo: str, usuario=None) -> str:
+        """Al anular en el ERP una venta con factura electrónica: dentro del plazo se cancela; si no (o si
+        SIFEN dice que venció), nota de crédito por el total. Una factura que no llegó a valer se inutiliza.
+        Devuelve el texto para mostrar."""
+        numero = f"{factura.establecimiento}-{factura.punto}-{factura.numero:07d}"
+        if factura.estado == "APROBADO":
+            if self.dentro_del_plazo(factura):
+                try:
+                    evento = await self.cancelar(db, factura, motivo, usuario)
+                    if evento.estado == "APROBADO":
+                        return f"La factura electrónica {numero} se canceló en SIFEN"
+                except ConflictoFiscal:
+                    pass  # plazo vencido según SIFEN (no se escribió nada): va la nota de crédito
+            nota = await self.nota_de_credito(db, factura, 2, usuario)
+            if nota.estado == "INVALIDO":
+                return f"No se pudo emitir la nota de crédito de la factura {numero}: {nota.mensaje}"
+            return f"Se emitió la nota de crédito electrónica {nota.establecimiento}-{nota.punto}-{nota.numero:07d} por la factura {numero}"
+        if factura.estado in ("INVALIDO", "RECHAZADO"):
+            evento = await self.inutilizar(db, factura, motivo, usuario)
+            return f"El número {numero} se inutilizó en SIFEN" if evento.estado == "APROBADO" else \
+                f"No se pudo inutilizar el número {numero}: {evento.mensaje}"
+        return ""
 
     async def sincronizar_numeracion(self, db: AsyncSession, empresa_id: int) -> list:
         ambiente, _, _ = await self.origen()

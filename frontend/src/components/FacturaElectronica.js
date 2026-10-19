@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
-import { CheckCircle2, FileText, Loader2, Printer, RefreshCw, XCircle } from 'lucide-react';
+import { Ban, CheckCircle2, FileMinus, FileText, Loader2, Printer, RefreshCw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 // Factura electrónica de una venta (ventaId) o de una factura agrupada (grupalId): estado en SIFEN,
@@ -18,6 +18,7 @@ export const ESTADOS_FE = {
   RECHAZADO: { texto: 'Rechazada', clase: 'bg-red-100 text-red-900', corregir: true },
   INVALIDO: { texto: 'Con errores', clase: 'bg-red-100 text-red-900', corregir: true },
   CANCELADO: { texto: 'Cancelada', clase: 'bg-slate-100 text-slate-700' },
+  INUTILIZADO: { texto: 'Número inutilizado', clase: 'bg-slate-100 text-slate-700' },
 };
 
 export function EstadoFE({ documento }) {
@@ -29,7 +30,8 @@ export function EstadoFE({ documento }) {
 const SEGUNDOS_CONSULTA = 4;
 
 export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio }) {
-  const { api, token, API_URL } = useApp();
+  const { api, token, API_URL, hasPermission } = useApp();
+  const [otros, setOtros] = useState([]); // facturas canceladas y notas de crédito de la venta
   const [documento, setDocumento] = useState(undefined); // undefined = cargando, null = no tiene
   const [trabajando, setTrabajando] = useState(false);
   const [errores, setErrores] = useState([]);
@@ -40,7 +42,9 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
   const cargar = useCallback(async () => {
     if (ventaId) {
       const docs = await api(`/fiscal/ventas/${ventaId}/documentos`);
-      setDocumento(docs.filter((d) => d.tipo_documento === 1 && d.estado !== 'CANCELADO').pop() || null);
+      const vigente = docs.filter((d) => d.tipo_documento === 1 && !['CANCELADO', 'INUTILIZADO'].includes(d.estado)).pop() || null;
+      setDocumento(vigente);
+      setOtros(docs.filter((d) => d !== vigente));
     } else {
       const estados = await api(`/fiscal/facturas-grupales/estados?ids=${grupalId}`);
       setDocumento(estados[String(grupalId)] || null);
@@ -109,11 +113,39 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
     }
   };
 
+  // Cancelar (48 h), nota de crédito por el total, o inutilizar el número de una rechazada
+  const evento = async (accion) => {
+    let cuerpo = {};
+    if (accion === 'cancelar' || accion === 'inutilizar') {
+      const motivo = window.prompt(accion === 'cancelar'
+        ? 'Motivo de la cancelación (queda registrado en SIFEN):' : 'Motivo para inutilizar el número:');
+      if (!motivo) return;
+      if (motivo.trim().length < 5) { toast.error('El motivo tiene que tener al menos 5 letras'); return; }
+      cuerpo = { motivo: motivo.trim() };
+    } else if (!window.confirm('Se emite una nota de crédito electrónica por el total de la factura (devolución). ¿Seguir?')) {
+      return;
+    }
+    setTrabajando(true);
+    setErrores([]);
+    try {
+      const ruta = accion === 'nota' ? 'nota-credito' : accion;
+      await api(`/fiscal/documentos/${documento.id}/${ruta}`, { method: 'POST', body: JSON.stringify(cuerpo) });
+      toast.success(accion === 'cancelar' ? 'Factura cancelada en SIFEN' : accion === 'nota' ? 'Nota de crédito emitida' : 'Número inutilizado');
+      consultas.current = 0;
+      await cargar();
+      onCambio?.();
+    } catch (e) {
+      setErrores([e.message]);
+    } finally {
+      setTrabajando(false);
+    }
+  };
+
   // El KuDE lo genera el proveedor: se pide con la sesión y se abre en el visor de PDF para imprimir
-  const imprimir = async (formato) => {
+  const imprimir = async (formato, doc = documento) => {
     const ventana = window.open('', '_blank');
     try {
-      const res = await fetch(`${API_URL}/fiscal/documentos/${documento.id}/kude?formato=${formato}`,
+      const res = await fetch(`${API_URL}/fiscal/documentos/${doc.id}/kude?formato=${formato}`,
                               { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Error ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
@@ -189,7 +221,40 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
             <RefreshCw className="h-4 w-4 mr-1" />{estado.corregir ? 'Reintentar' : 'Consultar ahora'}
           </Button>
         )}
+        {documento?.estado === 'APROBADO' && hasPermission('ventas.anular') && (
+          <>
+            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => evento('cancelar')} disabled={trabajando}
+                    data-testid="cancelar-fe" title="Dentro de las 48 h de aprobada">
+              <Ban className="h-4 w-4 mr-1" />Cancelar
+            </Button>
+            {!otros.some((o) => o.tipo_documento === 5 && o.documento_asociado_id === documento.id) && (
+              <Button size="sm" variant="ghost" onClick={() => evento('nota')} disabled={trabajando} data-testid="nota-credito-fe">
+                <FileMinus className="h-4 w-4 mr-1" />Nota de crédito
+              </Button>
+            )}
+          </>
+        )}
+        {documento && estado.corregir && hasPermission('ventas.anular') && (
+          <Button size="sm" variant="ghost" onClick={() => evento('inutilizar')} disabled={trabajando} data-testid="inutilizar-fe"
+                  title="Si no se va a corregir ni reemitir">
+            <Ban className="h-4 w-4 mr-1" />Inutilizar número
+          </Button>
+        )}
       </div>
+
+      {otros.length > 0 && (
+        <ul className="space-y-1 border-t pt-2 text-xs" data-testid="otros-fe">
+          {otros.map((o) => (
+            <li key={o.id} className="flex flex-wrap items-center gap-2">
+              <span>{o.tipo_documento === 5 ? 'Nota de crédito' : 'Factura'} {o.numero}</span>
+              <EstadoFE documento={o} />
+              {o.cdc && o.estado !== 'CANCELADO' && (
+                <button type="button" className="text-primary underline" onClick={() => imprimir('a4', o)}>KuDE</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

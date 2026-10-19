@@ -18,16 +18,24 @@ from fiscal import catalogos, constructor, numerador
 from fiscal.puerto import ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, ErrorFiscal, SinPermisoConfiguracion
 from fiscal.servicio import EN_CAMINO, ServicioFiscal
 from models import (
-    CambioConfiguracion, Cliente, DocumentoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
+    CambioConfiguracion, Cliente, DocumentoFiscal, EventoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
     factura_grupal_ventas,
 )
 
 EMITIR = ("facturas.ver", "ventas.crear", "ventas.ver", "ventas.ver_historial")
-INTEGRACIONES = ("sistema.integraciones",)  # cuenta de SIFEN SIS: certificado, KuDE, correo, timbrado
+INTEGRACIONES = ("sistema.integraciones",)
+ANULAR = ("ventas.anular",)  # cancelar, inutilizar y notas de crédito: quien puede anular ventas  # cuenta de SIFEN SIS: certificado, KuDE, correo, timbrado
 TOPE_LOGO = 1_000_000          # bytes
 TOPE_CERTIFICADO = 200_000
 CONFIGURAR = ("sistema.configurar",)
 NOMBRES_TIPO = {1: "Factura electrónica", 5: "Nota de crédito electrónica", 6: "Nota de débito electrónica"}
+
+
+def evento_dict(e: EventoFiscal) -> dict:
+    return {"id": e.id, "tipo": e.tipo, "documento_id": e.documento_id, "tipo_documento": e.tipo_documento,
+            "numeros": f"{e.establecimiento}-{e.punto}-{e.desde:07d}" + (f" a {e.hasta:07d}" if e.hasta != e.desde else ""),
+            "motivo": e.motivo, "estado": e.estado, "mensaje": e.mensaje, "ambiente": e.ambiente,
+            "creado_en": e.creado_en.isoformat() if e.creado_en else None}
 
 
 class Cheque(BaseModel):
@@ -72,6 +80,21 @@ class Timbrado(BaseModel):
     fecha_inicio: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
+class Motivo(BaseModel):
+    motivo: str = Field(min_length=5, max_length=500)
+
+
+class PedidoNotaCredito(BaseModel):
+    motivo: Literal[1, 2, 3, 4, 5, 6, 7, 8] = 2
+
+
+class PedidoInutilizacion(BaseModel):
+    tipo_documento: Literal[1, 4, 5, 6, 7] = 1
+    desde: int = Field(ge=1)
+    hasta: int = Field(ge=1)
+    motivo: str = Field(min_length=5, max_length=500)
+
+
 class PedidoFactura(BaseModel):
     cheque: Optional[Cheque] = None  # sólo para ventas pagadas con cheque
 
@@ -82,6 +105,7 @@ def documento_dict(d: DocumentoFiscal) -> dict:
         "numero": f"{d.establecimiento}-{d.punto}-{d.numero:07d}", "estado": d.estado, "cdc": d.cdc,
         "total": float(d.total or 0), "mensaje": d.mensaje, "intentos": d.intentos, "ambiente": d.ambiente,
         "origen": d.origen, "venta_id": d.venta_id, "factura_grupal_id": d.factura_grupal_id,
+        "documento_asociado_id": d.documento_asociado_id,
         "creado_en": d.creado_en.isoformat() if d.creado_en else None,
         "aprobado_en": d.aprobado_en.isoformat() if d.aprobado_en else None,
     }
@@ -408,6 +432,81 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             raise _error_http(e)
         return Response(contenido, media_type="application/xml",
                         headers={"Content-Disposition": f'attachment; filename="{doc.cdc}.xml"'})
+
+    # ------------------------------------------------------------ eventos y notas (etapa 2.3)
+    @router.post("/documentos/{documento_id}/cancelar")
+    async def cancelar(documento_id: int, datos: Motivo, request: Request, usuario: Usuario = Depends(requiere(ANULAR)),
+                       db: AsyncSession = Depends(get_db)):
+        """Cancela en SIFEN un documento aprobado (48 h para facturas). La venta queda sin factura y se
+        puede volver a facturar (por ejemplo, con los datos del cliente corregidos)."""
+        doc = await _documento(db, documento_id, usuario)
+        srv = servicio(request)
+        if not srv.dentro_del_plazo(doc):
+            raise HTTPException(status_code=409, detail="Pasó el plazo de cancelación (48 h para facturas): "
+                                                        "corresponde una nota de crédito")
+        try:
+            evento = await srv.cancelar(db, doc, datos.motivo.strip(), usuario)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        if evento.estado != "APROBADO":
+            raise HTTPException(status_code=409, detail=f"SIFEN rechazó la cancelación: {evento.mensaje}")
+        return {"evento": evento_dict(evento), "documento": documento_dict(doc)}
+
+    @router.post("/documentos/{documento_id}/inutilizar")
+    async def inutilizar(documento_id: int, datos: Motivo, request: Request, usuario: Usuario = Depends(requiere(ANULAR)),
+                         db: AsyncSession = Depends(get_db)):
+        """Inutiliza el número de un documento inválido o rechazado que no se va a reemitir."""
+        doc = await _documento(db, documento_id, usuario)
+        try:
+            evento = await servicio(request).inutilizar(db, doc, datos.motivo.strip(), usuario)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        if evento.estado != "APROBADO":
+            raise HTTPException(status_code=409, detail=f"SIFEN rechazó la inutilización: {evento.mensaje}")
+        return {"evento": evento_dict(evento), "documento": documento_dict(doc)}
+
+    @router.post("/documentos/{documento_id}/nota-credito")
+    async def nota_credito(documento_id: int, datos: PedidoNotaCredito, request: Request,
+                           usuario: Usuario = Depends(requiere(ANULAR)), db: AsyncSession = Depends(get_db)):
+        """Nota de crédito electrónica por el total de una factura aprobada (motivo: catálogo de SIFEN)."""
+        doc = await _documento(db, documento_id, usuario)
+        existente = (await db.execute(select(DocumentoFiscal).where(
+            DocumentoFiscal.documento_asociado_id == doc.id, DocumentoFiscal.tipo_documento == 5,
+            DocumentoFiscal.estado.notin_(("CANCELADO", "INUTILIZADO"))))).scalars().first()
+        if existente:
+            raise HTTPException(status_code=409, detail={"mensaje": "La factura ya tiene nota de crédito",
+                                                         "documento": documento_dict(existente)})
+        try:
+            nota = await servicio(request).nota_de_credito(db, doc, datos.motivo, usuario)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        return documento_dict(nota)
+
+    @router.post("/inutilizaciones")
+    async def inutilizar_rango(datos: PedidoInutilizacion, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES)),
+                               db: AsyncSession = Depends(get_db)):
+        """Números salteados sin documento (de este establecimiento y punto), hasta 1000 por evento."""
+        if datos.hasta < datos.desde or datos.hasta - datos.desde >= 1000:
+            raise HTTPException(status_code=422, detail="Rango inválido (hasta 1000 números, desde <= hasta)")
+        usados = (await db.execute(select(DocumentoFiscal.numero).where(
+            DocumentoFiscal.empresa_id == usuario.empresa_id, DocumentoFiscal.tipo_documento == datos.tipo_documento,
+            DocumentoFiscal.numero.between(datos.desde, datos.hasta),
+            DocumentoFiscal.estado.notin_(("INVALIDO", "RECHAZADO", "INUTILIZADO"))))).scalars().all()
+        if usados:
+            raise HTTPException(status_code=409, detail=f"Hay documentos con esos números: {sorted(usados)[:10]}")
+        try:
+            evento = await servicio(request).inutilizar_rango(db, usuario.empresa_id, datos.tipo_documento, datos.desde,
+                                                              datos.hasta, datos.motivo.strip(), usuario)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        return evento_dict(evento)
+
+    @router.get("/eventos")
+    async def eventos(limit: int = Query(50, ge=1, le=200), usuario: Usuario = Depends(requiere(EMITIR)),
+                      db: AsyncSession = Depends(get_db)):
+        filas = (await db.execute(select(EventoFiscal).where(EventoFiscal.empresa_id == usuario.empresa_id)
+                                  .order_by(EventoFiscal.id.desc()).limit(limit))).scalars().all()
+        return [evento_dict(e) for e in filas]
 
     # ------------------------------------------------------------ cuenta de SIFEN SIS
     def _error_cuenta(e: ErrorFiscal) -> HTTPException:

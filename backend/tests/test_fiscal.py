@@ -479,3 +479,105 @@ def test_cuenta_pide_sistema_integraciones(client, admin, falso):
     client.post(f"/api/usuarios/{u['usuario']['id']}/roles/{rol['id']}", headers=admin)
     token = client.post("/api/auth/login", json={"email": "cuenta-config@test.com", "password": "clave-segura-123"}).json()["access_token"]
     assert client.get("/api/fiscal/cuenta", headers={"Authorization": f"Bearer {token}"}).status_code == 403
+
+
+# ---------------------------------------------------------------- eventos y notas (etapa 2.3)
+
+def aprobar(client, admin, doc_id):
+    """El falso avanza GENERADO -> ENVIADO -> APROBADO (o RECHAZADO) en cada consulta."""
+    for _ in range(3):
+        d = client.post(f"/api/fiscal/documentos/{doc_id}/reintentar", headers=admin).json()
+        if d.get("estado") in ("APROBADO", "RECHAZADO"):
+            return d
+    return d
+
+
+def envejecer(client, doc_id, horas):
+    async def _envejecer():
+        from datetime import datetime, timedelta, timezone
+        from database import async_session_maker
+        from models import DocumentoFiscal
+        async with async_session_maker() as db:
+            (await db.get(DocumentoFiscal, doc_id)).aprobado_en = datetime.now(timezone.utc) - timedelta(hours=horas)
+            await db.commit()
+    client.portal.call(_envejecer)
+
+
+def test_cancelar_factura_y_volver_a_facturar(client, admin, falso, escenario):
+    venta = escenario["vender"]()
+    doc = facturar(client, admin, venta["id"]).json()
+    r = client.post(f"/api/fiscal/documentos/{doc['id']}/cancelar", headers=admin, json={"motivo": "Datos del cliente equivocados"})
+    assert r.status_code == 409  # todavía no está aprobada
+    aprobar(client, admin, doc["id"])
+    r = client.post(f"/api/fiscal/documentos/{doc['id']}/cancelar", headers=admin, json={"motivo": "Datos del cliente equivocados"})
+    assert r.status_code == 200, r.text
+    d = client.get(f"/api/fiscal/documentos/{doc['id']}", headers=admin).json()
+    assert d["estado"] == "CANCELADO" and falso.documentos[(1, "001", "001", int(doc["numero"][-7:]))]["estado"] == "CANCELADO"
+    # La venta se puede volver a facturar (otro número)
+    nueva = facturar(client, admin, venta["id"]).json()
+    assert nueva["numero"] != doc["numero"] and nueva["estado"] == "GENERADO"
+    eventos = client.get("/api/fiscal/eventos", headers=admin).json()
+    assert eventos[0]["tipo"] == "cancelacion" and eventos[0]["estado"] == "APROBADO" and eventos[0]["documento_id"] == doc["id"]
+
+
+def test_cancelar_fuera_de_plazo_pide_nota_de_credito(client, admin, falso, escenario):
+    doc = facturar(client, admin, escenario["vender"]()["id"]).json()
+    aprobar(client, admin, doc["id"])
+    envejecer(client, doc["id"], 50)
+    r = client.post(f"/api/fiscal/documentos/{doc['id']}/cancelar", headers=admin, json={"motivo": "Venta no concretada"})
+    assert r.status_code == 409 and "nota de crédito" in r.json()["detail"]
+    nc = client.post(f"/api/fiscal/documentos/{doc['id']}/nota-credito", headers=admin, json={"motivo": 2})
+    assert nc.status_code == 200, nc.text
+    nc = nc.json()
+    assert nc["tipo_documento"] == 5 and nc["documento_asociado_id"] == doc["id"] and nc["total"] == doc["total"]
+    data = falso.documentos[(5, "001", "001", int(nc["numero"][-7:]))]["data"]
+    factura = falso.documentos[(1, "001", "001", int(doc["numero"][-7:]))]
+    assert data["documentoAsociado"] == {"formato": 1, "cdc": factura["cdc"]} and data["notaCreditoDebito"] == {"motivo": 2}
+    assert data["items"] == factura["data"]["items"] and data["cliente"] == factura["data"]["cliente"]
+    assert "condicion" not in data and "factura" not in data
+    assert client.post(f"/api/fiscal/documentos/{doc['id']}/nota-credito", headers=admin, json={}).status_code == 409
+
+
+def test_inutilizar_un_rechazado(client, admin, falso, escenario):
+    siguiente = secuencia(client, admin) + 1
+    falso.rechazar.add(siguiente)
+    doc = facturar(client, admin, escenario["vender"]()["id"]).json()
+    assert aprobar(client, admin, doc["id"])["estado"] == "RECHAZADO"
+    r = client.post(f"/api/fiscal/documentos/{doc['id']}/inutilizar", headers=admin, json={"motivo": "No se va a reemitir"})
+    assert r.status_code == 200 and r.json()["documento"]["estado"] == "INUTILIZADO"
+    assert (1, "001", "001", siguiente) in falso.inutilizados
+
+
+def test_anular_venta_facturada(client, admin, falso, escenario):
+    # Dentro del plazo: se cancela
+    venta = escenario["vender"]()
+    doc = facturar(client, admin, venta["id"]).json()
+    r = client.post(f"/api/ventas/{venta['id']}/anular", headers=admin)
+    assert r.status_code == 409 and "en camino" in r.json()["detail"]  # todavía GENERADO
+    aprobar(client, admin, doc["id"])
+    r = client.post(f"/api/ventas/{venta['id']}/anular", headers=admin)
+    assert r.status_code == 200 and r.json()["estado"] == "ANULADA" and "se canceló" in r.json()["aviso_fiscal"]
+    assert client.get(f"/api/fiscal/documentos/{doc['id']}", headers=admin).json()["estado"] == "CANCELADO"
+    # Fuera de plazo: nota de crédito
+    venta = escenario["vender"]()
+    doc = facturar(client, admin, venta["id"]).json()
+    aprobar(client, admin, doc["id"])
+    envejecer(client, doc["id"], 72)
+    r = client.post(f"/api/ventas/{venta['id']}/anular", headers=admin).json()
+    assert "nota de crédito" in r["aviso_fiscal"]
+    docs = client.get(f"/api/fiscal/ventas/{venta['id']}/documentos", headers=admin).json()
+    assert [(d["tipo_documento"], d["estado"]) for d in docs] == [(1, "APROBADO"), (5, "GENERADO")]
+    # Sin factura electrónica: como siempre
+    r = client.post(f"/api/ventas/{escenario['vender']()['id']}/anular", headers=admin).json()
+    assert r["estado"] == "ANULADA" and r["aviso_fiscal"] is None
+
+
+def test_inutilizar_rango_de_numeros(client, admin, falso, escenario):
+    doc = facturar(client, admin, escenario["vender"]()["id"]).json()
+    usado = int(doc["numero"][-7:])
+    r = client.post("/api/fiscal/inutilizaciones", headers=admin, json={"desde": usado, "hasta": usado + 2, "motivo": "Salto de numeración"})
+    assert r.status_code == 409  # incluye un número con documento
+    assert client.post("/api/fiscal/inutilizaciones", headers=admin, json={"desde": 10, "hasta": 2000, "motivo": "Demasiados"}).status_code == 422
+    r = client.post("/api/fiscal/inutilizaciones", headers=admin, json={"desde": 9000, "hasta": 9002, "motivo": "Salto de numeración"})
+    assert r.status_code == 200 and r.json()["numeros"] == "001-001-0009000 a 0009002"
+    assert {(1, "001", "001", n) for n in (9000, 9001, 9002)} <= falso.inutilizados

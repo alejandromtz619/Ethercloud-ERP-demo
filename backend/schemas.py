@@ -558,6 +558,7 @@ class VentaResponse(VentaBase):
     creado_en: Optional[datetime] = None
     fecha_impresion_boleta: Optional[date] = None
     fecha_impresion_factura: Optional[date] = None
+    aviso_fiscal: Optional[str] = None  # al anular: qué se hizo con la factura electrónica (cancelación, nota de crédito)
 
 class VentaConDetalles(VentaResponse):
     items: List[VentaItemResponse] = []

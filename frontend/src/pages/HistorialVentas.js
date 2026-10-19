@@ -204,11 +204,14 @@ setTimeout(fetchVentas, 100);
   const handleAnular = async (ventaId) => {
     if (!window.confirm('¿Está seguro de anular esta venta?')) return;
     try {
-      await api(`/ventas/${ventaId}/anular`, { method: 'POST' });
+      const anulada = await api(`/ventas/${ventaId}/anular`, { method: 'POST' });
       toast.success('Venta anulada');
+      // Qué pasó con la factura electrónica: cancelada en SIFEN o nota de crédito
+      if (anulada?.aviso_fiscal) toast.info(anulada.aviso_fiscal, { duration: 10000 });
+      setVersionFE((v) => v + 1);
       fetchVentas();
     } catch (e) {
-      toast.error('Error al anular venta');
+      toast.error(e.message || 'Error al anular venta');
     }
   };
 

@@ -76,6 +76,28 @@ Cada producto tiene su **unidad de medida** de SIFEN (77 = unidad por defecto; k
 Formas de pago: efectivo, cheque (con número y banco), tarjeta (marca "no especificada", el ERP no la
 registra), transferencia; crédito como condición crédito a plazo.
 
+## Cancelar, nota de crédito e inutilizar
+
+Desde el panel de la factura electrónica (Historial › Imprimir › Factura electrónica), con el permiso
+`ventas.anular`:
+
+| Situación | Qué se hace | Ruta |
+|---|---|---|
+| Factura aprobada hace menos de 48 h | **Cancelar** (evento de cancelación); la venta queda sin factura y se puede volver a facturar | `POST /api/fiscal/documentos/{id}/cancelar {motivo}` |
+| Factura aprobada, pasó el plazo (o se prefiere) | **Nota de crédito** electrónica por el total (motivo 2 = devolución por defecto); una por factura | `POST /api/fiscal/documentos/{id}/nota-credito {motivo}` |
+| Factura rechazada o inválida que no se va a corregir | **Inutilizar** su número | `POST /api/fiscal/documentos/{id}/inutilizar {motivo}` |
+| Números salteados (p. ej. un talonario perdido) | Inutilizar un rango (hasta 1000; ninguno puede estar usado) | `POST /api/fiscal/inutilizaciones` (permiso `sistema.integraciones`) |
+
+El plazo se toma con una hora de margen (47 h para facturas, 167 h para el resto) para no llegar al
+límite de SIFEN. Cada evento queda en la tabla `eventos_fiscales` (`GET /api/fiscal/eventos`).
+
+**Anular una venta facturada** hace lo que corresponde sola: dentro del plazo cancela la factura; fuera del
+plazo (o si SIFEN no acepta la cancelación) emite la nota de crédito; si la factura estaba rechazada,
+inutiliza el número. La respuesta trae `aviso_fiscal` con lo que pasó, y el Historial lo muestra. Mientras
+la factura todavía se está enviando, la venta no se puede anular (409): hay que esperar el resultado.
+
+En SANDBOX los eventos se aprueban sin enviarse a SIFEN.
+
 ## Pruebas
 
 - `backend/tests/test_fiscal.py`: con el emisor falso (`fiscal/falso.py`), sin red.
@@ -88,5 +110,4 @@ registra), transferencia; crédito como condición crédito a plazo.
 
 ## Pendiente (Fase 2)
 
-- 2.3: cancelación, inutilización y nota de crédito al anular una venta facturada.
 - 2.4: homologación con un cliente piloto (certificado, timbrado y CSC de prueba).
