@@ -47,6 +47,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import PrintModal from '../components/PrintModal';
+import { EstadoFE } from '../components/FacturaElectronica';
+import { useModulos } from '../lib/modulos';
 import { DatePickerInput } from '../components/ui/date-picker-input';
 
 const formatCurrency = (val) => {
@@ -68,6 +70,10 @@ const formatFechaISO = (iso) => {
 const HistorialVentas = () => {
   const { api, empresa, API_URL, token, userPermisos } = useApp();
   const [ventas, setVentas] = useState([]);
+  // Factura electrónica de cada venta de la lista (sólo con el módulo fe)
+  const modulos = useModulos();
+  const [facturasFE, setFacturasFE] = useState({});
+  const [versionFE, setVersionFE] = useState(0);
   // Cliente elegido en el filtro (se busca en el servidor, ya no se descarga la lista)
   const [clienteFiltro, setClienteFiltro] = useState(null);
 const [usuarios, setUsuarios] = useState([]);
@@ -263,6 +269,12 @@ setTimeout(fetchVentas, 100);
       toast.error('Error al descargar Excel');
     }
   };
+
+  useEffect(() => {
+    if (!modulos.fe || ventas.length === 0) return;
+    const ids = ventas.filter((v) => v.estado === 'CONFIRMADA').slice(0, 200).map((v) => v.id).join(',');
+    if (ids) api(`/fiscal/ventas/estados?ids=${ids}`).then(setFacturasFE).catch(() => {});
+  }, [api, modulos.fe, ventas, versionFE]);
 
   const getEstadoBadge = (estado) => {
     switch (estado) {
@@ -586,6 +598,11 @@ setTimeout(fetchVentas, 100);
                       </TableCell>
                       <TableCell>
                         {getEstadoBadge(venta.estado)}
+                        {facturasFE[venta.id] && (
+                          <span className="ml-1" title={`Factura electrónica ${facturasFE[venta.id].numero}`}>
+                            <EstadoFE documento={facturasFE[venta.id]} />
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
@@ -745,7 +762,7 @@ setTimeout(fetchVentas, 100);
       {/* Print Modal */}
       <PrintModal 
         open={printModalOpen} 
-        onOpenChange={setPrintModalOpen}
+        onOpenChange={(abierto) => { setPrintModalOpen(abierto); if (!abierto) setVersionFE((v) => v + 1); }}
         ventaId={printVentaId}
         ventaEstado={printVentaEstado}
         onPrintComplete={fetchVentas}

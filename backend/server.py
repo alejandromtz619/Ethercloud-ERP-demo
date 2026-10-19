@@ -52,6 +52,7 @@ from iva import desglose_iva, iva_total, liquidacion_impresa, validar_tasa
 import alta
 import catalogo
 import configuracion
+from fiscal import catalogos as catalogos_fiscales
 from fiscal.constructor import ruc_con_dv
 from fiscal.puerto import DocumentoInvalido
 from fiscal.rutas import crear_router as crear_router_fiscal
@@ -798,6 +799,10 @@ async def crear_cliente(data: ClienteCreate, db: AsyncSession = Depends(get_db))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con la cédula {cedula}")
 
+    try:
+        catalogos_fiscales.validar_datos_cliente(data.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     cliente = Cliente(**data.model_dump())
     db.add(cliente)
     await db.commit()
@@ -886,6 +891,16 @@ async def actualizar_cliente(cliente_id: int, data: dict, db: AsyncSession = Dep
             )
             if existing.scalar_one_or_none():
                 raise HTTPException(status_code=409, detail=f"Ya existe un cliente registrado con la cédula {cedula}")
+
+    # Datos de factura electrónica: vacío = sin cargar; el domicilio se valida completo (lo nuevo + lo que ya tenía)
+    fiscales = ("tipo_contribuyente", "tipo_operacion", "numero_casa", "departamento", "distrito", "ciudad")
+    for campo in fiscales:
+        if data.get(campo) == "":
+            data[campo] = None
+    try:
+        catalogos_fiscales.validar_datos_cliente({c: data[c] if c in data else getattr(cliente, c) for c in fiscales})
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
     for key, value in data.items():
         if hasattr(cliente, key) and key != 'id':
@@ -1498,6 +1513,8 @@ async def crear_producto(data: ProductoCreate, db: AsyncSession = Depends(get_db
         # Si pegan una URL de un tercero, se trae a local en el momento: asi no
         # se vuelve a llenar el catalogo de enlaces externos lentos o rotos.
         dump['imagen_url'] = await _localizar_si_es_externa(str(dump['imagen_url']).strip())
+    if not catalogos_fiscales.unidad_valida(dump.get("unidad_medida")):
+        raise HTTPException(status_code=422, detail="Unidad de medida inexistente")
     producto = Producto(**dump)
     db.add(producto)
     await db.commit()
@@ -1752,6 +1769,8 @@ async def actualizar_producto(producto_id: int, data: dict, db: AsyncSession = D
                     value = validar_tasa(int(value))
                 except (TypeError, ValueError) as e:
                     raise HTTPException(status_code=400, detail=str(e))
+            elif key == 'unidad_medida' and not catalogos_fiscales.unidad_valida(value):
+                raise HTTPException(status_code=422, detail="Unidad de medida inexistente")
             setattr(producto, key, value)
     
     await db.commit()

@@ -57,14 +57,17 @@ def vender(client, admin, sandbox):
 
     almacen = post("/api/almacenes", {"empresa_id": 1, "nombre": f"{PREFIJO} Deposito"})
     productos = {}
-    for clave, precio, tasa in (("diez", 110000, 10), ("cinco", 21000, 5), ("exento", 15000, 0), ("decimal", 3333.33, 10)):
+    for clave, precio, tasa, unidad in (("diez", 110000, 10, 77), ("cinco", 21000, 5, 77), ("exento", 15000, 0, 77),
+                                        ("decimal", 3333.33, 10, 77), ("kilo", 8500, 10, 83)):
         productos[clave] = post("/api/productos", {"empresa_id": 1, "nombre": f"{PREFIJO} Producto {clave}",
-                                                   "precio_venta": precio, "precio_costo": 1000, "tasa_iva": tasa})
+                                                   "precio_venta": precio, "precio_costo": 1000, "tasa_iva": tasa,
+                                                   "unidad_medida": unidad})
         post("/api/stock/entrada", {"producto_id": productos[clave]["id"], "almacen_id": almacen["id"],
                                     "tipo": "ENTRADA", "cantidad": 100, "costo_unitario": 1000})
     clientes = {
         "empresa": post("/api/clientes", {"empresa_id": 1, "nombre": "Cliente de Prueba S.A.", "ruc": "80069563-1",
-                                          "direccion": "Avda. Mcal. López 1234", "telefono": "021 555 123",
+                                          "direccion": "Avda. Mcal. López", "numero_casa": 1234, "departamento": 1,
+                                          "distrito": 1, "ciudad": 1, "telefono": "021 555 123",
                                           "email": "compras@prueba.com.py", "descuento_porcentaje": 7.5, "limite_credito": 50_000_000}),
         "cedula": post("/api/clientes", {"empresa_id": 1, "nombre": "Juana", "apellido": "Pérez Sandbox", "cedula": "3456789",
                                          "limite_credito": 50_000_000}),
@@ -119,7 +122,7 @@ def test_ciclo_completo_factura_contado(client, admin, vender):
 
 
 def test_consumidor_final_cedula_credito_y_decimales(client, admin, vender):
-    casos = [("anonimo", ("diez",), "TARJETA"), ("cedula", ("cinco", "exento"), "CREDITO"),
+    casos = [("anonimo", ("diez",), "TARJETA"), ("cedula", ("cinco", "exento"), "CREDITO"), ("empresa", ("kilo",), "TRANSFERENCIA"),
              ("anonimo", ("decimal",), "TRANSFERENCIA"), ("empresa", ("decimal", "diez"), "EFECTIVO")]
     for cliente, claves, pago in casos:
         venta = vender(cliente, claves, pago, cantidad=3)

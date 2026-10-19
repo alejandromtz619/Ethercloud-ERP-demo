@@ -13,6 +13,8 @@ import { Loader2, Printer, Receipt, FileText, Send, CalendarDays, RotateCcw } fr
 import { toast } from 'sonner';
 
 import { useAjustesImpresion } from '../lib/ajustesImpresion';
+import { useModulos } from '../lib/modulos';
+import PanelFacturaElectronica from './FacturaElectronica';
 
 // Ciudad que se imprime junto a la fecha en la factura pre-impresa: Sistema › Configuración › Documentos
 // impresos. REACT_APP_CIUDAD_FACTURA queda sólo para instancias que todavía no la cargaron.
@@ -314,6 +316,7 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 
 const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
   const { api, userPermisos } = useApp();
+  const modulos = useModulos();
   const [tipoDocumento, setTipoDocumento] = useState('BOLETA'); // 'BOLETA' | 'FACTURA'
   const [loading, setLoading] = useState(false);
   const [boletaData, setBoletaData] = useState(null);
@@ -703,7 +706,7 @@ Gracias por su compra! 🙏
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="h-5 w-5" />
@@ -776,9 +779,37 @@ Gracias por su compra! 🙏
                 {renderEditorFecha('FACTURA')}
               </div>
             )}
+
+            {modulos.fe && ventaEstado === 'CONFIRMADA' && (
+              <div className={`border rounded-lg ${tipoDocumento === 'FE' ? 'border-primary ring-1 ring-primary' : ''}`}>
+                <div
+                  role="radio"
+                  aria-checked={tipoDocumento === 'FE'}
+                  tabIndex={0}
+                  data-testid="opcion-fe"
+                  onClick={() => setTipoDocumento('FE')}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FE')}
+                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+                >
+                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FE' ? 'border-primary' : 'border-muted-foreground'}`}>
+                    {tipoDocumento === 'FE' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                  </div>
+                  <div className="flex-1">
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Factura electrónica
+                    </span>
+                    <p className="text-xs text-muted-foreground">Se envía a SIFEN; se imprime el KuDE (ticket o A4)</p>
+                  </div>
+                </div>
+                {tipoDocumento === 'FE' && (
+                  <div className="px-3 pb-3"><PanelFacturaElectronica ventaId={ventaId} /></div>
+                )}
+              </div>
+            )}
           </div>
           
-          {ventaEstado === 'CONFIRMADA' && (
+          {ventaEstado === 'CONFIRMADA' && tipoDocumento !== 'FE' && (
             <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-800">
               <p className="font-medium mb-1">📱 WhatsApp - Enlace inteligente:</p>
               <p className="mb-1">• Se genera un PDF único al presionar el botón</p>
@@ -789,9 +820,9 @@ Gracias por su compra! 🙏
           
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancelar
+              {tipoDocumento === 'FE' ? 'Cerrar' : 'Cancelar'}
             </Button>
-            {ventaEstado === 'CONFIRMADA' && (
+            {ventaEstado === 'CONFIRMADA' && tipoDocumento !== 'FE' && (
               <Button 
                 onClick={handleSendWhatsApp}
                 variant="outline"
@@ -803,14 +834,14 @@ Gracias por su compra! 🙏
                 WhatsApp
               </Button>
             )}
-            <Button 
+            {tipoDocumento !== 'FE' && <Button 
               onClick={handlePrint}
               disabled={loading || !tipoDocumento}
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               <Printer className="mr-2 h-4 w-4" />
               Imprimir
-            </Button>
+            </Button>}
           </div>
         </div>
       </DialogContent>

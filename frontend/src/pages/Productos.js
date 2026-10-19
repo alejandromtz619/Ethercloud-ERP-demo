@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { useModulos } from '../lib/modulos';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -44,6 +45,12 @@ import { resolverImagenUrl } from '../lib/imagenes';
 
 const Productos = () => {
   const { api, empresa, userPermisos } = useApp();
+  // Unidades de medida de SIFEN, sólo con el módulo de factura electrónica
+  const modulos = useModulos();
+  const [unidades, setUnidades] = useState([]);
+  useEffect(() => {
+    if (modulos.fe) api('/fiscal/catalogos').then((c) => setUnidades(c.unidades_medida)).catch(() => {});
+  }, [api, modulos.fe]);
   const isAdmin = userPermisos.includes('usuarios.gestionar');
   // Página actual del catálogo (GET /productos/buscar): filtros y paginación en el servidor
   const [productosPagina, setProductosPagina] = useState({ items: [], total: 0 });
@@ -85,7 +92,8 @@ const Productos = () => {
     marca_id: '',
     proveedor_id: '',
     imagen_url: '',
-    tasa_iva: '10'
+    tasa_iva: '10',
+    unidad_medida: '77'
   });
 
   const cargarProductos = async (offset = 0) => {
@@ -211,7 +219,8 @@ const Productos = () => {
       marca_id: '',
       proveedor_id: '',
       imagen_url: '',
-      tasa_iva: '10'
+      tasa_iva: '10',
+      unidad_medida: '77'
     });
     setEditingId(null);
     setCodigoConflicto(null);
@@ -230,7 +239,8 @@ const Productos = () => {
       marca_id: producto.marca_id?.toString() || '',
       proveedor_id: producto.proveedor_id?.toString() || '',
       imagen_url: producto.imagen_url || '',
-      tasa_iva: (producto.tasa_iva ?? 10).toString()
+      tasa_iva: (producto.tasa_iva ?? 10).toString(),
+      unidad_medida: (producto.unidad_medida ?? 77).toString()
     });
     setEditingId(producto.id);
     setDialogOpen(true);
@@ -247,7 +257,8 @@ const Productos = () => {
         marca_id: formData.marca_id ? parseInt(formData.marca_id) : null,
         proveedor_id: formData.proveedor_id ? parseInt(formData.proveedor_id) : null,
         fecha_vencimiento: formData.fecha_vencimiento || null,
-        tasa_iva: parseInt(formData.tasa_iva, 10)
+        tasa_iva: parseInt(formData.tasa_iva, 10),
+        unidad_medida: parseInt(formData.unidad_medida, 10) || 77
       };
 
       if (editingId) {
@@ -434,6 +445,18 @@ const Productos = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                {modulos.fe && (
+                  <div>
+                    <Label htmlFor="producto-unidad">Unidad de medida (factura electrónica)</Label>
+                    <select id="producto-unidad" data-testid="producto-unidad" value={formData.unidad_medida}
+                            onChange={(e) => setFormData({...formData, unidad_medida: e.target.value})}
+                            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm">
+                      {(unidades.length ? unidades : [{ codigo: 77, sigla: 'UNI', nombre: 'Unidad' }]).map((u) => (
+                        <option key={u.codigo} value={u.codigo}>{u.nombre} ({u.sigla})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <Label>Categoría</Label>
                   <Popover open={categoriaOpen} onOpenChange={setCategoriaOpen}>

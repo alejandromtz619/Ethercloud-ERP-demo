@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import DatosFiscalesCliente, { fiscalesDesde, fiscalesParaEnviar } from '../components/DatosFiscalesCliente';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -65,7 +66,8 @@ const Clientes = () => {
     email: '',
     acepta_cheque: false,
     descuento_porcentaje: '0',
-    limite_credito: '1'
+    limite_credito: '1',
+    ...fiscalesDesde(null)
   });
 
   const cargarClientes = async (offset = 0) => {
@@ -123,7 +125,8 @@ const Clientes = () => {
       email: '',
       acepta_cheque: false,
       descuento_porcentaje: '0',
-      limite_credito: '1'
+      limite_credito: '1',
+      ...fiscalesDesde(null)
     });
     setEditingId(null);
   };
@@ -139,7 +142,8 @@ const Clientes = () => {
       email: cliente.email || '',
       acepta_cheque: cliente.acepta_cheque || false,
       descuento_porcentaje: cliente.descuento_porcentaje?.toString() || '0',
-      limite_credito: cliente.limite_credito?.toString() || '0'
+      limite_credito: cliente.limite_credito?.toString() || '0',
+      ...fiscalesDesde(cliente)
     });
     setEditingId(cliente.id);
     setDialogOpen(true);
@@ -158,7 +162,8 @@ const Clientes = () => {
       const payload = {
         ...formData,
         descuento_porcentaje: parseFloat(formData.descuento_porcentaje) || 0,
-        limite_credito: parseFloat(formData.limite_credito) || 0
+        limite_credito: parseFloat(formData.limite_credito) || 0,
+        ...fiscalesParaEnviar(formData)
       };
 
       if (editingId) {
@@ -264,7 +269,7 @@ const Clientes = () => {
                 Nuevo Cliente
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogDescription className="hidden">Formulario para crear o editar un cliente</DialogDescription>
             <DialogHeader>
               <DialogTitle>{editingId ? 'Editar' : 'Nuevo'} Cliente</DialogTitle>
@@ -354,6 +359,7 @@ const Clientes = () => {
                   <Label htmlFor="acepta_cheque">Acepta Cheque</Label>
                 </div>
               </div>
+              <DatosFiscalesCliente valor={formData} onCambio={(cambios) => setFormData((f) => ({ ...f, ...cambios }))} />
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
                   Cancelar

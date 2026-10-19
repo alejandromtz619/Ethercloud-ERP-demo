@@ -14,10 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import configuracion
 from database import get_db
-from fiscal import constructor, numerador
+from fiscal import catalogos, constructor, numerador
 from fiscal.puerto import ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, ErrorFiscal
 from fiscal.servicio import EN_CAMINO, ServicioFiscal
-from models import Cliente, DocumentoFiscal, EstadoVenta, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem
+from models import (
+    Cliente, DocumentoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
+    factura_grupal_ventas,
+)
 
 EMITIR = ("facturas.ver", "ventas.crear", "ventas.ver", "ventas.ver_historial")
 CONFIGURAR = ("sistema.configurar",)
@@ -74,6 +77,36 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             return usuario
         return _dep
 
+    def con_sesion(permisos: tuple):
+        """Para los catálogos: pide sesión, permiso y el módulo fe, pero no la API key."""
+        async def _dep(request: Request, db: AsyncSession = Depends(get_db)) -> Usuario:
+            encabezado = request.headers.get("Authorization", "")
+            if not encabezado.lower().startswith("bearer "):
+                raise HTTPException(status_code=401, detail="Sesión requerida")
+            usuario = await usuario_desde_jwt(encabezado[7:].strip(), db)
+            if not await tiene_algun_permiso(db, usuario.id, permisos):
+                raise HTTPException(status_code=403, detail="No tiene permisos para realizar esta acción")
+            if getattr(request.app.state, "facturacion", None) is None:
+                raise HTTPException(status_code=404, detail="La facturación electrónica no está habilitada en esta instancia")
+            return usuario
+        return _dep
+
+    CARGAN_DATOS = ("clientes.ver", "clientes.crear", "clientes.editar", "productos.ver", "productos.crear",
+                    "productos.editar", "ventas.crear")
+
+    @router.get("/catalogos")
+    async def ver_catalogos(usuario: Usuario = Depends(con_sesion(CARGAN_DATOS))):
+        """Departamentos y unidades de medida de SIFEN (para los formularios de clientes y productos)."""
+        return {"departamentos": catalogos.departamentos(), "unidades_medida": catalogos.unidades_medida()}
+
+    @router.get("/catalogos/distritos")
+    async def ver_distritos(departamento: int, usuario: Usuario = Depends(con_sesion(CARGAN_DATOS))):
+        return catalogos.distritos(departamento)
+
+    @router.get("/catalogos/ciudades")
+    async def ver_ciudades(distrito: int, usuario: Usuario = Depends(con_sesion(CARGAN_DATOS))):
+        return catalogos.ciudades(distrito)
+
     def servicio(request: Request) -> ServicioFiscal:
         return request.state.servicio_fiscal
 
@@ -104,13 +137,34 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
     async def _contenido_de_venta(db: AsyncSession, venta: Venta, cheque: Optional[dict] = None) -> tuple[dict, object]:
         cliente = await db.get(Cliente, venta.cliente_id)
         vendedor = await db.get(Usuario, venta.usuario_id)
-        filas = (await db.execute(select(VentaItem, Producto, MateriaLaboratorio)
-                                  .outerjoin(Producto, VentaItem.producto_id == Producto.id)
-                                  .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
-                                  .where(VentaItem.venta_id == venta.id).order_by(VentaItem.id))).all()
+        filas = await _filas(db, venta.id)
         contenido = constructor.factura_de_venta(venta, cliente, filas, vendedor,
                                                  await configuracion.obtener("fe.plazo_credito"), cheque)
         return contenido, constructor.total_de(contenido["items"], contenido.get("descuentoGlobal", 0))
+
+    async def _filas(db: AsyncSession, venta_id: int) -> list:
+        return (await db.execute(select(VentaItem, Producto, MateriaLaboratorio)
+                                 .outerjoin(Producto, VentaItem.producto_id == Producto.id)
+                                 .outerjoin(MateriaLaboratorio, VentaItem.materia_laboratorio_id == MateriaLaboratorio.id)
+                                 .where(VentaItem.venta_id == venta_id).order_by(VentaItem.id))).all()
+
+    async def _contenido_de_grupal(db: AsyncSession, grupal: FacturaGrupal, cheque: Optional[dict] = None) -> tuple[dict, object]:
+        cliente = await db.get(Cliente, grupal.cliente_id)
+        ventas = (await db.execute(select(Venta).join(factura_grupal_ventas, factura_grupal_ventas.c.venta_id == Venta.id)
+                                   .where(factura_grupal_ventas.c.factura_grupal_id == grupal.id).order_by(Venta.id))).scalars().all()
+        ventas_y_filas = [(v, await _filas(db, v.id)) for v in ventas]
+        contenido = constructor.factura_de_grupal(grupal, cliente, ventas_y_filas,
+                                                  await configuracion.obtener("fe.plazo_credito"), cheque)
+        return contenido, constructor.total_de(contenido["items"], contenido.get("descuentoGlobal", 0))
+
+    async def _vigente_grupal(db: AsyncSession, grupal_id: int) -> Optional[DocumentoFiscal]:
+        return (await db.execute(select(DocumentoFiscal).where(
+            DocumentoFiscal.factura_grupal_id == grupal_id, DocumentoFiscal.tipo_documento == 1,
+            DocumentoFiscal.estado != "CANCELADO").order_by(DocumentoFiscal.id.desc()))).scalars().first()
+
+    def _cheque_de(doc: DocumentoFiscal) -> Optional[dict]:
+        info = ((doc.datos.get("condicion") or {}).get("entregas") or [{}])[0].get("infoCheque")
+        return {"numero": info["numeroCheque"], "banco": info["banco"]} if info else None
 
     async def _vigente(db: AsyncSession, venta_id: int) -> Optional[DocumentoFiscal]:
         return (await db.execute(select(DocumentoFiscal).where(
@@ -160,6 +214,9 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         if existente:
             raise HTTPException(status_code=409, detail={"mensaje": "La venta ya tiene factura electrónica",
                                                          "documento": documento_dict(existente)})
+        if venta.facturada:
+            raise HTTPException(status_code=409, detail="La venta ya está incluida en una factura agrupada: "
+                                                        "se factura desde Facturas")
         cheque = pedido.cheque.model_dump() if pedido and pedido.cheque else None
         try:
             contenido, total = await _contenido_de_venta(db, venta, cheque)
@@ -179,6 +236,63 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         except ErrorFiscal as e:
             raise _error_http(e)
         return documento_dict(doc)
+
+    @router.get("/ventas/estados")
+    async def estados_de_ventas(ids: str = Query(..., max_length=2000), usuario: Usuario = Depends(requiere(EMITIR)),
+                                db: AsyncSession = Depends(get_db)):
+        """Factura electrónica vigente de cada venta pedida (para marcarlas en el historial)."""
+        try:
+            venta_ids = sorted({int(x) for x in ids.split(",") if x.strip()})[:200]
+        except ValueError:
+            raise HTTPException(status_code=422, detail="ids: números separados por coma")
+        filas = (await db.execute(select(DocumentoFiscal).where(
+            DocumentoFiscal.empresa_id == usuario.empresa_id, DocumentoFiscal.venta_id.in_(venta_ids),
+            DocumentoFiscal.tipo_documento == 1, DocumentoFiscal.estado != "CANCELADO")
+            .order_by(DocumentoFiscal.id))).scalars().all()
+        return {str(d.venta_id): documento_dict(d) for d in filas}
+
+    @router.post("/facturas-grupales/{grupal_id}/factura")
+    async def facturar_grupal(grupal_id: int, request: Request, pedido: Optional[PedidoFactura] = None,
+                              usuario: Usuario = Depends(requiere(EMITIR)), db: AsyncSession = Depends(get_db)):
+        """Factura electrónica englobada de una factura agrupada (varias boletas del mismo cliente)."""
+        grupal = await db.get(FacturaGrupal, grupal_id)
+        if not grupal or grupal.empresa_id != usuario.empresa_id:
+            raise HTTPException(status_code=404, detail="Factura agrupada no encontrada")
+        existente = await _vigente_grupal(db, grupal_id)
+        if existente:
+            raise HTTPException(status_code=409, detail={"mensaje": "La factura agrupada ya tiene factura electrónica",
+                                                         "documento": documento_dict(existente)})
+        cheque = pedido.cheque.model_dump() if pedido and pedido.cheque else None
+        try:
+            contenido, total = await _contenido_de_grupal(db, grupal, cheque)
+        except DocumentoInvalido as e:
+            raise _error_http(e)
+
+        async def bloquear(sesion: AsyncSession):
+            await sesion.execute(select(FacturaGrupal.id).where(FacturaGrupal.id == grupal_id).with_for_update())
+            if await _vigente_grupal(sesion, grupal_id):
+                raise HTTPException(status_code=409, detail="La factura agrupada ya tiene factura electrónica")
+
+        try:
+            doc = await servicio(request).emitir(db, empresa_id=usuario.empresa_id, tipo=1, contenido=contenido,
+                                                 origen="factura_grupal", total=total, usuario=usuario,
+                                                 factura_grupal_id=grupal_id, antes_de_numerar=bloquear)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        return documento_dict(doc)
+
+    @router.get("/facturas-grupales/estados")
+    async def estados_de_grupales(ids: str = Query(..., max_length=2000), usuario: Usuario = Depends(requiere(EMITIR)),
+                                  db: AsyncSession = Depends(get_db)):
+        try:
+            grupal_ids = sorted({int(x) for x in ids.split(",") if x.strip()})[:200]
+        except ValueError:
+            raise HTTPException(status_code=422, detail="ids: números separados por coma")
+        filas = (await db.execute(select(DocumentoFiscal).where(
+            DocumentoFiscal.empresa_id == usuario.empresa_id, DocumentoFiscal.factura_grupal_id.in_(grupal_ids),
+            DocumentoFiscal.tipo_documento == 1, DocumentoFiscal.estado != "CANCELADO")
+            .order_by(DocumentoFiscal.id))).scalars().all()
+        return {str(d.factura_grupal_id): documento_dict(d) for d in filas}
 
     @router.get("/ventas/{venta_id}/documentos")
     async def documentos_de_venta(venta_id: int, usuario: Usuario = Depends(requiere(EMITIR)), db: AsyncSession = Depends(get_db)):
@@ -213,11 +327,12 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
                 doc = await srv.enviar(db, doc, usuario)
             elif doc.estado in EN_CAMINO:
                 doc = await srv.actualizar_estado(db, doc)
-            elif doc.estado in ("INVALIDO", "RECHAZADO") and doc.venta_id:
-                venta = await db.get(Venta, doc.venta_id)
-                info = ((doc.datos.get("condicion") or {}).get("entregas") or [{}])[0].get("infoCheque")
-                cheque = {"numero": info["numeroCheque"], "banco": info["banco"]} if info else None
-                contenido, total = await _contenido_de_venta(db, venta, cheque)
+            elif doc.estado in ("INVALIDO", "RECHAZADO") and (doc.venta_id or doc.factura_grupal_id):
+                if doc.venta_id:
+                    contenido, total = await _contenido_de_venta(db, await db.get(Venta, doc.venta_id), _cheque_de(doc))
+                else:
+                    contenido, total = await _contenido_de_grupal(db, await db.get(FacturaGrupal, doc.factura_grupal_id),
+                                                                  _cheque_de(doc))
                 doc = await srv.reemitir(db, doc, contenido, total, usuario)
             else:
                 raise HTTPException(status_code=409, detail=f"No hay nada que reintentar: el documento está {doc.estado}")

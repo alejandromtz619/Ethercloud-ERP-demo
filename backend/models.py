@@ -186,6 +186,13 @@ class Cliente(Base):
     acepta_cheque = Column(Boolean, default=False)
     descuento_porcentaje = Column(Numeric(5, 2), default=0)
     limite_credito = Column(Numeric(15, 2), default=1)  # Límite máximo de crédito (por defecto 1 Gs)
+    # Factura electrónica (SIFEN; ver fiscal/constructor.py). Todo opcional.
+    tipo_contribuyente = Column(SmallInteger, nullable=True)  # 1 persona física, 2 jurídica (vacío = se deduce del RUC)
+    tipo_operacion = Column(SmallInteger, nullable=True)      # 1 B2B, 2 B2C, 3 B2G, 4 B2F (vacío = según tenga RUC)
+    numero_casa = Column(Integer, nullable=True)
+    departamento = Column(SmallInteger, nullable=True)        # códigos de fiscal/catalogos.json
+    distrito = Column(SmallInteger, nullable=True)
+    ciudad = Column(Integer, nullable=True)
     estado = Column(Boolean, default=True)
     creado_en = Column(DateTime(timezone=True), server_default=func.now())
     
@@ -308,6 +315,8 @@ class Producto(Base):
     # IVA incluido en el precio: 10, 5 o 0 (exento)
     tasa_iva = Column(SmallInteger, CheckConstraint("tasa_iva IN (0, 5, 10)", name="ck_productos_tasa_iva"),
                       nullable=False, default=10, server_default="10")
+    # Unidad de medida de SIFEN (fiscal/catalogos.json): 77 = unidad, 83 = kg, 89 = litro...
+    unidad_medida = Column(SmallInteger, nullable=False, default=77, server_default="77")
 
     empresa = relationship("Empresa", back_populates="productos")
     categoria = relationship("Categoria", back_populates="productos")

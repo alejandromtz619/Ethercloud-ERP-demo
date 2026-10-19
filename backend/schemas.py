@@ -147,6 +147,13 @@ class ClienteBase(BaseModel):
     acepta_cheque: bool = False
     descuento_porcentaje: Optional[Decimal] = 0
     limite_credito: Optional[Decimal] = 1
+    # Factura electrónica (opcionales): ver models.Cliente
+    tipo_contribuyente: Optional[Literal[1, 2]] = None
+    tipo_operacion: Optional[Literal[1, 2, 3, 4]] = None
+    numero_casa: Optional[int] = None
+    departamento: Optional[int] = None
+    distrito: Optional[int] = None
+    ciudad: Optional[int] = None
 
 class ClienteCreate(ClienteBase):
     empresa_id: int
@@ -326,6 +333,7 @@ class ProductoBase(BaseModel):
     marca_id: Optional[int] = None
     proveedor_id: Optional[int] = None
     tasa_iva: Literal[10, 5, 0] = 10  # IVA incluido en el precio; 0 = exento
+    unidad_medida: int = 77  # código de SIFEN (fiscal/catalogos.json)
 
 class ProductoCreate(ProductoBase):
     empresa_id: int

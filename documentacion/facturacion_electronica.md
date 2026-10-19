@@ -27,8 +27,16 @@ portal de SIFEN SIS, no en el ERP.
 
 ## Cómo se emite
 
+**Desde las pantallas:** Historial de ventas › Imprimir › **Factura electrónica** (emitir, ver el estado,
+imprimir el KuDE en ticket de 80 mm o A4, reintentar). Facturas › Emitidas › **Electrónica** para una
+factura agrupada (una factura con varias boletas; "Pagos varios" si se pagaron de formas distintas). En
+el historial, cada venta facturada muestra su estado. Una venta incluida en una factura agrupada no se
+factura sola.
+
+Por la API:
+
 1. `POST /api/fiscal/ventas/{id}/factura` (venta confirmada; cuerpo opcional
-   `{"cheque": {"numero", "banco"}}` si se pagó con cheque).
+   `{"cheque": {"numero", "banco"}}` si se pagó con cheque) o `POST /api/fiscal/facturas-grupales/{id}/factura`.
 2. El ERP arma el documento (`fiscal/constructor.py`) y lo **valida con el proveedor sin consumir
    número**. Si hay un error de datos (RUC con DV equivocado, nombre muy corto…) responde 422 con la
    lista de errores y la numeración no se mueve.
@@ -53,8 +61,13 @@ adelanta la numeración con la del proveedor y usa el siguiente libre.
 | Sólo cédula | Consumidor final identificado (B2C) |
 | Nada, o el RUC genérico 44444401-7 | "Sin Nombre" (innominado) |
 
-Con dirección, SIFEN exige también número de casa, departamento, distrito y ciudad (códigos de su
-catálogo). Hasta que esos datos se carguen en el cliente (etapa 2.1), la dirección no se informa.
+En la ficha del cliente (sección **Factura electrónica**, sólo con el módulo `fe`) se cargan el tipo de
+contribuyente y de operación (si no, se deducen: RUC de 8 dígitos que empieza con 80 = jurídica; con RUC
+= B2B) y el domicilio con los catálogos de SIFEN (departamento, distrito, ciudad, número de casa). Con
+dirección y domicilio completo, la factura lleva el domicilio; si falta algo, sale sin él (SIFEN rechaza
+una dirección sin departamento, distrito y ciudad). Los catálogos están en `backend/fiscal/catalogos.json`.
+
+Cada producto tiene su **unidad de medida** de SIFEN (77 = unidad por defecto; kg, litro, metro...).
 
 Formas de pago: efectivo, cheque (con número y banco), tarjeta (marca "no especificada", el ERP no la
 registra), transferencia; crédito como condición crédito a plazo.
@@ -71,8 +84,5 @@ registra), transferencia; crédito como condición crédito a plazo.
 
 ## Pendiente (Fase 2)
 
-- 2.1: datos fiscales del cliente (ubicación con los catálogos de SIFEN, tipo de contribuyente) y
-  unidad de medida de los productos.
-- 2.2: botón "Factura electrónica" en ventas, estado visible, imprimir KuDE; factura englobada.
-- 2.3: cancelación, inutilización y nota de crédito al anular.
-- 2.4: homologación con un cliente piloto.
+- 2.3: cancelación, inutilización y nota de crédito al anular una venta facturada.
+- 2.4: homologación con un cliente piloto (certificado, timbrado y CSC de prueba).

@@ -11,6 +11,7 @@ import re
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from fiscal import catalogos
 from fiscal.puerto import DocumentoInvalido
 
 CONSUMIDOR_FINAL = "44444401"
@@ -51,9 +52,10 @@ def receptor(cliente) -> dict:
     ruc = ruc_con_dv(cliente.ruc)
     if ruc and not ruc.startswith(CONSUMIDOR_FINAL + "-"):
         base = ruc.split("-")[0]
-        datos = {"contribuyente": True, "ruc": ruc, "razonSocial": nombre, "tipoOperacion": 1, "pais": "PRY",
-                 # Las personas jurídicas tienen RUC de 8 dígitos que empieza con 80
-                 "tipoContribuyente": 2 if len(base) == 8 and base.startswith("80") else 1}
+        # Lo cargado en el cliente manda; si no, las personas jurídicas tienen RUC de 8 dígitos que empieza con 80
+        tipo = getattr(cliente, "tipo_contribuyente", None) or (2 if len(base) == 8 and base.startswith("80") else 1)
+        datos = {"contribuyente": True, "ruc": ruc, "razonSocial": nombre, "pais": "PRY", "tipoContribuyente": tipo,
+                 "tipoOperacion": getattr(cliente, "tipo_operacion", None) or 1}
     else:
         cedula = re.sub(r"\D", "", cliente.cedula or "")
         if cedula and not ruc:
@@ -62,8 +64,13 @@ def receptor(cliente) -> dict:
         else:
             return {"contribuyente": False, "documentoTipo": 5, "documentoNumero": "0", "razonSocial": "Sin Nombre",
                     "tipoOperacion": 2, "pais": "PRY"}
-    # La dirección no se informa todavía: con dirección, SIFEN exige también número de casa,
-    # departamento, distrito y ciudad (códigos de su catálogo), que el cliente aún no tiene cargados.
+    # Con dirección, SIFEN exige número de casa, departamento, distrito y ciudad (códigos de su catálogo):
+    # sólo se informa si el cliente tiene el domicilio completo y coherente.
+    direccion = (cliente.direccion or "").strip()
+    ubicacion = (getattr(cliente, "departamento", None), getattr(cliente, "distrito", None), getattr(cliente, "ciudad", None))
+    if direccion and catalogos.ubicacion_completa(*ubicacion):
+        datos.update(direccion=direccion[:255], numeroCasa=getattr(cliente, "numero_casa", None) or 0,
+                     departamento=ubicacion[0], distrito=ubicacion[1], ciudad=ubicacion[2])
     # Datos de contacto: sólo si cumplen los largos que acepta SIFEN
     telefono = re.sub(r"\D", "", cliente.telefono or "")
     if 6 <= len(telefono) <= 15:
@@ -95,7 +102,8 @@ def items_de_venta(filas) -> list:
         else:
             codigo, descripcion = f"I{item.id}", "Ítem"
         iva_tipo, iva_base = AFECTACION_IVA[item.tasa_iva]
-        items.append({"codigo": codigo[:50], "descripcion": descripcion[:2000], "unidadMedida": 77,
+        unidad = getattr(producto, "unidad_medida", None) or 77
+        items.append({"codigo": codigo[:50], "descripcion": descripcion[:2000], "unidadMedida": unidad,
                       "cantidad": _numero(item.cantidad), "precioUnitario": _numero(item.precio_unitario),
                       "ivaTipo": iva_tipo, "ivaBase": iva_base, "iva": item.tasa_iva})
     return items
@@ -107,37 +115,65 @@ def total_de(items: list, descuento_global: Decimal) -> Decimal:
     return _guaranies(bruto - descuento_global)
 
 
-def factura_de_venta(venta, cliente, filas, vendedor=None, plazo_credito: str = "30 días",
-                     cheque: Optional[dict] = None) -> dict:
-    """Factura (tipo 1) de una venta confirmada, sin numeración ni fecha. cheque = {"numero", "banco"}
-    para las ventas pagadas con cheque (SIFEN los exige y la venta no los guarda)."""
-    items = items_de_venta(filas)
+def _condicion(tipo_pago: str, total: Decimal, plazo_credito: str, cheque: Optional[dict]) -> dict:
+    """Condición de la operación: crédito a plazo, o contado con la forma de pago."""
+    if tipo_pago == "CREDITO":
+        return {"tipo": 2, "credito": {"tipo": 1, "plazo": plazo_credito}}
+    if tipo_pago == "VARIOS":  # factura agrupada de boletas pagadas de distintas formas
+        return {"tipo": 1, "entregas": [{"tipo": 99, "tipoDescripcion": "Pagos varios", "monto": str(total), "moneda": "PYG"}]}
+    entrega = {"tipo": FORMA_DE_PAGO.get(tipo_pago, 1), "monto": str(total), "moneda": "PYG"}
+    if entrega["tipo"] == 3:  # el ERP no registra la marca de la tarjeta
+        entrega["infoTarjeta"] = {"tipo": 99, "tipoDescripcion": "No especificada", "medioPago": 1}
+    elif entrega["tipo"] == 2:
+        numero = re.sub(r"\D", "", str((cheque or {}).get("numero") or ""))
+        banco = str((cheque or {}).get("banco") or "").strip()
+        if not numero or not banco:
+            raise DocumentoInvalido(["Para facturar una venta pagada con cheque hacen falta el número del cheque y el banco"])
+        entrega["infoCheque"] = {"numeroCheque": numero.zfill(8)[-8:], "banco": banco[:255]}
+    return {"tipo": 1, "entregas": [entrega]}
+
+
+def _factura(cliente, items: list, descuento, tipo_pago: str, observacion: str, plazo_credito: str,
+             cheque: Optional[dict]) -> dict:
     if not items:
         raise DocumentoInvalido(["La venta no tiene ítems"])
-    descuento = _guaranies(venta.descuento or 0)
-    total = total_de(items, descuento)
-    tipo_pago = getattr(venta.tipo_pago, "value", venta.tipo_pago) or "EFECTIVO"
-    if tipo_pago == "CREDITO":
-        condicion = {"tipo": 2, "credito": {"tipo": 1, "plazo": plazo_credito}}
-    else:
-        entrega = {"tipo": FORMA_DE_PAGO.get(tipo_pago, 1), "monto": str(total), "moneda": "PYG"}
-        if entrega["tipo"] == 3:  # el ERP no registra la marca de la tarjeta
-            entrega["infoTarjeta"] = {"tipo": 99, "tipoDescripcion": "No especificada", "medioPago": 1}
-        elif entrega["tipo"] == 2:
-            numero = re.sub(r"\D", "", str((cheque or {}).get("numero") or ""))
-            banco = str((cheque or {}).get("banco") or "").strip()
-            if not numero or not banco:
-                raise DocumentoInvalido(["Para facturar una venta pagada con cheque hacen falta el número del cheque y el banco"])
-            entrega["infoCheque"] = {"numeroCheque": numero.zfill(8)[-8:], "banco": banco[:255]}
-        condicion = {"tipo": 1, "entregas": [entrega]}
+    descuento = _guaranies(descuento or 0)
     datos = {
         "tipoEmision": 1, "tipoTransaccion": 1, "tipoImpuesto": 1, "moneda": "PYG",
         "factura": {"presencia": 1},
         "cliente": receptor(cliente),
         "items": items,
-        "condicion": condicion,
-        "observacion": f"Venta N° {venta.id}" + (f" · Vendedor: {_nombre(vendedor)}" if vendedor else ""),
+        "condicion": _condicion(tipo_pago, total_de(items, descuento), plazo_credito, cheque),
+        "observacion": observacion,
     }
     if descuento > 0:
         datos["descuentoGlobal"] = int(descuento)
     return datos
+
+
+def _tipo_pago(venta) -> str:
+    return getattr(venta.tipo_pago, "value", venta.tipo_pago) or "EFECTIVO"
+
+
+def factura_de_venta(venta, cliente, filas, vendedor=None, plazo_credito: str = "30 días",
+                     cheque: Optional[dict] = None) -> dict:
+    """Factura (tipo 1) de una venta confirmada, sin numeración ni fecha. cheque = {"numero", "banco"}
+    para las ventas pagadas con cheque (SIFEN los exige y la venta no los guarda)."""
+    observacion = f"Venta N° {venta.id}" + (f" · Vendedor: {_nombre(vendedor)}" if vendedor else "")
+    return _factura(cliente, items_de_venta(filas), venta.descuento, _tipo_pago(venta), observacion, plazo_credito, cheque)
+
+
+def factura_de_grupal(grupal, cliente, ventas_y_filas, plazo_credito: str = "30 días", cheque: Optional[dict] = None) -> dict:
+    """Factura englobada: una factura con los ítems de varias boletas del mismo cliente (FacturaGrupal).
+    ventas_y_filas: [(Venta, filas de items_de_venta)]. A crédito si la agrupada es a crédito; si no,
+    contado con la forma de pago de las boletas (o "Pagos varios" si fueron distintas)."""
+    items = [i for _, filas in ventas_y_filas for i in items_de_venta(filas)]
+    descuento = sum((Decimal(str(v.descuento or 0)) for v, _ in ventas_y_filas), Decimal(0))
+    if grupal.condicion == "CREDITO":
+        tipo_pago = "CREDITO"
+    else:
+        formas = {_tipo_pago(v) for v, _ in ventas_y_filas} - {"CREDITO"}  # las de crédito se cobran al facturar
+        tipo_pago = formas.pop() if len(formas) == 1 else "EFECTIVO" if not formas else "VARIOS"
+    numeros = ", ".join(str(v.id) for v, _ in ventas_y_filas)
+    return _factura(cliente, items, descuento, tipo_pago, f"Factura agrupada {grupal.numero} · Ventas N° {numeros}",
+                    plazo_credito, cheque)

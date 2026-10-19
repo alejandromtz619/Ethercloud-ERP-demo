@@ -315,3 +315,99 @@ def test_la_api_key_se_carga_desde_la_pantalla_sin_reiniciar(client, admin, esce
         server.MODULOS_ACTIVOS.discard("fe")
         server.app.state.facturacion = None
         configuracion.invalidar_cache()
+
+
+# ---------------------------------------------------------------- datos fiscales (etapa 2.1)
+
+def test_catalogos_de_ubicacion_y_unidades(client, admin, falso):
+    r = client.get("/api/fiscal/catalogos", headers=admin).json()
+    assert len(r["departamentos"]) == 18 and {"codigo": 77, "sigla": "UNI", "nombre": "Unidad"} in r["unidades_medida"]
+    alto_parana = next(d["codigo"] for d in r["departamentos"] if d["nombre"] == "ALTO PARANA")
+    distritos = client.get("/api/fiscal/catalogos/distritos", headers=admin, params={"departamento": alto_parana}).json()
+    cde = next(d for d in distritos if d["nombre"].startswith("CIUDAD DEL ESTE"))
+    ciudades = client.get("/api/fiscal/catalogos/ciudades", headers=admin, params={"distrito": cde["codigo"]}).json()
+    assert ciudades and all(c["distrito"] == cde["codigo"] for c in ciudades)
+    server.app.state.facturacion = None  # sin el módulo fe, no
+    assert client.get("/api/fiscal/catalogos", headers=admin).status_code == 404
+
+
+def test_domicilio_fiscal_del_cliente_se_valida(client, admin, falso):
+    base = {"empresa_id": 1, "nombre": f"{PREFIJO} Domicilio", "direccion": "Avda. España"}
+    for malo, texto in (({"departamento": 1}, "los tres"), ({"departamento": 1, "distrito": 2, "ciudad": 3}, "no pertenece"),
+                        ({"tipo_contribuyente": 3}, "Input should be")):
+        r = client.post("/api/clientes", headers=admin, json={**base, **malo})
+        assert r.status_code == 422 and texto in r.text, (malo, r.text)
+    cliente = client.post("/api/clientes", headers=admin, json={**base, "departamento": 1, "distrito": 1, "ciudad": 1,
+                                                                "numero_casa": 1234}).json()
+    assert (cliente["departamento"], cliente["distrito"], cliente["ciudad"], cliente["numero_casa"]) == (1, 1, 1, 1234)
+    # Al editar se valida con lo que ya tenía: cambiar sólo el distrito deja el domicilio incoherente
+    r = client.put(f"/api/clientes/{cliente['id']}", headers=admin, json={"distrito": 2})
+    assert r.status_code == 422
+    r = client.put(f"/api/clientes/{cliente['id']}", headers=admin, json={"departamento": "", "distrito": "", "ciudad": ""})
+    assert r.status_code == 200 and r.json()["departamento"] is None
+
+
+def test_factura_con_domicilio_tipo_y_unidad(client, admin, falso, escenario):
+    def post(ruta, cuerpo):
+        r = client.post(ruta, headers=admin, json=cuerpo)
+        assert r.status_code == 200, r.text
+        return r.json()
+    cliente = post("/api/clientes", {"empresa_id": 1, "nombre": f"{PREFIJO} Estado S.A.", "ruc": ruc("3009001"),
+                                     "direccion": "Mcal. López 456", "numero_casa": 456, "departamento": 1, "distrito": 1,
+                                     "ciudad": 1, "tipo_contribuyente": 2, "tipo_operacion": 3, "limite_credito": 0})
+    assert client.post("/api/productos", headers=admin, json={"empresa_id": 1, "nombre": "x", "precio_venta": 1,
+                                                              "unidad_medida": 9999}).status_code == 422
+    prod = post("/api/productos", {"empresa_id": 1, "nombre": f"{PREFIJO} Cemento kg", "precio_venta": 2200, "unidad_medida": 83})
+    alm = post("/api/almacenes", {"empresa_id": 1, "nombre": f"{PREFIJO} Depósito kg"})
+    post("/api/stock/entrada", {"producto_id": prod["id"], "almacen_id": alm["id"], "tipo": "ENTRADA", "cantidad": 100, "costo_unitario": 1})
+    venta = post("/api/ventas", {"empresa_id": 1, "usuario_id": escenario["yo"]["id"], "cliente_id": cliente["id"], "tipo_pago": "EFECTIVO",
+                                 "items": [{"producto_id": prod["id"], "cantidad": 10, "precio_unitario": 2200}]})
+    post(f"/api/ventas/{venta['id']}/confirmar", {})
+    doc = facturar(client, admin, venta["id"]).json()
+    data = falso.documentos[(1, "001", "001", int(doc["numero"][-7:]))]["data"]
+    receptor = data["cliente"]
+    assert (receptor["direccion"], receptor["numeroCasa"], receptor["departamento"], receptor["distrito"], receptor["ciudad"]) == \
+        ("Mcal. López 456", 456, 1, 1, 1)
+    assert receptor["tipoContribuyente"] == 2 and receptor["tipoOperacion"] == 3  # lo cargado gana sobre lo deducido
+    assert data["items"][0]["unidadMedida"] == 83
+    # Con dirección pero sin domicilio completo, no se informa (SIFEN la rechazaría)
+    sin_ubicacion = constructor.receptor(SimpleNamespace(id=1, nombre="Cliente", apellido=None, ruc="80069563-1", cedula=None,
+                                                         direccion="Calle 1", telefono=None, email=None))
+    assert "direccion" not in sin_ubicacion
+
+
+# ---------------------------------------------------------------- emisión desde ventas (etapa 2.2)
+
+def test_estados_de_varias_ventas(client, admin, falso, escenario):
+    con = escenario["vender"]()
+    sin = escenario["vender"]()
+    doc = facturar(client, admin, con["id"]).json()
+    r = client.get("/api/fiscal/ventas/estados", headers=admin, params={"ids": f"{con['id']},{sin['id']}"}).json()
+    assert list(r) == [str(con["id"])] and r[str(con["id"])]["numero"] == doc["numero"]
+    assert client.get("/api/fiscal/ventas/estados", headers=admin, params={"ids": "a,b"}).status_code == 422
+
+
+def test_factura_agrupada_electronica(client, admin, falso, escenario):
+    efectivo = escenario["vender"](claves=("diez",))
+    tarjeta = escenario["vender"](claves=("cinco",), tipo_pago="TARJETA")
+    grupal = client.post("/api/facturas/grupal", headers=admin, json={
+        "empresa_id": 1, "cliente_id": escenario["clientes"]["empresa"]["id"], "venta_ids": [efectivo["id"], tarjeta["id"]],
+        "cobrar_credito": True})
+    assert grupal.status_code == 200, grupal.text
+    grupal = grupal.json()
+    # Las ventas de la agrupada ya no se facturan solas
+    r = facturar(client, admin, efectivo["id"])
+    assert r.status_code == 409 and "agrupada" in r.json()["detail"]
+
+    r = client.post(f"/api/fiscal/facturas-grupales/{grupal['id']}/factura", headers=admin)
+    assert r.status_code == 200, r.text
+    doc = r.json()
+    data = falso.documentos[(1, "001", "001", int(doc["numero"][-7:]))]["data"]
+    assert [i["iva"] for i in data["items"]] == [10, 5]
+    assert data["condicion"]["entregas"][0] == {"tipo": 99, "tipoDescripcion": "Pagos varios",
+                                               "monto": str(int(doc["total"])), "moneda": "PYG"}
+    assert doc["total"] == float(efectivo["total"]) + float(tarjeta["total"]) and doc["origen"] == "factura_grupal"
+    assert grupal["numero"] in data["observacion"]
+    assert client.post(f"/api/fiscal/facturas-grupales/{grupal['id']}/factura", headers=admin).status_code == 409
+    estados = client.get("/api/fiscal/facturas-grupales/estados", headers=admin, params={"ids": grupal["id"]}).json()
+    assert estados[str(grupal["id"])]["id"] == doc["id"]

@@ -18,6 +18,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { FileText, Loader2, Printer, Users, ChevronRight, CheckSquare, Square, Search, CreditCard, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
 import { FacturaPrint } from '../components/PrintModal';
+import PanelFacturaElectronica, { EstadoFE } from '../components/FacturaElectronica';
+import { useModulos } from '../lib/modulos';
 
 const PRINT_CSS = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -94,6 +96,16 @@ const Facturas = () => {
     fetchClientesPendientes();
     fetchFacturasEmitidas();
   }, [fetchClientesPendientes, fetchFacturasEmitidas]);
+
+  // Factura electrónica de las agrupadas (sólo con el módulo fe)
+  const modulos = useModulos();
+  const [facturasFE, setFacturasFE] = useState({});
+  const [grupalFE, setGrupalFE] = useState(null); // agrupada abierta en el panel de factura electrónica
+  const cargarEstadosFE = useCallback(() => {
+    const ids = facturasEmitidas.slice(0, 200).map((f) => f.id).join(',');
+    if (modulos.fe && ids) api(`/fiscal/facturas-grupales/estados?ids=${ids}`).then(setFacturasFE).catch(() => {});
+  }, [api, modulos.fe, facturasEmitidas]);
+  useEffect(() => { cargarEstadosFE(); }, [cargarEstadosFE]);
 
   // ── Trigger print when data is ready ──────────────────────────────────────
   useEffect(() => {
@@ -482,10 +494,19 @@ const Facturas = () => {
                         <TableCell className="text-right font-mono-data">{fmt(f.total)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{fmtDate(f.creado_en)}</TableCell>
                         <TableCell>
-                          <Button variant="outline" size="sm" onClick={() => handleReimprimir(f.id, f.numero)}>
-                            <Printer className="h-3 w-3 mr-1" />
-                            Imprimir
-                          </Button>
+                          <div className="flex items-center gap-2 justify-end">
+                            {facturasFE[f.id] && <EstadoFE documento={facturasFE[f.id]} />}
+                            {modulos.fe && (
+                              <Button variant="outline" size="sm" onClick={() => setGrupalFE(f)} data-testid={`fe-grupal-${f.id}`}>
+                                <FileText className="h-3 w-3 mr-1" />
+                                Electrónica
+                              </Button>
+                            )}
+                            <Button variant="outline" size="sm" onClick={() => handleReimprimir(f.id, f.numero)}>
+                              <Printer className="h-3 w-3 mr-1" />
+                              Imprimir
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -496,6 +517,16 @@ const Facturas = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!grupalFE} onOpenChange={(abierto) => { if (!abierto) { setGrupalFE(null); cargarEstadosFE(); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Factura electrónica · {grupalFE?.numero}</DialogTitle>
+            <DialogDescription>{grupalFE?.cliente_nombre} · {grupalFE?.boletas_count} boletas en una sola factura</DialogDescription>
+          </DialogHeader>
+          {grupalFE && <PanelFacturaElectronica grupalId={grupalFE.id} />}
+        </DialogContent>
+      </Dialog>
 
       {/* Área oculta para render de impresión */}
       <div style={{ position: 'fixed', left: '-9999px', top: 0, pointerEvents: 'none' }}>
