@@ -84,6 +84,7 @@ const Ventas = () => {
   // Print modal state
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [lastVentaId, setLastVentaId] = useState(null);
+  const [lastVentaEstado, setLastVentaEstado] = useState(null);
   
   // Cash payment modal state
   const [cashModalOpen, setCashModalOpen] = useState(false);
@@ -579,6 +580,7 @@ setMaterias(materiasData);
         
         // Store venta ID for printing and show print modal
         setLastVentaId(venta.id);
+        setLastVentaEstado('PENDIENTE');
         setPrintModalOpen(true);
       } else {
         // Flujo normal: crear y confirmar
@@ -594,6 +596,7 @@ setMaterias(materiasData);
         
         // Store venta ID for printing and show print modal
         setLastVentaId(venta.id);
+        setLastVentaEstado('CONFIRMADA');
         setPrintModalOpen(true);
       }
       
@@ -1243,6 +1246,7 @@ setMaterias(materiasData);
         open={printModalOpen} 
         onOpenChange={setPrintModalOpen}
         ventaId={lastVentaId}
+        ventaEstado={lastVentaEstado}
       />
     </div>
   );

@@ -66,6 +66,15 @@ def codigo_numerico(digitos: int, opcional: bool = False) -> Callable[[Any], str
     return _validar
 
 
+def opcion(*valores: str) -> Callable[[Any], str]:
+    def _validar(valor) -> str:
+        valor = str(valor or "").strip()
+        if valor not in valores:
+            raise ConfiguracionInvalida(f"debe ser una de: {', '.join(valores)}")
+        return valor
+    return _validar
+
+
 def decimal_entre(minimo: float, maximo: float) -> Callable[[Any], float]:
     def _validar(valor) -> float:
         try:
@@ -85,13 +94,14 @@ class Clave:
     nombre: str
     seccion: str
     etiqueta: str
-    tipo: str = "texto"                  # texto | decimal (para la pantalla)
+    tipo: str = "texto"                  # texto | decimal | opcion (para la pantalla)
     defecto: Any = None
     secreta: bool = False
     entorno: Optional[str] = None        # variable de entorno que la pisa
     permiso: str = "sistema.configurar"  # quién la edita (los administradores, siempre)
     validar: Callable[[Any], Any] = texto()
     ayuda: str = ""
+    opciones: tuple = ()                 # tipo opcion: ((valor, etiqueta), ...)
 
 
 # sección -> (título, módulo de MODULOS que la habilita; None = siempre)
@@ -101,12 +111,21 @@ SECCIONES = {
     "laboratorio": ("Laboratorio", None),
 }
 
+# La factura preimpresa (hoja de la SET en matricial Epson LX-350) y la electrónica son dos vías aparte:
+# esta clave elige cuál es "la factura" al imprimir una venta; la otra sigue disponible.
+MODOS_FACTURA = (("preimpresa", "Preimpresa de la SET (impresora matricial Epson LX-350)"),
+                 ("electronica", "Electrónica (SIFEN)"))
+
 CLAVES = {c.nombre: c for c in (
-    Clave("documentos.ciudad_factura", "documentos", "Ciudad que se imprime en la factura", defecto="",
-          validar=texto(0, 60), ayuda="Va junto a la fecha en la factura pre-impresa"),
-    Clave("documentos.ajuste_x_mm", "documentos", "Corrimiento horizontal de la factura en papel (mm)", tipo="decimal",
+    Clave("documentos.factura_modo", "documentos", "Factura por defecto", tipo="opcion", defecto="preimpresa",
+          opciones=MODOS_FACTURA, validar=opcion(*(v for v, _ in MODOS_FACTURA)),
+          ayuda="La que aparece como «Factura» al imprimir una venta; la otra sigue disponible aparte. "
+                "Electrónica necesita el módulo de facturación electrónica"),
+    Clave("documentos.ciudad_factura", "documentos", "Ciudad de la factura preimpresa", defecto="",
+          validar=texto(0, 60), ayuda="Va junto a la fecha en la factura preimpresa"),
+    Clave("documentos.ajuste_x_mm", "documentos", "Corrimiento horizontal de la factura preimpresa (mm)", tipo="decimal",
           defecto=0.0, validar=decimal_entre(-30, 30), ayuda="Si lo impreso no cae en los casilleros: positivo mueve todo a la derecha"),
-    Clave("documentos.ajuste_y_mm", "documentos", "Corrimiento vertical de la factura en papel (mm)", tipo="decimal",
+    Clave("documentos.ajuste_y_mm", "documentos", "Corrimiento vertical de la factura preimpresa (mm)", tipo="decimal",
           defecto=0.0, validar=decimal_entre(-30, 30), ayuda="Positivo mueve todo hacia abajo"),
     Clave("fe.api_key", "facturacion_electronica", "API key de SIFEN SIS", secreta=True, entorno="SIFENSIS_API_KEY",
           permiso="sistema.integraciones", validar=texto(10, 200),
@@ -224,6 +243,8 @@ async def describir(nombre: str, usuario_puede: Callable[[str], bool]) -> dict:
     else:
         datos["valor"] = await obtener(nombre)
         datos["defecto"] = clave.defecto
+    if clave.opciones:
+        datos["opciones"] = [{"valor": v, "etiqueta": e} for v, e in clave.opciones]
     return datos
 
 
@@ -313,7 +334,10 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, mod
         if not encabezado.lower().startswith("bearer "):
             raise HTTPException(status_code=401, detail="Sesión requerida")
         await usuario_desde_jwt(encabezado[7:].strip(), db)
-        return {"ciudad_factura": await obtener("documentos.ciudad_factura"),
+        # Electrónica sólo con el módulo contratado; si no, la preimpresa
+        modo = await obtener("documentos.factura_modo")
+        return {"factura_modo": modo if modo != "electronica" or "fe" in modulos_activos else "preimpresa",
+                "ciudad_factura": await obtener("documentos.ciudad_factura"),
                 "ajuste_x_mm": await obtener("documentos.ajuste_x_mm"),
                 "ajuste_y_mm": await obtener("documentos.ajuste_y_mm")}
 

@@ -317,6 +317,9 @@ const FacturaPrint = React.forwardRef(({ data }, ref) => {
 const PrintModal = ({ open, onOpenChange, ventaId, ventaEstado, onPrintComplete }) => {
   const { api, userPermisos } = useApp();
   const modulos = useModulos();
+  // Factura por defecto (Configuración › Documentos impresos): preimpresa o electrónica
+  const ajustesImpresion = useAjustesImpresion();
+  const facturaElectronicaPorDefecto = !!modulos.fe && ajustesImpresion.factura_modo === 'electronica';
   const [tipoDocumento, setTipoDocumento] = useState('BOLETA'); // 'BOLETA' | 'FACTURA'
   const [loading, setLoading] = useState(false);
   const [boletaData, setBoletaData] = useState(null);
@@ -704,6 +707,72 @@ Gracias por su compra! 🙏
     );
   };
 
+  const opcionFacturaPreimpresa = (
+    <>
+      {userPermisos.includes('ventas.imprimir_factura') && (
+              <div className={`border rounded-lg ${tipoDocumento === 'FACTURA' ? 'border-primary ring-1 ring-primary' : ''}`}>
+                <div
+                  role="radio"
+                  aria-checked={tipoDocumento === 'FACTURA'}
+                  tabIndex={0}
+                  onClick={() => setTipoDocumento('FACTURA')}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FACTURA')}
+                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+                >
+                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FACTURA' ? 'border-primary' : 'border-muted-foreground'}`}>
+                    {tipoDocumento === 'FACTURA' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                  </div>
+                  <div className="flex-1">
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      {facturaElectronicaPorDefecto ? 'Factura preimpresa (Epson LX-350)' : 'Factura'}
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      {facturaElectronicaPorDefecto
+                        ? 'Hoja preimpresa de la SET en la impresora matricial'
+                        : 'Documento fiscal con desglose de IVA (requiere RUC)'}
+                    </p>
+                  </div>
+                  {renderBotonFecha('FACTURA')}
+                </div>
+                {renderEditorFecha('FACTURA')}
+              </div>
+            )}
+    </>
+  );
+  const opcionFacturaElectronica = (
+    <>
+      {modulos.fe && ventaEstado === 'CONFIRMADA' && (
+              <div className={`border rounded-lg ${tipoDocumento === 'FE' ? 'border-primary ring-1 ring-primary' : ''}`}>
+                <div
+                  role="radio"
+                  aria-checked={tipoDocumento === 'FE'}
+                  tabIndex={0}
+                  data-testid="opcion-fe"
+                  onClick={() => setTipoDocumento('FE')}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FE')}
+                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
+                >
+                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FE' ? 'border-primary' : 'border-muted-foreground'}`}>
+                    {tipoDocumento === 'FE' && <div className="h-2 w-2 rounded-full bg-primary" />}
+                  </div>
+                  <div className="flex-1">
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Factura electrónica
+                      {facturaElectronicaPorDefecto && <span className="rounded bg-primary/10 px-1.5 text-[10px] font-medium text-primary">Por defecto</span>}
+                    </span>
+                    <p className="text-xs text-muted-foreground">Se envía a SIFEN; se imprime el KuDE (ticket o A4)</p>
+                  </div>
+                </div>
+                {tipoDocumento === 'FE' && (
+                  <div className="px-3 pb-3"><PanelFacturaElectronica ventaId={ventaId} /></div>
+                )}
+              </div>
+            )}
+    </>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
@@ -752,61 +821,8 @@ Gracias por su compra! 🙏
               {renderEditorFecha('BOLETA')}
             </div>
 
-            {userPermisos.includes('ventas.imprimir_factura') && (
-              <div className={`border rounded-lg ${tipoDocumento === 'FACTURA' ? 'border-primary ring-1 ring-primary' : ''}`}>
-                <div
-                  role="radio"
-                  aria-checked={tipoDocumento === 'FACTURA'}
-                  tabIndex={0}
-                  onClick={() => setTipoDocumento('FACTURA')}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FACTURA')}
-                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
-                >
-                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FACTURA' ? 'border-primary' : 'border-muted-foreground'}`}>
-                    {tipoDocumento === 'FACTURA' && <div className="h-2 w-2 rounded-full bg-primary" />}
-                  </div>
-                  <div className="flex-1">
-                    <span className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" />
-                      Factura
-                    </span>
-                    <p className="text-xs text-muted-foreground">
-                      Documento fiscal con desglose de IVA (requiere RUC)
-                    </p>
-                  </div>
-                  {renderBotonFecha('FACTURA')}
-                </div>
-                {renderEditorFecha('FACTURA')}
-              </div>
-            )}
-
-            {modulos.fe && ventaEstado === 'CONFIRMADA' && (
-              <div className={`border rounded-lg ${tipoDocumento === 'FE' ? 'border-primary ring-1 ring-primary' : ''}`}>
-                <div
-                  role="radio"
-                  aria-checked={tipoDocumento === 'FE'}
-                  tabIndex={0}
-                  data-testid="opcion-fe"
-                  onClick={() => setTipoDocumento('FE')}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setTipoDocumento('FE')}
-                  className="flex items-center space-x-3 p-3 hover:bg-secondary transition-colors rounded-lg cursor-pointer"
-                >
-                  <div className={`h-4 w-4 shrink-0 rounded-full border flex items-center justify-center ${tipoDocumento === 'FE' ? 'border-primary' : 'border-muted-foreground'}`}>
-                    {tipoDocumento === 'FE' && <div className="h-2 w-2 rounded-full bg-primary" />}
-                  </div>
-                  <div className="flex-1">
-                    <span className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" />
-                      Factura electrónica
-                    </span>
-                    <p className="text-xs text-muted-foreground">Se envía a SIFEN; se imprime el KuDE (ticket o A4)</p>
-                  </div>
-                </div>
-                {tipoDocumento === 'FE' && (
-                  <div className="px-3 pb-3"><PanelFacturaElectronica ventaId={ventaId} /></div>
-                )}
-              </div>
-            )}
+            {/* Factura preimpresa (Epson LX-350) y electrónica: dos vías aparte; primero la de la configuración */}
+            {facturaElectronicaPorDefecto ? <>{opcionFacturaElectronica}{opcionFacturaPreimpresa}</> : <>{opcionFacturaPreimpresa}{opcionFacturaElectronica}</>}
           </div>
           
           {ventaEstado === 'CONFIRMADA' && tipoDocumento !== 'FE' && (

@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { FacturaPrint } from '../components/PrintModal';
 import PanelFacturaElectronica, { EstadoFE } from '../components/FacturaElectronica';
 import { useModulos } from '../lib/modulos';
+import { useAjustesImpresion } from '../lib/ajustesImpresion';
 
 const PRINT_CSS = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -99,6 +100,8 @@ const Facturas = () => {
 
   // Factura electrónica de las agrupadas (sólo con el módulo fe)
   const modulos = useModulos();
+  const ajustesImpresion = useAjustesImpresion();
+  const electronicaPorDefecto = !!modulos.fe && ajustesImpresion.factura_modo === 'electronica';
   const [facturasFE, setFacturasFE] = useState({});
   const [grupalFE, setGrupalFE] = useState(null); // agrupada abierta en el panel de factura electrónica
   const cargarEstadosFE = useCallback(() => {
@@ -497,14 +500,16 @@ const Facturas = () => {
                           <div className="flex items-center gap-2 justify-end">
                             {facturasFE[f.id] && <EstadoFE documento={facturasFE[f.id]} />}
                             {modulos.fe && (
-                              <Button variant="outline" size="sm" onClick={() => setGrupalFE(f)} data-testid={`fe-grupal-${f.id}`}>
+                              <Button variant={electronicaPorDefecto ? 'default' : 'outline'} size="sm" onClick={() => setGrupalFE(f)}
+                                      data-testid={`fe-grupal-${f.id}`}>
                                 <FileText className="h-3 w-3 mr-1" />
                                 Electrónica
                               </Button>
                             )}
-                            <Button variant="outline" size="sm" onClick={() => handleReimprimir(f.id, f.numero)}>
+                            <Button variant="outline" size="sm" onClick={() => handleReimprimir(f.id, f.numero)}
+                                    title="Hoja preimpresa de la SET en la impresora matricial (Epson LX-350)">
                               <Printer className="h-3 w-3 mr-1" />
-                              Imprimir
+                              {modulos.fe ? 'Preimpresa' : 'Imprimir'}
                             </Button>
                           </div>
                         </TableCell>

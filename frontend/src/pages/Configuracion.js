@@ -146,6 +146,11 @@ function Campo({ campo, valor, onCambio, secreto, onSecreto, borrar, onBorrar })
                    onChange={(e) => onSecreto(e.target.value)} />
           )}
         </>
+      ) : campo.tipo === 'opcion' ? (
+        <select id={campo.clave} value={valor} disabled={bloqueado} onChange={(e) => onCambio(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm disabled:opacity-50">
+          {campo.opciones.map((o) => <option key={o.valor} value={o.valor}>{o.etiqueta}</option>)}
+        </select>
       ) : (
         <Input id={campo.clave} value={valor} disabled={bloqueado} inputMode={campo.tipo === 'decimal' ? 'decimal' : undefined}
                onChange={(e) => onCambio(e.target.value)} />
@@ -224,7 +229,7 @@ function Seccion({ seccion, onGuardado }) {
       <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           {campos.map((c) => (
-            <div key={c.clave} className={c.secreta ? 'sm:col-span-2' : ''}>
+            <div key={c.clave} className={c.secreta || c.tipo === 'opcion' ? 'sm:col-span-2' : ''}>
               <Campo campo={c} valor={valores[c.clave] ?? ''} onCambio={(v) => setValores({ ...valores, [c.clave]: v })}
                      secreto={secretos[c.clave] || ''} onSecreto={(v) => setSecretos({ ...secretos, [c.clave]: v })}
                      borrar={!!borrar[c.clave]} onBorrar={(b) => setBorrar({ ...borrar, [c.clave]: b })} />

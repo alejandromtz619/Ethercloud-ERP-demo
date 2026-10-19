@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 
 // Ciudad y corrimiento de la factura en papel (Sistema › Configuración › Documentos impresos). Se piden
 // una vez por sesión y los comparten todas las impresiones.
-const PREDETERMINADOS = { ciudad_factura: '', ajuste_x_mm: 0, ajuste_y_mm: 0 };
+const PREDETERMINADOS = { factura_modo: 'preimpresa', ciudad_factura: '', ajuste_x_mm: 0, ajuste_y_mm: 0 };
 let pedido = null;
 
 export function useAjustesImpresion() {

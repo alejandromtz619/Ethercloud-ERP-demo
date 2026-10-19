@@ -198,7 +198,8 @@ def test_ajustes_de_impresion_para_cualquier_sesion(client, admin):
     cajero = usuario_con(client, admin, "config-cajero@test.com", ["ventas.crear"])
     cambiar(client, admin, "documentos", {"documentos.ciudad_factura": "Encarnación", "documentos.ajuste_y_mm": -2.5})
     r = client.get("/api/configuracion/impresion", headers=cajero)
-    assert r.status_code == 200 and r.json() == {"ciudad_factura": "Encarnación", "ajuste_x_mm": 0.0, "ajuste_y_mm": -2.5}
+    assert r.status_code == 200 and r.json() == {"factura_modo": "preimpresa", "ciudad_factura": "Encarnación",
+                                                 "ajuste_x_mm": 0.0, "ajuste_y_mm": -2.5}
     assert client.get("/api/configuracion", headers=cajero).status_code == 403  # el resto, no
 
 
@@ -250,3 +251,16 @@ def test_url_publica_sale_del_dominio_de_la_peticion(monkeypatch):
     assert server.url_publica(peticion({"X-Forwarded-Host": "a.com, proxy.interno", "X-Forwarded-Proto": "https,http"})) == "https://a.com"
     monkeypatch.setenv("BACKEND_URL", "https://fijo.com/")  # instancias viejas: la variable gana
     assert server.url_publica(peticion({"X-Forwarded-Host": "erp.cliente.com"})) == "https://fijo.com"
+
+
+def test_factura_por_defecto_preimpresa_o_electronica(client, admin):
+    """Dos vías aparte: la preimpresa (Epson LX-350) sigue siendo la de siempre; la electrónica, sólo con fe."""
+    campo_modo = campo(ver(client, admin), "documentos.factura_modo")
+    assert campo_modo["valor"] == "preimpresa" and campo_modo["tipo"] == "opcion"
+    assert [o["valor"] for o in campo_modo["opciones"]] == ["preimpresa", "electronica"]
+    r = cambiar(client, admin, "documentos", {"documentos.factura_modo": "termica"})
+    assert r.status_code == 422 and "preimpresa, electronica" in r.json()["detail"]
+    assert cambiar(client, admin, "documentos", {"documentos.factura_modo": "electronica"}).status_code == 200
+    assert client.get("/api/configuracion/impresion", headers=admin).json()["factura_modo"] == "electronica"
+    server.MODULOS_ACTIVOS.discard("fe")  # sin el módulo, la impresión usa la preimpresa
+    assert client.get("/api/configuracion/impresion", headers=admin).json()["factura_modo"] == "preimpresa"
