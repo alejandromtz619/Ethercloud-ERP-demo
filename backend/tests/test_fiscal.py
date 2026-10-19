@@ -449,7 +449,7 @@ def test_cuenta_certificado_correo_y_timbrado(client, admin, falso):
     assert r.status_code == 422 and ".p12" in r.json()["detail"]
     r = client.post("/api/fiscal/cuenta/certificado", headers=admin, data={"password": "equivocada"},
                     files={"archivo": ("firma.p12", b"\x30\x82", "application/x-pkcs12")})
-    assert r.status_code == 422 and "contraseña" in str(r.json()["detail"])
+    assert r.status_code == 422 and r.json()["detail"] == "El archivo o la contraseña no son válidos"
     r = client.post("/api/fiscal/cuenta/certificado", headers=admin, data={"password": "clave-del-certificado"},
                     files={"archivo": ("firma.p12", b"\x30\x82", "application/x-pkcs12")})
     assert r.status_code == 200 and r.json()["validoHasta"].startswith("2028")

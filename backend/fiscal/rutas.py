@@ -410,6 +410,12 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
                         headers={"Content-Disposition": f'attachment; filename="{doc.cdc}.xml"'})
 
     # ------------------------------------------------------------ cuenta de SIFEN SIS
+    def _error_cuenta(e: ErrorFiscal) -> HTTPException:
+        """En la cuenta, un 400 del proveedor no es un documento inválido: se muestra su mensaje tal cual."""
+        if isinstance(e, DocumentoInvalido):
+            return HTTPException(status_code=422, detail=" · ".join(e.errores) or e.mensaje)
+        return _error_http(e)
+
     async def _registrar(db: AsyncSession, usuario: Usuario, clave: str, nuevo: str) -> None:
         """Cambios en la cuenta del proveedor: quedan en el historial de Configuración."""
         db.add(CambioConfiguracion(clave=clave, valor_anterior=None, valor_nuevo=nuevo[:500], usuario_id=usuario.id))
@@ -423,13 +429,13 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             cuenta = await emisor.cuenta()
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         try:
             config, permiso = await emisor.config(), True
         except SinPermisoConfiguracion as e:
             config, permiso = None, False
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         return {"cuenta": cuenta, "configuracion": config, "permiso_configuracion": permiso}
 
     @router.put("/cuenta/kude")
@@ -439,7 +445,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             guardado = await servicio(request).emisor.guardar_kude(diseno)
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         await _registrar(db, usuario, "sifensis.kude", ", ".join(f"{k}={v}" for k, v in diseno.items()))
         return guardado
 
@@ -450,7 +456,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             pdf, ejemplo = await servicio(request).emisor.vista_previa_kude(datos.formato, datos.diseno.model_dump(exclude_none=True))
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         return Response(pdf, media_type="application/pdf",
                         headers={"X-Datos-Ejemplo": ejemplo, "Access-Control-Expose-Headers": "X-Datos-Ejemplo"})
 
@@ -459,7 +465,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             logo = await servicio(request).emisor.ver_logo()
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         if not logo:
             raise HTTPException(status_code=404, detail="Sin logo")
         return Response(logo[0], media_type=logo[1])
@@ -475,7 +481,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             await servicio(request).emisor.subir_logo(archivo.filename or "logo", contenido, archivo.content_type)
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         await _registrar(db, usuario, "sifensis.logo", f"subido ({archivo.filename}, {len(contenido)} bytes)")
         return {"ok": True}
 
@@ -484,7 +490,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             await servicio(request).emisor.borrar_logo()
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         await _registrar(db, usuario, "sifensis.logo", "quitado")
         return {"ok": True}
 
@@ -504,7 +510,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             await emisor.subir_certificado(nombre, contenido, password)
             vigente = await emisor.certificado()
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         await _registrar(db, usuario, "sifensis.certificado", f"subido ({nombre}); válido hasta {vigente.get('validoHasta')}")
         return vigente
 
@@ -516,7 +522,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             guardado = await servicio(request).emisor.guardar_correo(cambios)
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         await _registrar(db, usuario, "sifensis.correo", ", ".join(f"{k}={v}" for k, v in cambios.items()))
         return guardado
 
@@ -525,7 +531,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         try:
             return await servicio(request).emisor.probar_correo(datos.destino)
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
 
     @router.put("/cuenta/timbrado")
     async def guardar_timbrado(datos: Timbrado, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES)),
@@ -535,7 +541,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             await srv.emisor.guardar_timbrado(datos.ambiente, datos.numero, datos.fecha_inicio)
             await srv.info(refrescar=True)  # el timbrado nuevo se ve enseguida en Probar conexión
         except ErrorFiscal as e:
-            raise _error_http(e)
+            raise _error_cuenta(e)
         await _registrar(db, usuario, "sifensis.timbrado", f"{datos.ambiente}: {datos.numero} desde {datos.fecha_inicio}")
         return {"ok": True}
 
