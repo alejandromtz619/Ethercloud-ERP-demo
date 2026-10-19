@@ -6,7 +6,7 @@ import re
 from decimal import Decimal
 
 from fiscal.puerto import (
-    ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, EstadoDocumento, ProveedorNoDisponible, ResultadoEmision, ResultadoEvento,
+    ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, EstadoDocumento, SinPermisoConfiguracion, ProveedorNoDisponible, ResultadoEmision, ResultadoEvento,
 )
 
 RUC = re.compile(r"^\d{3,8}-\d$")
@@ -27,6 +27,14 @@ class SifenFalso:
         self.perder_respuestas = 0    # cuántas emisiones registra pero "se corta" antes de responder
         self.rechazar = set()         # números que SIFEN rechazará
         self.llamadas = []
+        # Cuenta y configuración (pantalla Cuenta de SIFEN SIS)
+        self.permiso_configuracion = True
+        self.kude = {"colorPrimario": "#114E4C", "mostrarQr": True, "textoPie": ""}
+        self.logo = None
+        self.cert = {"vigente": True, "validoHasta": "2036-10-02T15:20:38", "diasParaVencer": 3636}
+        self.correo = {"envioActivo": False, "nombreRemitente": "", "responderA": "", "adjuntarXml": False}
+        self.timbrados = [{"ambiente": "HOMOLOGACION", "numero": "12345678", "fechaInicio": "2026-09-01"}]
+        self.correos_de_prueba = []
 
     def _verificar(self, operacion: str):
         self.llamadas.append(operacion)
@@ -128,3 +136,68 @@ class SifenFalso:
         self._verificar("descargar")
         self._por_cdc(cdc)
         return (b"<xml/>" if formato == "xml" else b"%PDF-1.4 KuDE falso ") + cdc.encode()
+
+    # ---- cuenta y configuración ----
+    def _configurar(self, operacion: str):
+        self._verificar(operacion)
+        if not self.permiso_configuracion:
+            raise SinPermisoConfiguracion("La API key cargada sólo puede emitir (simulado)")
+
+    async def cuenta(self) -> dict:
+        self._verificar("cuenta")
+        return {"ambiente": self.ambiente, "empresa": {"ruc": "99434715-4", "razonSocial": "EMPRESA DE PRUEBA S.A."},
+                "apiKey": {"nombre": "integracion", "prefijo": "gk_falso", "expiraEl": None},
+                "cuota": {"conPlan": False, "limite": None, "usados": len(self.documentos)},
+                "certificado": self.cert, "timbrado": self.timbrados[0]["numero"], "listoParaEmitir": True, "avisos": []}
+
+    async def config(self) -> dict:
+        self._configurar("config")
+        return {"empresa": {"ruc": "99434715", "dv": 4}, "timbrados": self.timbrados, "establecimientos": [],
+                "actividadesEconomicas": [], "kude": dict(self.kude), "correo": dict(self.correo)}
+
+    async def guardar_kude(self, diseno: dict) -> dict:
+        self._configurar("guardar_kude")
+        self.kude.update(diseno)
+        return dict(self.kude)
+
+    async def vista_previa_kude(self, formato: str, diseno: dict) -> tuple[bytes, str]:
+        self._configurar("vista_previa_kude")
+        return b"%PDF-1.4 vista previa " + formato.encode() + b" " + str(sorted(diseno.items())).encode(), "establecimiento"
+
+    async def ver_logo(self):
+        self._configurar("ver_logo")
+        return self.logo
+
+    async def subir_logo(self, nombre: str, contenido: bytes, tipo: str) -> None:
+        self._configurar("subir_logo")
+        self.logo = (contenido, tipo)
+
+    async def borrar_logo(self) -> None:
+        self._configurar("borrar_logo")
+        self.logo = None
+
+    async def certificado(self) -> dict:
+        self._configurar("certificado")
+        return dict(self.cert)
+
+    async def subir_certificado(self, nombre: str, contenido: bytes, password: str) -> dict:
+        self._configurar("subir_certificado")
+        if password != "clave-del-certificado":
+            raise DocumentoInvalido(["El archivo o la contraseña no son válidos"])
+        self.cert = {"vigente": True, "validoHasta": "2028-01-01T00:00:00", "diasParaVencer": 440, "archivo": nombre}
+        return dict(self.cert)
+
+    async def guardar_correo(self, datos: dict) -> dict:
+        self._configurar("guardar_correo")
+        self.correo.update(datos)
+        return dict(self.correo)
+
+    async def probar_correo(self, destino: str) -> dict:
+        self._configurar("probar_correo")
+        self.correos_de_prueba.append(destino)
+        return {"enviado": True}
+
+    async def guardar_timbrado(self, ambiente: str, numero: str, fecha_inicio: str) -> None:
+        self._configurar("guardar_timbrado")
+        self.timbrados = [t for t in self.timbrados if t["ambiente"] != ambiente] + \
+            [{"ambiente": ambiente, "numero": numero, "fechaInicio": fecha_inicio}]

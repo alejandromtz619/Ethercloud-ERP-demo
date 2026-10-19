@@ -13,6 +13,8 @@ import {
 import { toast } from 'sonner';
 import { resolverImagenUrl } from '../lib/imagenes';
 import { olvidarAjustesImpresion } from '../lib/ajustesImpresion';
+import CuentaSifenSis from '../components/CuentaSifenSis';
+import { useModulos } from '../lib/modulos';
 
 // Configuración de esta instancia: lo que cambia de un cliente a otro (datos de la empresa, claves de
 // APIs, conexiones). Las secciones vienen del backend (backend/configuracion.py): una clave nueva
@@ -416,7 +418,9 @@ function Historial({ version }) {
               <li key={i} className="flex flex-wrap gap-x-2">
                 <span className="text-muted-foreground">{fechaHora(c.creado_en)} · {c.usuario || 'sistema'}</span>
                 <span className="font-medium">{c.etiqueta}:</span>
-                <span>{c.valor_anterior || '(vacío)'} → {c.valor_nuevo === null ? '(por defecto)' : (c.valor_nuevo || '(vacío)')}</span>
+                {c.clave.startsWith('sifensis.')
+                  ? <span>{c.valor_nuevo}</span>
+                  : <span>{c.valor_anterior || '(vacío)'} → {c.valor_nuevo === null ? '(por defecto)' : (c.valor_nuevo || '(vacío)')}</span>}
               </li>
             ))}
           </ul>
@@ -432,6 +436,7 @@ const Configuracion = () => {
   const { api, hasPermission } = useApp();
   const [config, setConfig] = useState(null);
   const [version, setVersion] = useState(0);
+  const modulos = useModulos();
 
   const cargar = useCallback(() => api('/configuracion').then(setConfig).catch((e) => toast.error(e.message)), [api]);
   useEffect(() => { cargar(); }, [cargar]);
@@ -451,6 +456,7 @@ const Configuracion = () => {
       )}
       {hasPermission('sistema.configurar') && <DatosEmpresa />}
       {config?.secciones.map((s) => <Seccion key={s.seccion} seccion={s} onGuardado={alGuardar} />)}
+      {hasPermission('sistema.integraciones') && modulos.fe && <CuentaSifenSis key={version} />}
       {hasPermission('sistema.integraciones') && <TokensIntegracion />}
       <Modulos />
       <Historial version={version} />

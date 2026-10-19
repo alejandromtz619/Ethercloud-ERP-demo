@@ -411,3 +411,71 @@ def test_factura_agrupada_electronica(client, admin, falso, escenario):
     assert client.post(f"/api/fiscal/facturas-grupales/{grupal['id']}/factura", headers=admin).status_code == 409
     estados = client.get("/api/fiscal/facturas-grupales/estados", headers=admin, params={"ids": grupal["id"]}).json()
     assert estados[str(grupal["id"])]["id"] == doc["id"]
+
+
+# ---------------------------------------------------------------- cuenta de SIFEN SIS
+
+def test_cuenta_estado_y_configuracion(client, admin, falso):
+    r = client.get("/api/fiscal/cuenta", headers=admin).json()
+    assert r["permiso_configuracion"] is True and r["cuenta"]["listoParaEmitir"] and r["configuracion"]["kude"]["mostrarQr"]
+    falso.permiso_configuracion = False  # key de sólo emisión: el estado se ve, la configuración no
+    r = client.get("/api/fiscal/cuenta", headers=admin).json()
+    assert r["permiso_configuracion"] is False and r["configuracion"] is None and r["cuenta"]["certificado"]["vigente"]
+    r = client.put("/api/fiscal/cuenta/kude", headers=admin, json={"textoPie": "Gracias"})
+    assert r.status_code == 403 and "sólo puede emitir" in r.json()["detail"]
+
+
+def test_cuenta_kude_logo_y_vista_previa(client, admin, falso):
+    assert client.put("/api/fiscal/cuenta/kude", headers=admin, json={"colorPrimario": "rojo"}).status_code == 422
+    r = client.put("/api/fiscal/cuenta/kude", headers=admin, json={"colorPrimario": "#0044CC", "textoPie": "Gracias por su compra",
+                                                                   "mostrarQr": True, "otraCosa": 1})
+    assert r.status_code == 200 and falso.kude["colorPrimario"] == "#0044CC" and "otraCosa" not in falso.kude
+    r = client.post("/api/fiscal/cuenta/kude/vista-previa", headers=admin, json={"formato": "ticket", "diseno": {"colorPrimario": "#FF0000"}})
+    assert r.status_code == 200 and r.content.startswith(b"%PDF") and b"ticket" in r.content
+    assert r.headers["X-Datos-Ejemplo"] == "establecimiento" and falso.kude["colorPrimario"] == "#0044CC"  # no se guardó
+    assert client.get("/api/fiscal/cuenta/kude/logo", headers=admin).status_code == 404
+    r = client.post("/api/fiscal/cuenta/kude/logo", headers=admin, files={"archivo": ("logo.gif", b"GIF89a", "image/gif")})
+    assert r.status_code == 422
+    r = client.post("/api/fiscal/cuenta/kude/logo", headers=admin, files={"archivo": ("logo.png", b"\x89PNG...", "image/png")})
+    assert r.status_code == 200
+    r = client.get("/api/fiscal/cuenta/kude/logo", headers=admin)
+    assert r.content == b"\x89PNG..." and r.headers["content-type"] == "image/png"
+    assert client.delete("/api/fiscal/cuenta/kude/logo", headers=admin).status_code == 200 and falso.logo is None
+
+
+def test_cuenta_certificado_correo_y_timbrado(client, admin, falso):
+    r = client.post("/api/fiscal/cuenta/certificado", headers=admin, data={"password": "x"},
+                    files={"archivo": ("firma.pem", b"...", "application/octet-stream")})
+    assert r.status_code == 422 and ".p12" in r.json()["detail"]
+    r = client.post("/api/fiscal/cuenta/certificado", headers=admin, data={"password": "equivocada"},
+                    files={"archivo": ("firma.p12", b"\x30\x82", "application/x-pkcs12")})
+    assert r.status_code == 422 and "contraseña" in str(r.json()["detail"])
+    r = client.post("/api/fiscal/cuenta/certificado", headers=admin, data={"password": "clave-del-certificado"},
+                    files={"archivo": ("firma.p12", b"\x30\x82", "application/x-pkcs12")})
+    assert r.status_code == 200 and r.json()["validoHasta"].startswith("2028")
+    r = client.put("/api/fiscal/cuenta/correo", headers=admin, json={"envioActivo": True, "nombreRemitente": "Baterías del Este"})
+    assert r.status_code == 200 and falso.correo["envioActivo"] is True
+    assert client.post("/api/fiscal/cuenta/correo/prueba", headers=admin, json={"destino": "no-es-correo"}).status_code == 422
+    assert client.post("/api/fiscal/cuenta/correo/prueba", headers=admin, json={"destino": "yo@x.com"}).status_code == 200
+    assert falso.correos_de_prueba == ["yo@x.com"]
+    assert client.put("/api/fiscal/cuenta/timbrado", headers=admin, json={"ambiente": "PRODUCCION", "numero": "123",
+                                                                          "fecha_inicio": "2026-10-01"}).status_code == 422
+    r = client.put("/api/fiscal/cuenta/timbrado", headers=admin, json={"ambiente": "PRODUCCION", "numero": "87654321",
+                                                                       "fecha_inicio": "2026-10-01"})
+    assert r.status_code == 200 and {"ambiente": "PRODUCCION", "numero": "87654321", "fechaInicio": "2026-10-01"} in falso.timbrados
+    # Todo queda en el historial de Configuración (el certificado, sin la contraseña)
+    historial = client.get("/api/configuracion/cambios", headers=admin).json()
+    etiquetas = [h["etiqueta"] for h in historial[:5]]
+    assert "Certificado digital (SIFEN SIS)" in etiquetas and "Timbrado (SIFEN SIS)" in etiquetas
+    assert "clave-del-certificado" not in str(historial)
+
+
+def test_cuenta_pide_sistema_integraciones(client, admin, falso):
+    ids = {p["clave"]: p["id"] for p in client.get("/api/permisos", headers=admin).json()}
+    rol = client.post("/api/roles", headers=admin, json={"nombre": "SOLO CONFIGURAR", "empresa_id": 1}).json()
+    client.post(f"/api/roles/{rol['id']}/permisos/{ids['sistema.configurar']}", headers=admin)
+    u = client.post("/api/auth/register", headers=admin, json={"email": "cuenta-config@test.com", "password": "clave-segura-123",
+                                                               "nombre": "Conf", "empresa_id": 1}).json()
+    client.post(f"/api/usuarios/{u['usuario']['id']}/roles/{rol['id']}", headers=admin)
+    token = client.post("/api/auth/login", json={"email": "cuenta-config@test.com", "password": "clave-segura-123"}).json()["access_token"]
+    assert client.get("/api/fiscal/cuenta", headers={"Authorization": f"Bearer {token}"}).status_code == 403

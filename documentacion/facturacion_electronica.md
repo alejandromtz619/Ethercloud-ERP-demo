@@ -22,8 +22,12 @@ Las variables de entorno `SIFENSIS_API_KEY`, `SIFEN_PUNTO`, `SIFEN_ESTABLECIMIEN
 `SIFEN_PLAZO_CREDITO` siguen funcionando: si existen, ganan sobre la pantalla (que las muestra como
 "fijadas en el servidor").
 
-Los datos del emisor (RUC, timbrado, establecimientos, actividades, certificado, CSC) se cargan en el
-portal de SIFEN SIS, no en el ERP.
+**Cuenta de SIFEN SIS** (Configuración, con `sistema.integraciones`): estado de la cuenta (lista para
+emitir, avisos, vencimiento del certificado, documentos del período) con cualquier key; y, con una key
+**"Emisión + configuración"**, desde el ERP: diseño y logo del KuDE con vista previa (A4 y ticket),
+certificado digital (.p12 con su contraseña, que el ERP no guarda), envío del KuDE por correo (con correo de
+prueba) y timbrado por ambiente. Cada cambio queda en el historial de Configuración. Lo demás (CSC,
+establecimientos, actividades, SMTP propio, plantillas de correo) se carga en el portal de SIFEN SIS.
 
 ## Cómo se emite
 

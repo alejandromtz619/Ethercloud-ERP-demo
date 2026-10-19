@@ -6,7 +6,7 @@ imprimir la factura en papel puede emitir la electrónica); configuración, sist
 """
 from typing import Callable, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -15,14 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import configuracion
 from database import get_db
 from fiscal import catalogos, constructor, numerador
-from fiscal.puerto import ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, ErrorFiscal
+from fiscal.puerto import ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, ErrorFiscal, SinPermisoConfiguracion
 from fiscal.servicio import EN_CAMINO, ServicioFiscal
 from models import (
-    Cliente, DocumentoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
+    CambioConfiguracion, Cliente, DocumentoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
     factura_grupal_ventas,
 )
 
 EMITIR = ("facturas.ver", "ventas.crear", "ventas.ver", "ventas.ver_historial")
+INTEGRACIONES = ("sistema.integraciones",)  # cuenta de SIFEN SIS: certificado, KuDE, correo, timbrado
+TOPE_LOGO = 1_000_000          # bytes
+TOPE_CERTIFICADO = 200_000
 CONFIGURAR = ("sistema.configurar",)
 NOMBRES_TIPO = {1: "Factura electrónica", 5: "Nota de crédito electrónica", 6: "Nota de débito electrónica"}
 
@@ -30,6 +33,43 @@ NOMBRES_TIPO = {1: "Factura electrónica", 5: "Nota de crédito electrónica", 6
 class Cheque(BaseModel):
     numero: str = Field(min_length=1, max_length=20)
     banco: str = Field(min_length=2, max_length=100)
+
+
+class DisenoKude(BaseModel):
+    """Lo que se puede cambiar del KuDE desde el ERP (lo demás queda como esté en SIFEN SIS)."""
+    colorPrimario: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    colorSecundario: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    colorAcento: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    colorTexto: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+    textoPie: Optional[str] = Field(None, max_length=300)
+    tamanoLogo: Optional[Literal["s", "m", "l"]] = None
+    mostrarQr: Optional[bool] = None
+    mostrarTimbrado: Optional[bool] = None
+    mostrarLiquidacion: Optional[bool] = None
+    esquinasRedondeadas: Optional[bool] = None
+
+
+class VistaPrevia(BaseModel):
+    formato: Literal["a4", "ticket", "ticket58"] = "a4"
+    diseno: DisenoKude = DisenoKude()
+
+
+class Correo(BaseModel):
+    envioActivo: Optional[bool] = None
+    nombreRemitente: Optional[str] = Field(None, max_length=100)
+    responderA: Optional[str] = Field(None, max_length=255)
+    adjuntarXml: Optional[bool] = None
+    enviarEnPruebas: Optional[bool] = None
+
+
+class CorreoDePrueba(BaseModel):
+    destino: str = Field(min_length=3, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class Timbrado(BaseModel):
+    ambiente: Literal["HOMOLOGACION", "PRODUCCION"]
+    numero: str = Field(pattern=r"^\d{8}$")
+    fecha_inicio: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
 class PedidoFactura(BaseModel):
@@ -54,6 +94,8 @@ def _error_http(e: ErrorFiscal) -> HTTPException:
         return HTTPException(status_code=409, detail=e.mensaje)
     if isinstance(e, DocumentoNoEncontrado):
         return HTTPException(status_code=404, detail=e.mensaje)
+    if isinstance(e, SinPermisoConfiguracion):
+        return HTTPException(status_code=403, detail=e.mensaje)
     return HTTPException(status_code=503, detail=e.mensaje)
 
 
@@ -366,5 +408,135 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             raise _error_http(e)
         return Response(contenido, media_type="application/xml",
                         headers={"Content-Disposition": f'attachment; filename="{doc.cdc}.xml"'})
+
+    # ------------------------------------------------------------ cuenta de SIFEN SIS
+    async def _registrar(db: AsyncSession, usuario: Usuario, clave: str, nuevo: str) -> None:
+        """Cambios en la cuenta del proveedor: quedan en el historial de Configuración."""
+        db.add(CambioConfiguracion(clave=clave, valor_anterior=None, valor_nuevo=nuevo[:500], usuario_id=usuario.id))
+        await db.commit()
+
+    @router.get("/cuenta")
+    async def ver_cuenta(request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES))):
+        """Estado de la cuenta (lo puede leer cualquier key) y, si la key tiene permiso de configuración,
+        la configuración de la empresa en SIFEN SIS."""
+        emisor = servicio(request).emisor
+        try:
+            cuenta = await emisor.cuenta()
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        try:
+            config, permiso = await emisor.config(), True
+        except SinPermisoConfiguracion as e:
+            config, permiso = None, False
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        return {"cuenta": cuenta, "configuracion": config, "permiso_configuracion": permiso}
+
+    @router.put("/cuenta/kude")
+    async def guardar_kude(datos: DisenoKude, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES)),
+                           db: AsyncSession = Depends(get_db)):
+        diseno = datos.model_dump(exclude_none=True)
+        try:
+            guardado = await servicio(request).emisor.guardar_kude(diseno)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        await _registrar(db, usuario, "sifensis.kude", ", ".join(f"{k}={v}" for k, v in diseno.items()))
+        return guardado
+
+    @router.post("/cuenta/kude/vista-previa")
+    async def vista_previa(datos: VistaPrevia, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES))):
+        """KuDE de un documento de ejemplo con el diseño (sin guardarlo). X-Datos-Ejemplo dice qué datos
+        de la empresa faltan cargar (los completa con valores ficticios)."""
+        try:
+            pdf, ejemplo = await servicio(request).emisor.vista_previa_kude(datos.formato, datos.diseno.model_dump(exclude_none=True))
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        return Response(pdf, media_type="application/pdf",
+                        headers={"X-Datos-Ejemplo": ejemplo, "Access-Control-Expose-Headers": "X-Datos-Ejemplo"})
+
+    @router.get("/cuenta/kude/logo")
+    async def ver_logo(request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES))):
+        try:
+            logo = await servicio(request).emisor.ver_logo()
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        if not logo:
+            raise HTTPException(status_code=404, detail="Sin logo")
+        return Response(logo[0], media_type=logo[1])
+
+    @router.post("/cuenta/kude/logo")
+    async def subir_logo(request: Request, archivo: UploadFile = File(...), usuario: Usuario = Depends(requiere(INTEGRACIONES)),
+                         db: AsyncSession = Depends(get_db)):
+        if archivo.content_type not in ("image/png", "image/jpeg"):
+            raise HTTPException(status_code=422, detail="El logo tiene que ser PNG o JPG")
+        contenido = await archivo.read(TOPE_LOGO + 1)
+        if len(contenido) > TOPE_LOGO:
+            raise HTTPException(status_code=422, detail="El logo no puede pasar de 1 MB")
+        try:
+            await servicio(request).emisor.subir_logo(archivo.filename or "logo", contenido, archivo.content_type)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        await _registrar(db, usuario, "sifensis.logo", f"subido ({archivo.filename}, {len(contenido)} bytes)")
+        return {"ok": True}
+
+    @router.delete("/cuenta/kude/logo")
+    async def borrar_logo(request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES)), db: AsyncSession = Depends(get_db)):
+        try:
+            await servicio(request).emisor.borrar_logo()
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        await _registrar(db, usuario, "sifensis.logo", "quitado")
+        return {"ok": True}
+
+    @router.post("/cuenta/certificado")
+    async def subir_certificado(request: Request, archivo: UploadFile = File(...), password: str = Form(..., min_length=1),
+                                usuario: Usuario = Depends(requiere(INTEGRACIONES)), db: AsyncSession = Depends(get_db)):
+        """Certificado digital (.p12 / .pfx) con su contraseña. Se pasa a SIFEN SIS; el ERP no guarda ni el
+        archivo ni la contraseña. Reemplaza al anterior: desde ahí los documentos se firman con éste."""
+        nombre = archivo.filename or "certificado.p12"
+        if not nombre.lower().endswith((".p12", ".pfx")):
+            raise HTTPException(status_code=422, detail="El certificado tiene que ser un archivo .p12 o .pfx")
+        contenido = await archivo.read(TOPE_CERTIFICADO + 1)
+        if len(contenido) > TOPE_CERTIFICADO:
+            raise HTTPException(status_code=422, detail="El archivo es demasiado grande para ser un certificado")
+        try:
+            emisor = servicio(request).emisor
+            await emisor.subir_certificado(nombre, contenido, password)
+            vigente = await emisor.certificado()
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        await _registrar(db, usuario, "sifensis.certificado", f"subido ({nombre}); válido hasta {vigente.get('validoHasta')}")
+        return vigente
+
+    @router.put("/cuenta/correo")
+    async def guardar_correo(datos: Correo, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES)),
+                             db: AsyncSession = Depends(get_db)):
+        """Envío automático del KuDE y el XML al cliente, desde SIFEN SIS."""
+        cambios = datos.model_dump(exclude_none=True)
+        try:
+            guardado = await servicio(request).emisor.guardar_correo(cambios)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        await _registrar(db, usuario, "sifensis.correo", ", ".join(f"{k}={v}" for k, v in cambios.items()))
+        return guardado
+
+    @router.post("/cuenta/correo/prueba")
+    async def correo_de_prueba(datos: CorreoDePrueba, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES))):
+        try:
+            return await servicio(request).emisor.probar_correo(datos.destino)
+        except ErrorFiscal as e:
+            raise _error_http(e)
+
+    @router.put("/cuenta/timbrado")
+    async def guardar_timbrado(datos: Timbrado, request: Request, usuario: Usuario = Depends(requiere(INTEGRACIONES)),
+                               db: AsyncSession = Depends(get_db)):
+        srv = servicio(request)
+        try:
+            await srv.emisor.guardar_timbrado(datos.ambiente, datos.numero, datos.fecha_inicio)
+            await srv.info(refrescar=True)  # el timbrado nuevo se ve enseguida en Probar conexión
+        except ErrorFiscal as e:
+            raise _error_http(e)
+        await _registrar(db, usuario, "sifensis.timbrado", f"{datos.ambiente}: {datos.numero} desde {datos.fecha_inicio}")
+        return {"ok": True}
 
     return router

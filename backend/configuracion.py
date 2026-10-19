@@ -300,6 +300,12 @@ async def guardar(db: AsyncSession, valores: dict, usuario_id: Optional[int]) ->
 # ---------------------------------------------------------------- rutas
 
 PERMISOS_LECTURA = ("sistema.configurar", "sistema.integraciones")
+# Cambios que se hacen en la cuenta de un proveedor (fiscal/rutas.py) y quedan en el mismo historial
+ETIQUETAS_EXTERNAS = {
+    "sifensis.kude": "Diseño del KuDE (SIFEN SIS)", "sifensis.logo": "Logo del KuDE (SIFEN SIS)",
+    "sifensis.certificado": "Certificado digital (SIFEN SIS)", "sifensis.correo": "Envío por correo (SIFEN SIS)",
+    "sifensis.timbrado": "Timbrado (SIFEN SIS)",
+}
 # Prueba de conexión por sección (la registra cada módulo, p. ej. facturación electrónica)
 PROBADORES: dict[str, Callable[[Request], Awaitable[dict]]] = {}
 
@@ -384,7 +390,8 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, mod
         filas = (await db.execute(select(CambioConfiguracion, Usuario.nombre, Usuario.apellido)
                                   .outerjoin(Usuario, Usuario.id == CambioConfiguracion.usuario_id)
                                   .order_by(CambioConfiguracion.id.desc()).limit(limit))).all()
-        return [{"clave": c.clave, "etiqueta": CLAVES[c.clave].etiqueta if c.clave in CLAVES else c.clave,
+        return [{"clave": c.clave,
+                 "etiqueta": CLAVES[c.clave].etiqueta if c.clave in CLAVES else ETIQUETAS_EXTERNAS.get(c.clave, c.clave),
                  "valor_anterior": c.valor_anterior, "valor_nuevo": c.valor_nuevo,
                  "usuario": " ".join(p for p in (nombre, apellido) if p) or None,
                  "creado_en": c.creado_en.isoformat() if c.creado_en else None} for c, nombre, apellido in filas]

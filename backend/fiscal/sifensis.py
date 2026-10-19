@@ -8,7 +8,8 @@ import httpx
 
 from fiscal import config
 from fiscal.puerto import (
-    ConflictoFiscal, CredencialFiscalInvalida, DocumentoInvalido, DocumentoNoEncontrado, EstadoDocumento, ProveedorNoDisponible,
+    ConflictoFiscal, CredencialFiscalInvalida, DocumentoInvalido, DocumentoNoEncontrado, EstadoDocumento,
+    SinPermisoConfiguracion, ProveedorNoDisponible,
     ResultadoEmision, ResultadoEvento,
 )
 
@@ -55,6 +56,9 @@ class SifenSis:
                 datos = _cuerpo(r)
                 if r.status_code == 400:
                     raise DocumentoInvalido(datos.get("errores") or [_mensaje(datos, "Documento inválido")], datos)
+                if r.status_code == 403 and "configuraci" in _mensaje(datos, "").lower():
+                    raise SinPermisoConfiguracion("La API key cargada sólo puede emitir. Para configurar la cuenta, "
+                                                  "generá en SIFEN SIS una key con permiso de configuración", datos)
                 if r.status_code in (401, 402, 403):
                     textos = {401: "La API key de SIFEN SIS no es válida", 402: "El plan de SIFEN SIS está vencido",
                               403: "La empresa está suspendida en SIFEN SIS"}
@@ -118,3 +122,53 @@ class SifenSis:
             return (await self._pedir("GET", f"/de/{cdc}/xml")).content
         params = {} if formato == "a4" else {"formato": formato}
         return (await self._pedir("GET", f"/de/{cdc}/kude", params=params)).content
+
+    # ---- cuenta y configuración de la empresa en SIFEN SIS ----
+    async def cuenta(self) -> dict:
+        return (await self._pedir("GET", "/cuenta")).json()
+
+    async def config(self) -> dict:
+        return (await self._pedir("GET", "/config")).json()
+
+    async def guardar_kude(self, diseno: dict) -> dict:
+        r = await self._pedir("PUT", "/config/kude", json=diseno)
+        return r.json() if r.content else {}
+
+    async def vista_previa_kude(self, formato: str, diseno: dict) -> tuple[bytes, str]:
+        """PDF de un documento de ejemplo con el diseño (sin guardarlo) y qué datos son ficticios."""
+        r = await self._pedir("POST", "/config/kude/preview",
+                              json={"tipoDocumento": 1, "formato": formato, "salida": "pdf", "diseno": diseno})
+        return r.content, r.headers.get("X-Kude-Datos-Ejemplo", "")
+
+    async def ver_logo(self):
+        try:
+            r = await self._pedir("GET", "/config/kude/logo")
+        except DocumentoNoEncontrado:
+            return None
+        return r.content, r.headers.get("content-type", "image/png")
+
+    async def subir_logo(self, nombre: str, contenido: bytes, tipo: str) -> None:
+        await self._pedir("POST", "/config/kude/logo", files={"file": (nombre, contenido, tipo)})
+
+    async def borrar_logo(self) -> None:
+        await self._pedir("DELETE", "/config/kude/logo")
+
+    async def certificado(self) -> dict:
+        r = await self._pedir("GET", "/config/certificado")
+        return r.json() if r.content else {}
+
+    async def subir_certificado(self, nombre: str, contenido: bytes, password: str) -> dict:
+        r = await self._pedir("POST", "/config/certificado", files={"file": (nombre, contenido, "application/x-pkcs12")},
+                              data={"password": password})
+        return r.json() if r.content else {}
+
+    async def guardar_correo(self, datos: dict) -> dict:
+        r = await self._pedir("PUT", "/config/correo", json=datos)
+        return r.json() if r.content else {}
+
+    async def probar_correo(self, destino: str) -> dict:
+        r = await self._pedir("POST", "/config/correo/prueba", json={"destino": destino, "tipoDocumento": 1})
+        return r.json() if r.content else {}
+
+    async def guardar_timbrado(self, ambiente: str, numero: str, fecha_inicio: str) -> None:
+        await self._pedir("PUT", "/config/timbrado", json={"ambiente": ambiente, "numero": numero, "fechaInicio": fecha_inicio})
