@@ -89,3 +89,7 @@ frontend/node_modules/.cache/default-development/6.pack
 
 # Archivos que genera el backend en tiempo de ejecución (PDF de enlaces, imágenes)
 backend/uploads/
+
+# Material local que no va al repo: especificación en PDF y el monitor 3D de la landing
+documentacion/Ethercloud-ERP-especificacion-tecnica.pdf
+documentacion/landing/
