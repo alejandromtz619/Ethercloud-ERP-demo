@@ -452,6 +452,8 @@ class Presupuesto(Base):
     total = Column(Numeric(15, 2), default=0)
     notas = Column(Text, nullable=True)
     creado_en = Column(DateTime(timezone=True), default=now_paraguay)
+    # Pedido (venta PENDIENTE) que salió de este presupuesto por la API de integración (CRM)
+    venta_id = Column(Integer, ForeignKey("ventas.id"), nullable=True)
 
     empresa = relationship("Empresa")
     cliente = relationship("Cliente")

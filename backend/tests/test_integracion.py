@@ -337,3 +337,46 @@ def test_listar_todos_los_clientes_de_a_paginas(client, tokens, contacto):
         cursor = r["cursor"]
     assert vistos == sorted(vistos) and len(vistos) == len(set(vistos))
     assert contacto["id"] in vistos
+
+
+# ---------- Presupuestos (oportunidades del CRM, etapa 3.4) ----------
+
+def test_presupuesto_con_precios_del_erp_y_pedido(client, admin, tokens, contacto, catalogo):
+    cuerpo = {"cliente_id": contacto["id"], "notas": "Pedido por WhatsApp",
+              "items": [{"producto_id": catalogo["mucho"]["id"], "cantidad": 3}]}
+    r = client.post(f"{V1}/presupuestos", headers=admin, json=cuerpo)
+    assert r.status_code == 200, r.text
+    pres = r.json()
+    assert pres["total"] == 150000 and pres["items"][0]["precio_unitario"] == 50000 and pres["venta"] is None
+    # Queda en Presupuestos del ERP como cualquier otro
+    assert client.get(f"/api/presupuestos/{pres['presupuesto_id']}", headers=admin).json()["total"] in (150000, "150000.00")
+    assert client.get(f"{V1}/presupuestos/{pres['presupuesto_id']}", headers=admin).json()["total"] == 150000
+
+    # Presupuesto -> pedido: venta PENDIENTE con los precios del presupuesto; repetir devuelve la misma
+    ruta = f"{V1}/presupuestos/{pres['presupuesto_id']}/pedido"
+    pedido = client.post(ruta, headers=admin, json={"tipo_pago": "TRANSFERENCIA"}).json()
+    venta_id = pedido["venta"]["venta_id"]
+    assert pedido["venta"]["estado"] == "PENDIENTE" and pedido["venta"]["total"] == 150000
+    assert client.post(ruta, headers=admin, json={}).json()["venta"]["venta_id"] == venta_id
+
+    # Lo confirma un vendedor en el ERP: el presupuesto muestra la venta confirmada
+    assert client.post(f"/api/ventas/{venta_id}/confirmar-pendiente", headers=admin).status_code == 200
+    assert client.get(f"{V1}/presupuestos/{pres['presupuesto_id']}", headers=admin).json()["venta"]["estado"] == "CONFIRMADA"
+
+    # Si el pedido se anula, el presupuesto se puede volver a pedir (otra venta)
+    assert client.post(f"/api/ventas/{venta_id}/anular", headers=admin).status_code == 200
+    otro = client.post(ruta, headers=admin, json={}).json()
+    assert otro["venta"]["venta_id"] != venta_id and otro["venta"]["estado"] == "PENDIENTE"
+
+
+def test_presupuestos_invalidos_y_permisos(client, admin, tokens, contacto, catalogo):
+    base = {"cliente_id": contacto["id"], "items": [{"producto_id": catalogo["mucho"]["id"], "cantidad": 1}]}
+    assert client.post(f"{V1}/presupuestos", headers=admin, json={**base, "cliente_id": 999999}).status_code == 404
+    assert client.post(f"{V1}/presupuestos", headers=admin, json={**base, "items": []}).status_code == 422
+    assert client.post(f"{V1}/presupuestos", headers=admin,
+                       json={**base, "items": [{"producto_id": 999999, "cantidad": 1}]}).status_code == 400
+    assert client.get(f"{V1}/presupuestos/999999", headers=admin).status_code == 404
+    # Un token de servicio sin usuario no puede registrar presupuestos; el del bot ni siquiera tiene el scope
+    nuevo = client.post("/api/integracion/tokens", headers=admin, json={"nombre": f"{PREFIJO} interno nuevo", "perfil": "crm-interno"}).json()
+    assert client.post(f"{V1}/presupuestos", headers=_bearer(nuevo["token"]), json=base).status_code == 400
+    assert client.post(f"{V1}/presupuestos", headers=_bearer(tokens["bot"]["token"]), json=base).status_code == 403
