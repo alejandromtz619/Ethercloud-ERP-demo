@@ -39,6 +39,12 @@ Para que el CRM valide el login de una persona: `GET /api/auth/me` con su JWT. D
 | `clientes.escribir` | ✓ | | `clientes.crear`, `clientes.editar` |
 | `metricas.leer` | ✓ | | `bi.ver`, `dashboard.ver` |
 | `eventos.leer` | ✓ | | `sistema.configurar` |
+| `presupuestos.crear` | ✓ (*) | | `presupuestos.crear` |
+| `presupuestos.leer` | ✓ (*) | | `presupuestos.ver`, `presupuestos.crear` |
+
+(*) Los tokens guardan sus scopes al crearse: un `crm-interno` creado antes de que existieran los
+de presupuestos no los tiene. El CRM los usa con el token de la persona, así que no hace falta
+recrearlo.
 
 El ERP pone el límite: aunque el CRM fuera comprometido, el token del bot no puede leer clientes,
 ventas, costos ni eventos.
@@ -148,6 +154,33 @@ creados con ese mismo token.
 ```
 `estado` es `PENDIENTE` hasta que lo confirma un vendedor. Después pasa a `CONFIRMADA` o, si se
 anula, a `ANULADA`.
+
+### Presupuestos
+
+Los usa el CRM para las oportunidades: el vendedor arma el presupuesto, el cliente lo acepta y el
+presupuesto pasa a pedido.
+
+**`POST /presupuestos`** (`presupuestos.crear`). Necesita un usuario (token de una persona, o de
+servicio con usuario asignado): el presupuesto queda a su nombre.
+```json
+{"cliente_id": 51, "items": [{"producto_id": 12, "cantidad": 2}], "notas": "Pedido por WhatsApp"}
+```
+Los precios son los de venta actuales del ERP: el pedido no trae precios. El presupuesto aparece en
+la pantalla Presupuestos del ERP como cualquier otro, con su PDF.
+
+**`GET /presupuestos/{id}`** (`presupuestos.leer`):
+```json
+{"presupuesto_id": 40, "numero": "presupuesto-040", "cliente_id": 51, "notas": "...", "total": 170000.0,
+ "items": [{"producto_id": 12, "nombre": "...", "cantidad": 2, "precio_unitario": 85000.0, "total": 170000.0}],
+ "creado_en": "...", "venta": {"venta_id": 302, "estado": "PENDIENTE", "total": 170000.0}}
+```
+`venta` es `null` hasta que el presupuesto pasa a pedido.
+
+**`POST /presupuestos/{id}/pedido`** (`pedidos.crear`), cuerpo `{"tipo_pago": "EFECTIVO", "es_delivery": false}`
+(los dos opcionales): crea una **venta PENDIENTE** con los precios del presupuesto (con el descuento
+del cliente, como toda venta) y devuelve el presupuesto con su `venta`. Un presupuesto da un solo
+pedido: repetir la llamada, aunque sea a la vez, devuelve el mismo. Si ese pedido se anuló, la
+llamada crea uno nuevo. `400` si algún producto ya no está a la venta.
 
 ### Eventos (`eventos.leer`)
 

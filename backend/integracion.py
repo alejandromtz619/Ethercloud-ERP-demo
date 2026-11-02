@@ -20,7 +20,7 @@ from typing import Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, event, func, insert, inspect as sa_inspect, or_, select
+from sqlalchemy import delete, event, func, insert, inspect as sa_inspect, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.dialects.postgresql import insert as insert_pg
@@ -33,7 +33,7 @@ import configuracion
 from database import get_db
 from models import (
     PARAGUAY_TZ, Almacen, Categoria, Cliente, CreditoCliente, Entrega, EstadoEntrega, EstadoVenta, EventoIntegracion,
-    Marca, MovimientoStock, PedidoIntegracion, Presupuesto, Producto, StockActual, TipoMovimientoStock, TokenServicio,
+    Marca, MovimientoStock, PedidoIntegracion, Presupuesto, PresupuestoItem, Producto, StockActual, TipoMovimientoStock, TokenServicio,
     Usuario, UsoToken, Venta, VentaItem,
 )
 from schemas import VentaCreate, VentaItemCreate
@@ -41,7 +41,7 @@ from schemas import VentaCreate, VentaItemCreate
 PREFIJO_TOKEN = "ecs_"
 
 SCOPES = ("catalogo.publico", "pedidos.crear", "pedidos.leer", "clientes.leer", "clientes.escribir",
-          "metricas.leer", "eventos.leer")
+          "metricas.leer", "eventos.leer", "presupuestos.crear", "presupuestos.leer")
 PERFILES = {
     "crm-interno": SCOPES,
     "crm-bot": ("catalogo.publico", "pedidos.crear", "pedidos.leer"),
@@ -55,6 +55,8 @@ PERMISOS_POR_SCOPE = {
     "clientes.escribir": ("clientes.crear", "clientes.editar"),
     "metricas.leer": ("bi.ver", "dashboard.ver"),
     "eventos.leer": ("sistema.configurar",),
+    "presupuestos.crear": ("presupuestos.crear",),
+    "presupuestos.leer": ("presupuestos.ver", "presupuestos.crear"),
 }
 
 
@@ -585,6 +587,125 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, arm
         if cred.es_servicio and "clientes.leer" not in (cred.token.scopes or []) and pedido.token_id != cred.token.id:
             raise HTTPException(status_code=404, detail="Pedido no encontrado")
         return await _pedido_publico(db, pedido)
+
+    # ---------- Presupuestos (oportunidades del CRM) ----------
+    class ItemPresupuesto(BaseModel):
+        producto_id: int
+        cantidad: int = Field(gt=0, le=10000)
+
+    class PresupuestoNuevo(BaseModel):
+        cliente_id: int
+        items: list[ItemPresupuesto] = Field(min_length=1, max_length=100)
+        notas: Optional[str] = Field(None, max_length=2000)
+
+    class PedidoDePresupuesto(BaseModel):
+        tipo_pago: Literal["EFECTIVO", "TARJETA", "TRANSFERENCIA"] = "EFECTIVO"  # crédito: sólo un vendedor
+        es_delivery: bool = False
+
+    async def _presupuesto_de_la_empresa(db: AsyncSession, cred: Credencial, presupuesto_id: int) -> Presupuesto:
+        presupuesto = await db.get(Presupuesto, presupuesto_id)
+        if not presupuesto or presupuesto.empresa_id != cred.empresa_id:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+        return presupuesto
+
+    async def _presupuesto_publico(db: AsyncSession, presupuesto: Presupuesto) -> dict:
+        items = (await db.execute(select(PresupuestoItem).where(PresupuestoItem.presupuesto_id == presupuesto.id)
+                                  .order_by(PresupuestoItem.id))).scalars().all()
+        venta = await db.get(Venta, presupuesto.venta_id) if presupuesto.venta_id else None
+        return {
+            "presupuesto_id": presupuesto.id, "numero": f"presupuesto-{presupuesto.id:03d}",
+            "cliente_id": presupuesto.cliente_id, "notas": presupuesto.notas, "total": float(presupuesto.total or 0),
+            "items": [{"producto_id": i.producto_id, "nombre": i.nombre_producto, "cantidad": i.cantidad,
+                       "precio_unitario": float(i.precio_venta_unitario), "total": float(i.subtotal)} for i in items],
+            "creado_en": presupuesto.creado_en.isoformat() if presupuesto.creado_en else None,
+            # El pedido que salió del presupuesto (PENDIENTE hasta que lo confirma un vendedor)
+            "venta": {"venta_id": venta.id, "estado": venta.estado.value, "total": float(venta.total or 0)} if venta else None,
+        }
+
+    @router.post("/presupuestos")
+    async def crear_presupuesto(
+        data: PresupuestoNuevo,
+        cred: Credencial = Depends(requiere_scope("presupuestos.crear")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Presupuesto con los precios de venta actuales del ERP (el pedido no trae precios). Queda en
+        Presupuestos del ERP como cualquier otro, a nombre de quien lo pidió."""
+        usuario_id = cred.usuario.id if cred.usuario else None
+        if not usuario_id:
+            raise HTTPException(status_code=400, detail="El token no tiene un usuario asignado para registrar presupuestos")
+        await _cliente_de_la_empresa(db, cred, data.cliente_id)
+        ids = [i.producto_id for i in data.items]
+        productos = {p.id: p for p in (await db.execute(select(Producto).where(
+            Producto.id.in_(ids), Producto.empresa_id == cred.empresa_id, Producto.activo == True))).scalars().all()}
+        faltan = sorted(set(ids) - set(productos))
+        if faltan:
+            raise HTTPException(status_code=400, detail={"mensaje": "Productos inexistentes o inactivos", "producto_ids": faltan})
+        presupuesto = Presupuesto(empresa_id=cred.empresa_id, cliente_id=data.cliente_id, usuario_id=usuario_id,
+                                  notas=(data.notas or "").strip() or None, subtotal=0, total=0)
+        db.add(presupuesto)
+        await db.flush()
+        total = 0
+        for item in data.items:
+            p = productos[item.producto_id]
+            subtotal = p.precio_venta * item.cantidad
+            total += subtotal
+            db.add(PresupuestoItem(presupuesto_id=presupuesto.id, producto_id=p.id, nombre_producto=p.nombre,
+                                   imagen_url=p.imagen_url, cantidad=item.cantidad, precio_venta_unitario=p.precio_venta,
+                                   subtotal=subtotal, tasa_iva=p.tasa_iva))
+        presupuesto.subtotal = presupuesto.total = total
+        await db.commit()
+        return await _presupuesto_publico(db, presupuesto)
+
+    @router.get("/presupuestos/{presupuesto_id}")
+    async def ver_presupuesto(
+        presupuesto_id: int,
+        cred: Credencial = Depends(requiere_scope("presupuestos.leer")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        return await _presupuesto_publico(db, await _presupuesto_de_la_empresa(db, cred, presupuesto_id))
+
+    @router.post("/presupuestos/{presupuesto_id}/pedido")
+    async def pedido_de_presupuesto(
+        presupuesto_id: int,
+        data: PedidoDePresupuesto,
+        cred: Credencial = Depends(requiere_scope("pedidos.crear")),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Convierte el presupuesto en un pedido (venta PENDIENTE que confirma un vendedor) con los
+        precios del presupuesto. Un presupuesto da un solo pedido: repetir devuelve el mismo; si ese
+        pedido se anuló, se puede volver a pedir."""
+        presupuesto = await _presupuesto_de_la_empresa(db, cred, presupuesto_id)
+        previa = await db.get(Venta, presupuesto.venta_id) if presupuesto.venta_id else None
+        if previa and previa.estado != EstadoVenta.ANULADA:
+            return await _presupuesto_publico(db, presupuesto)
+        usuario_id = cred.usuario.id if cred.usuario else None
+        if not usuario_id:
+            raise HTTPException(status_code=400, detail="El token no tiene un usuario asignado para registrar pedidos")
+        items = (await db.execute(select(PresupuestoItem).where(PresupuestoItem.presupuesto_id == presupuesto.id)
+                                  .order_by(PresupuestoItem.id))).scalars().all()
+        ids = {i.producto_id for i in items}
+        activos = set((await db.execute(select(Producto.id).where(
+            Producto.id.in_([i for i in ids if i]), Producto.empresa_id == cred.empresa_id,
+            Producto.activo == True))).scalars().all())
+        if not items or ids - activos:
+            raise HTTPException(status_code=400, detail="El presupuesto tiene productos que ya no están a la venta")
+        venta = await armar_venta(db, VentaCreate(
+            empresa_id=cred.empresa_id, usuario_id=usuario_id, cliente_id=presupuesto.cliente_id, tipo_pago=data.tipo_pago,
+            es_delivery=data.es_delivery,
+            items=[VentaItemCreate(producto_id=i.producto_id, cantidad=i.cantidad, precio_unitario=i.precio_venta_unitario)
+                   for i in items],
+        ), True)
+        # Atómico: si dos lo piden a la vez, uno solo enlaza su venta; el otro deshace la suya y devuelve la ganadora
+        anterior = Presupuesto.venta_id.is_(None) if previa is None else Presupuesto.venta_id == previa.id
+        enlazado = (await db.execute(update(Presupuesto).where(Presupuesto.id == presupuesto.id, anterior)
+                                     .values(venta_id=venta.id).execution_options(synchronize_session=False))).rowcount
+        if not enlazado:
+            await db.rollback()
+        else:
+            await db.commit()
+        presupuesto = await _presupuesto_de_la_empresa(db, cred, presupuesto_id)
+        await db.refresh(presupuesto)
+        return await _presupuesto_publico(db, presupuesto)
 
     # ---------- Eventos ----------
     @router.get("/eventos")
