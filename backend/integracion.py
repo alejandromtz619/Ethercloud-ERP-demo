@@ -23,14 +23,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, event, func, insert, inspect as sa_inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.dialects.postgresql import insert as insert_pg
+from sqlalchemy.dialects.sqlite import insert as insert_sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+import configuracion
 
 from database import get_db
 from models import (
     PARAGUAY_TZ, Almacen, Categoria, Cliente, CreditoCliente, Entrega, EstadoEntrega, EstadoVenta, EventoIntegracion,
     Marca, MovimientoStock, PedidoIntegracion, Presupuesto, Producto, StockActual, TipoMovimientoStock, TokenServicio,
-    Usuario, Venta, VentaItem,
+    Usuario, UsoToken, Venta, VentaItem,
 )
 from schemas import VentaCreate, VentaItemCreate
 
@@ -145,6 +149,26 @@ class Credencial:
         return self.token is not None
 
 
+async def contar_uso(db: AsyncSession, token: TokenServicio) -> None:
+    """Suma la petición al minuto en curso del token y responde 429 si pasó su límite. El límite es por
+    perfil (configurable): el bot, sin acceso a clientes, más bajo que la sincronización del CRM."""
+    ahora = datetime.now(timezone.utc).timestamp()
+    minuto = int(ahora // 60)
+    insertar = insert_pg if db.bind.dialect.name == "postgresql" else insert_sqlite
+    sentencia = insertar(UsoToken).values(token_id=token.id, minuto=minuto, cantidad=1)
+    sentencia = sentencia.on_conflict_do_update(index_elements=[UsoToken.token_id, UsoToken.minuto],
+                                                set_={"cantidad": UsoToken.cantidad + 1}).returning(UsoToken.cantidad)
+    cantidad = (await db.execute(sentencia)).scalar()
+    if cantidad == 1:  # primera del minuto: se borran los minutos viejos de este token
+        await db.execute(delete(UsoToken).where(UsoToken.token_id == token.id, UsoToken.minuto < minuto - 5))
+    await db.commit()
+    interno = "clientes.leer" in (token.scopes or [])
+    limite = int(await configuracion.obtener("integracion.limite_interno" if interno else "integracion.limite_bot"))
+    if cantidad > limite:
+        raise HTTPException(status_code=429, detail=f"Límite de {limite} peticiones por minuto para este token",
+                            headers={"Retry-After": str(max(1, int(60 - ahora % 60)))})
+
+
 def _token_del_encabezado(request: Request) -> str:
     valor = request.headers.get("Authorization", "")
     if not valor.lower().startswith("bearer ") or not valor[7:].strip():
@@ -171,6 +195,7 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable, arm
             if not fila.ultimo_uso or ahora - fila.ultimo_uso.replace(tzinfo=fila.ultimo_uso.tzinfo or timezone.utc) > timedelta(minutes=1):
                 fila.ultimo_uso = ahora
                 await db.commit()
+            await contar_uso(db, fila)
             usuario = await db.get(Usuario, fila.usuario_id) if fila.usuario_id else None
             cred = Credencial(empresa_id=fila.empresa_id, usuario=usuario, token=fila)
         else:

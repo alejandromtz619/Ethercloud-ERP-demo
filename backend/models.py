@@ -662,6 +662,16 @@ class TokenServicio(Base):
     ultimo_uso = Column(DateTime(timezone=True), nullable=True)
 
 
+class UsoToken(Base):
+    """Peticiones de un token de servicio en un minuto (minuto = segundos desde 1970 // 60), para el
+    límite por token de la API de integración. Se suma con un upsert: vale con varios procesos."""
+    __tablename__ = "uso_tokens"
+
+    token_id = Column(Integer, ForeignKey("tokens_servicio.id", ondelete="CASCADE"), primary_key=True)
+    minuto = Column(Integer, primary_key=True)
+    cantidad = Column(Integer, nullable=False, default=0)
+
+
 class EventoIntegracion(Base):
     """Outbox: un cambio del ERP que le interesa al CRM (venta confirmada, cliente creado...). Se
     escribe en la misma transacción que el cambio (integracion.registrar_eventos) y el CRM lo lee

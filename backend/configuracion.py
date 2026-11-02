@@ -75,6 +75,18 @@ def opcion(*valores: str) -> Callable[[Any], str]:
     return _validar
 
 
+def entero_entre(minimo: int, maximo: int) -> Callable[[Any], int]:
+    def _validar(valor) -> int:
+        try:
+            numero = int(str(valor).strip())
+        except ValueError:
+            raise ConfiguracionInvalida("debe ser un número entero")
+        if not minimo <= numero <= maximo:
+            raise ConfiguracionInvalida(f"debe estar entre {minimo} y {maximo}")
+        return numero
+    return _validar
+
+
 def decimal_entre(minimo: float, maximo: float) -> Callable[[Any], float]:
     def _validar(valor) -> float:
         try:
@@ -109,6 +121,7 @@ SECCIONES = {
     "documentos": ("Documentos impresos", None),
     "facturacion_electronica": ("Facturación electrónica (SIFEN)", "fe"),
     "laboratorio": ("Laboratorio", None),
+    "integracion": ("API de integración (CRM y bot)", "crm"),
 }
 
 # La factura preimpresa (hoja de la SET en matricial Epson LX-350) y la electrónica son dos vías aparte:
@@ -141,6 +154,12 @@ CLAVES = {c.nombre: c for c in (
     Clave("laboratorio.margen", "laboratorio", "Margen de ganancia del laboratorio", tipo="decimal", defecto=0.30,
           entorno="LAB_MARGEN_GANANCIA", validar=decimal_entre(0, 0.95),
           ayuda="Fracción del precio que es ganancia (0,30 = 30 %); el resto es costo"),
+    Clave("integracion.limite_bot", "integracion", "Peticiones por minuto del bot", tipo="decimal", defecto=60,
+          permiso="sistema.integraciones", validar=entero_entre(1, 10000),
+          ayuda="Para cada token sin acceso a clientes (perfil crm-bot). Pasado el límite responde 429"),
+    Clave("integracion.limite_interno", "integracion", "Peticiones por minuto del CRM", tipo="decimal", defecto=600,
+          permiso="sistema.integraciones", validar=entero_entre(1, 100000),
+          ayuda="Para cada token con acceso a clientes (perfil crm-interno, la sincronización del CRM)"),
 )}
 
 

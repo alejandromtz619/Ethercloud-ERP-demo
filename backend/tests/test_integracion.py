@@ -337,3 +337,30 @@ def test_listar_todos_los_clientes_de_a_paginas(client, tokens, contacto):
         cursor = r["cursor"]
     assert vistos == sorted(vistos) and len(vistos) == len(set(vistos))
     assert contacto["id"] in vistos
+
+
+def test_limite_de_peticiones_por_token(client, admin):
+    """El bot tiene su límite por minuto (configurable en la sección del CRM); pasado, 429 con Retry-After.
+    Cada token cuenta aparte y el token de una persona (JWT) no tiene este límite."""
+    tenia_crm = "crm" in server.MODULOS_ACTIVOS
+    server.MODULOS_ACTIVOS.add("crm")  # la sección es del módulo crm (el router guarda este mismo conjunto)
+    r = client.put("/api/configuracion/integracion", headers=admin, json={"valores": {"integracion.limite_bot": 3}})
+    assert r.status_code == 200, r.text
+    try:
+        crear = lambda n: client.post("/api/integracion/tokens", headers=admin,
+                                      json={"nombre": f"{PREFIJO} limite {n}", "perfil": "crm-bot"}).json()["token"]
+        bot, otro = crear(1), crear(2)
+        codigos = [client.get(f"{V1}/catalogo/productos", headers=_bearer(bot)).status_code for _ in range(5)]
+        if codigos[:3] != [200, 200, 200]:  # justo cambió el minuto: se repite una vez
+            codigos = [client.get(f"{V1}/catalogo/productos", headers=_bearer(bot)).status_code for _ in range(5)]
+        assert codigos[:3] == [200, 200, 200] and codigos[3:] == [429, 429]
+        r = client.get(f"{V1}/catalogo/productos", headers=_bearer(bot))
+        assert r.status_code == 429 and 1 <= int(r.headers["Retry-After"]) <= 60 and "3 peticiones" in r.json()["detail"]
+        assert client.get(f"{V1}/catalogo/productos", headers=_bearer(otro)).status_code == 200
+        assert all(client.get(f"{V1}/catalogo/productos", headers=admin).status_code == 200 for _ in range(5))
+        assert client.put("/api/configuracion/integracion", headers=admin,
+                          json={"valores": {"integracion.limite_bot": 0}}).status_code == 422
+    finally:
+        client.put("/api/configuracion/integracion", headers=admin, json={"valores": {"integracion.limite_bot": 60}})
+        if not tenia_crm:
+            server.MODULOS_ACTIVOS.discard("crm")

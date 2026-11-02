@@ -47,6 +47,16 @@ ventas, costos ni eventos.
 
 `401` si falta el token o no es válido. `403` si falta el scope. `404` si el recurso no existe **o
 es de otra empresa**. `400` y `409` según la ruta. `422` si el cuerpo no tiene el formato esperado.
+`429` si un token de servicio pasó su límite de peticiones por minuto: el encabezado `Retry-After`
+dice cuántos segundos faltan para el próximo minuto.
+
+### Límite de peticiones
+
+Cada token de servicio tiene un tope por minuto según su perfil: **60** el bot (sin acceso a clientes)
+y **600** el `crm-interno`. Se cambian por instancia en Configuración › API de integración (claves
+`integracion.limite_bot` e `integracion.limite_interno`, permiso `sistema.integraciones`). Cuenta en la
+base, así que vale igual con varios procesos de API. Los tokens de una persona (JWT) no tienen este
+límite: los acota el uso normal de la pantalla.
 
 ## Rutas
 
@@ -174,4 +184,3 @@ Garantías:
 - `GET /catalogo/recomendaciones` (lista curada del mes): falta definir dónde la carga el cliente.
 - Modos de cierre de pedidos D8 "confirma el cliente" y "automático hasta un monto". Hoy todo
   pedido queda pendiente de un vendedor.
-- Límite de peticiones por token, cuando el bot esté en producción.
