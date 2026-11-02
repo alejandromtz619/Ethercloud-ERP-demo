@@ -98,6 +98,21 @@ la factura todavía se está enviando, la venta no se puede anular (409): hay qu
 
 En SANDBOX los eventos se aprueban sin enviarse a SIFEN.
 
+## Pantalla Documentos electrónicos
+
+Menú **Docs. electrónicos** (sólo con el módulo `fe`; la ven quienes pueden emitir la factura de una venta):
+
+- Todas las facturas y notas de crédito, las últimas primero, con pestañas por estado (aprobados, en
+  camino, con problemas, cancelados e inutilizados) y su cantidad; filtros por tipo y por fecha, y
+  búsqueda por número (`001-002-0000123` o `123`), CDC o número de venta.
+- Por documento: KuDE A4, XML, y reintentar o consultar en SIFEN los que están en camino o con problemas
+  (con el motivo del rechazo a la vista).
+- **Eventos**: cancelaciones e inutilizaciones con su resultado.
+- **Inutilizar números** (permiso `sistema.integraciones`): un número o un rango de hasta 1000.
+
+API: `GET /api/fiscal/documentos?estado=APROBADO,RECHAZADO&tipo_documento=1&q=...&desde=AAAA-MM-DD&hasta=...`
+devuelve además `por_estado` (las cantidades con los mismos filtros, sin el de estado).
+
 ## Pruebas
 
 - `backend/tests/test_fiscal.py`: con el emisor falso (`fiscal/falso.py`), sin red.

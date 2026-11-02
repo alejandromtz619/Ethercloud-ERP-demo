@@ -581,3 +581,28 @@ def test_inutilizar_rango_de_numeros(client, admin, falso, escenario):
     r = client.post("/api/fiscal/inutilizaciones", headers=admin, json={"desde": 9000, "hasta": 9002, "motivo": "Salto de numeración"})
     assert r.status_code == 200 and r.json()["numeros"] == "001-001-0009000 a 0009002"
     assert {(1, "001", "001", n) for n in (9000, 9001, 9002)} <= falso.inutilizados
+
+
+def test_lista_de_documentos_con_filtros(client, admin, falso, escenario):
+    venta = escenario["vender"]()
+    doc = facturar(client, admin, venta["id"]).json()
+    aprobar(client, admin, doc["id"])
+
+    def buscar(**params):
+        r = client.get("/api/fiscal/documentos", headers=admin, params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    for q in (doc["numero"], doc["cdc"], str(venta["id"])):
+        assert doc["id"] in [d["id"] for d in buscar(q=q)["items"]], q
+    assert buscar(q="no-es-un-numero")["items"] == []
+    todos = buscar()
+    assert todos["por_estado"].get("APROBADO", 0) >= 1 and sum(todos["por_estado"].values()) == todos["total"]
+    aprobados = buscar(estado="APROBADO")
+    assert aprobados["total"] == todos["por_estado"]["APROBADO"] and aprobados["por_estado"] == todos["por_estado"]
+    assert all(d["estado"] in ("APROBADO", "RECHAZADO") for d in buscar(estado="aprobado,rechazado")["items"])
+    assert buscar(tipo_documento=5, q=doc["numero"])["items"] == []
+    from datetime import date, timedelta
+    hoy = date.today()
+    assert doc["id"] in [d["id"] for d in buscar(desde=(hoy - timedelta(days=1)).isoformat(), hasta=(hoy + timedelta(days=1)).isoformat())["items"]]
+    assert buscar(hasta=(hoy - timedelta(days=30)).isoformat(), q=doc["numero"])["items"] == []

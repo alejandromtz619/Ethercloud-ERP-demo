@@ -24,6 +24,7 @@ const Funcionarios = lazy(() => import('./pages/Funcionarios'));
 const Stock = lazy(() => import('./pages/Stock'));
 const Flota = lazy(() => import('./pages/Flota'));
 const Facturas = lazy(() => import('./pages/Facturas'));
+const DocumentosElectronicos = lazy(() => import('./pages/DocumentosElectronicos'));
 const Usuarios = lazy(() => import('./pages/Usuarios'));
 const Sistema = lazy(() => import('./pages/Sistema'));
 const Configuracion = lazy(() => import('./pages/Configuracion'));
@@ -243,6 +244,16 @@ const AppRoutes = () => {
             </Layout>
           </ProtectedRoute>
         } 
+      />
+      <Route
+        path="/documentos-electronicos"
+        element={
+          <ProtectedRoute permission={['facturas.ver', 'ventas.crear', 'ventas.ver', 'ventas.ver_historial']}>
+            <Layout>
+              <DocumentosElectronicos />
+            </Layout>
+          </ProtectedRoute>
+        }
       />
       
       <Route 

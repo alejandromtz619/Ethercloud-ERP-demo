@@ -4,12 +4,14 @@
 Permisos: emitir y ver documentos, los mismos que imprimir la factura de una venta (quien podía
 imprimir la factura en papel puede emitir la electrónica); configuración, sistema.configurar.
 """
+import re
+from datetime import date, datetime, time, timedelta
 from typing import Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import configuracion
@@ -18,7 +20,7 @@ from fiscal import catalogos, constructor, numerador
 from fiscal.puerto import ConflictoFiscal, DocumentoInvalido, DocumentoNoEncontrado, ErrorFiscal, SinPermisoConfiguracion
 from fiscal.servicio import EN_CAMINO, ServicioFiscal
 from models import (
-    CambioConfiguracion, Cliente, DocumentoFiscal, EventoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
+    PARAGUAY_TZ, CambioConfiguracion, Cliente, DocumentoFiscal, EventoFiscal, EstadoVenta, FacturaGrupal, MateriaLaboratorio, Producto, Usuario, Venta, VentaItem,
     factura_grupal_ventas,
 )
 
@@ -368,14 +370,50 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
         return [documento_dict(d) for d in filas]
 
     @router.get("/documentos")
-    async def listar(estado: Optional[str] = None, limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
-                     usuario: Usuario = Depends(requiere(EMITIR)), db: AsyncSession = Depends(get_db)):
-        consulta = select(DocumentoFiscal).where(DocumentoFiscal.empresa_id == usuario.empresa_id)
+    async def listar(
+        estado: Optional[str] = None,
+        tipo_documento: Optional[int] = None,
+        q: Optional[str] = Query(None, max_length=60),
+        desde: Optional[date] = None,
+        hasta: Optional[date] = None,
+        ambiente: Optional[str] = None,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        usuario: Usuario = Depends(requiere(EMITIR)),
+        db: AsyncSession = Depends(get_db),
+    ):
+        """Documentos de la empresa, los últimos primero. q: CDC, número (001-002-0000123 o 123) o id de
+        venta. desde/hasta: fecha de emisión en hora de Paraguay. por_estado cuenta con los mismos
+        filtros salvo el estado (para las pestañas de la pantalla)."""
+        filtros = [DocumentoFiscal.empresa_id == usuario.empresa_id]
+        if tipo_documento:
+            filtros.append(DocumentoFiscal.tipo_documento == tipo_documento)
+        if ambiente:
+            filtros.append(DocumentoFiscal.ambiente == ambiente.upper())
+        if desde:
+            filtros.append(DocumentoFiscal.creado_en >= datetime.combine(desde, time.min, PARAGUAY_TZ))
+        if hasta:
+            filtros.append(DocumentoFiscal.creado_en < datetime.combine(hasta + timedelta(days=1), time.min, PARAGUAY_TZ))
+        texto = (q or "").strip()
+        if texto:
+            numero = re.fullmatch(r"(\d{3})-(\d{3})-(\d{1,7})", texto)
+            if re.fullmatch(r"\d{44}", texto):
+                filtros.append(DocumentoFiscal.cdc == texto)
+            elif numero:
+                filtros += [DocumentoFiscal.establecimiento == numero[1], DocumentoFiscal.punto == numero[2],
+                            DocumentoFiscal.numero == int(numero[3])]
+            elif texto.isdigit() and len(texto) <= 9:
+                filtros.append(or_(DocumentoFiscal.numero == int(texto), DocumentoFiscal.venta_id == int(texto)))
+            else:
+                return {"items": [], "total": 0, "por_estado": {}}
+        por_estado = dict((await db.execute(select(DocumentoFiscal.estado, func.count()).where(*filtros)
+                                            .group_by(DocumentoFiscal.estado))).all())
         if estado:
-            consulta = consulta.where(DocumentoFiscal.estado == estado.upper())
+            filtros.append(DocumentoFiscal.estado.in_([e.strip().upper() for e in estado.split(",")]))
+        consulta = select(DocumentoFiscal).where(*filtros)
         total = await db.scalar(select(func.count()).select_from(consulta.subquery()))
         filas = (await db.execute(consulta.order_by(DocumentoFiscal.id.desc()).limit(limit).offset(offset))).scalars().all()
-        return {"items": [documento_dict(d) for d in filas], "total": total}
+        return {"items": [documento_dict(d) for d in filas], "total": total, "por_estado": por_estado}
 
     @router.get("/documentos/{documento_id}")
     async def ver(documento_id: int, usuario: Usuario = Depends(requiere(EMITIR)), db: AsyncSession = Depends(get_db)):
