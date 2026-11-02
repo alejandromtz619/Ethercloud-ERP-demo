@@ -29,9 +29,97 @@ export function EstadoFE({ documento }) {
 
 const SEGUNDOS_CONSULTA = 4;
 
+// Nota de crédito de una factura aprobada: todo lo que queda o algunos ítems y cantidades (devolución parcial)
+function NotaDeCredito({ documento, alListo, alCerrar }) {
+  const { api, token, API_URL } = useApp();
+  const [datos, setDatos] = useState(null);
+  const [motivo, setMotivo] = useState(2);
+  const [cantidades, setCantidades] = useState({});
+  const [enviando, setEnviando] = useState(false);
+  const [errores, setErrores] = useState([]);
+
+  useEffect(() => {
+    api(`/fiscal/documentos/${documento.id}/acreditable`).then((d) => {
+      setDatos(d);
+      setCantidades(Object.fromEntries(d.items.map((i) => [i.indice, i.restante])));
+    }).catch((e) => setErrores([e.message]));
+  }, [api, documento.id]);
+
+  if (!datos) return errores.length ? <p className="text-destructive">{errores[0]}</p> : <Loader2 className="h-4 w-4 animate-spin" />;
+  const elegidos = datos.items.filter((i) => Number(cantidades[i.indice]) > 0);
+  const todo = datos.items.every((i) => Number(cantidades[i.indice] || 0) === i.restante);
+  const bruto = elegidos.reduce((s, i) => s + Number(cantidades[i.indice]) * i.precio_unitario, 0);
+
+  const emitir = async () => {
+    setEnviando(true);
+    setErrores([]);
+    try {
+      const cuerpo = { motivo };
+      if (!todo) cuerpo.items = elegidos.map((i) => ({ indice: i.indice, cantidad: Number(cantidades[i.indice]) }));
+      // fetch directo: api() da el detalle como texto y acá hace falta la lista de errores
+      const res = await fetch(`${API_URL}/fiscal/documentos/${documento.id}/nota-credito`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(cuerpo),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const d = r.detail;
+        setErrores(Array.isArray(d?.errores) ? d.errores : [typeof d === 'string' ? d : d?.mensaje || `Error ${res.status}`]);
+        return;
+      }
+      toast.success(`Nota de crédito ${r.numero} emitida`);
+      alListo();
+    } catch (e) {
+      setErrores([e.message]);
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/30 p-3" data-testid="form-nota-credito">
+      <div className="flex items-center gap-2">
+        <Label htmlFor="nc-motivo" className="shrink-0">Motivo</Label>
+        <select id="nc-motivo" value={motivo} onChange={(e) => setMotivo(Number(e.target.value))}
+                className="h-8 flex-1 rounded-md border border-input bg-background px-2 text-sm">
+          {datos.motivos.map((m) => <option key={m.codigo} value={m.codigo}>{m.nombre}</option>)}
+        </select>
+      </div>
+      <table className="w-full text-xs">
+        <thead><tr className="text-muted-foreground"><th className="text-left font-normal">Ítem</th><th className="font-normal">Facturado</th><th className="font-normal">A acreditar</th></tr></thead>
+        <tbody>
+          {datos.items.map((i) => (
+            <tr key={i.indice} className="border-t">
+              <td className="py-1 pr-2">{i.descripcion}</td>
+              <td className="py-1 text-center">{i.cantidad}{i.acreditada > 0 ? ` (ya ${i.acreditada})` : ''}</td>
+              <td className="py-1 w-24">
+                <Input type="number" min="0" max={i.restante} step="any" value={cantidades[i.indice] ?? 0} disabled={i.restante <= 0}
+                       onChange={(e) => setCantidades({ ...cantidades, [i.indice]: Math.min(i.restante, Math.max(0, Number(e.target.value) || 0)) })}
+                       className="h-7 text-center" data-testid={`nc-cantidad-${i.indice}`} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-xs text-muted-foreground">
+        {todo ? 'Todo lo que queda de la factura' : `Parcial: ${elegidos.length} ítem(s)`} · aprox. Gs. {Math.round(bruto).toLocaleString('es-PY')}
+        {' '}(el descuento de la factura se aplica en proporción). No mueve stock: si vuelve mercadería, cargala en Stock.
+      </p>
+      {errores.length > 0 && <ul className="text-xs text-destructive list-disc pl-4">{errores.map((e) => <li key={e}>{e}</li>)}</ul>}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={alCerrar}>Cancelar</Button>
+        <Button size="sm" onClick={emitir} disabled={enviando || !elegidos.length} data-testid="emitir-nota-credito">
+          {enviando && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}Emitir nota de crédito
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio }) {
   const { api, token, API_URL, hasPermission } = useApp();
   const [otros, setOtros] = useState([]); // facturas canceladas y notas de crédito de la venta
+  const [armandoNota, setArmandoNota] = useState(false);
+  const [quedaPorAcreditar, setQuedaPorAcreditar] = useState(false);
   const [documento, setDocumento] = useState(undefined); // undefined = cargando, null = no tiene
   const [trabajando, setTrabajando] = useState(false);
   const [errores, setErrores] = useState([]);
@@ -52,6 +140,11 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
   }, [api, ventaId, grupalId]);
 
   useEffect(() => { cargar().catch((e) => { setDocumento(null); setErrores([e.message]); }); }, [cargar]);
+
+  useEffect(() => {
+    if (documento?.estado !== 'APROBADO' || documento.tipo_documento !== 1) { setQuedaPorAcreditar(false); return; }
+    api(`/fiscal/documentos/${documento.id}/acreditable`).then((d) => setQuedaPorAcreditar(d.restante)).catch(() => setQuedaPorAcreditar(false));
+  }, [api, documento, otros]);
 
   // Mientras va camino a SIFEN, se consulta solo (hasta ~2 minutos; después, con el botón)
   useEffect(() => {
@@ -113,7 +206,7 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
     }
   };
 
-  // Cancelar (48 h), nota de crédito por el total, o inutilizar el número de una rechazada
+  // Cancelar (48 h) o inutilizar el número de una rechazada (la nota de crédito tiene su propio formulario)
   const evento = async (accion) => {
     let cuerpo = {};
     if (accion === 'cancelar' || accion === 'inutilizar') {
@@ -122,8 +215,6 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
       if (!motivo) return;
       if (motivo.trim().length < 5) { toast.error('El motivo tiene que tener al menos 5 letras'); return; }
       cuerpo = { motivo: motivo.trim() };
-    } else if (!window.confirm('Se emite una nota de crédito electrónica por el total de la factura (devolución). ¿Seguir?')) {
-      return;
     }
     setTrabajando(true);
     setErrores([]);
@@ -223,12 +314,15 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
         )}
         {documento?.estado === 'APROBADO' && hasPermission('ventas.anular') && (
           <>
-            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => evento('cancelar')} disabled={trabajando}
-                    data-testid="cancelar-fe" title="Dentro de las 48 h de aprobada">
-              <Ban className="h-4 w-4 mr-1" />Cancelar
-            </Button>
-            {!otros.some((o) => o.tipo_documento === 5 && o.documento_asociado_id === documento.id) && (
-              <Button size="sm" variant="ghost" onClick={() => evento('nota')} disabled={trabajando} data-testid="nota-credito-fe">
+            {!otros.some((o) => o.tipo_documento === 5 && o.documento_asociado_id === documento.id
+                           && !['CANCELADO', 'INUTILIZADO', 'INVALIDO'].includes(o.estado)) && (
+              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => evento('cancelar')} disabled={trabajando}
+                      data-testid="cancelar-fe" title="Dentro de las 48 h de aprobada">
+                <Ban className="h-4 w-4 mr-1" />Cancelar
+              </Button>
+            )}
+            {quedaPorAcreditar && !armandoNota && (
+              <Button size="sm" variant="ghost" onClick={() => setArmandoNota(true)} disabled={trabajando} data-testid="nota-credito-fe">
                 <FileMinus className="h-4 w-4 mr-1" />Nota de crédito
               </Button>
             )}
@@ -241,6 +335,11 @@ export default function PanelFacturaElectronica({ ventaId, grupalId, onCambio })
           </Button>
         )}
       </div>
+
+      {armandoNota && documento && (
+        <NotaDeCredito documento={documento} alCerrar={() => setArmandoNota(false)}
+                       alListo={async () => { setArmandoNota(false); await cargar(); onCambio?.(); }} />
+      )}
 
       {otros.length > 0 && (
         <ul className="space-y-1 border-t pt-2 text-xs" data-testid="otros-fe">

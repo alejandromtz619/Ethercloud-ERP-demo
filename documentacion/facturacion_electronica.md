@@ -84,9 +84,16 @@ Desde el panel de la factura electrónica (Historial › Imprimir › Factura el
 | Situación | Qué se hace | Ruta |
 |---|---|---|
 | Factura aprobada hace menos de 48 h | **Cancelar** (evento de cancelación); la venta queda sin factura y se puede volver a facturar | `POST /api/fiscal/documentos/{id}/cancelar {motivo}` |
-| Factura aprobada, pasó el plazo (o se prefiere) | **Nota de crédito** electrónica por el total (motivo 2 = devolución por defecto); una por factura | `POST /api/fiscal/documentos/{id}/nota-credito {motivo}` |
+| Factura aprobada, pasó el plazo (o se prefiere) | **Nota de crédito** electrónica por todo lo que queda, o **parcial** (algunos ítems y cantidades) | `POST /api/fiscal/documentos/{id}/nota-credito {motivo, items?: [{indice, cantidad}]}` |
 | Factura rechazada o inválida que no se va a corregir | **Inutilizar** su número | `POST /api/fiscal/documentos/{id}/inutilizar {motivo}` |
 | Números salteados (p. ej. un talonario perdido) | Inutilizar un rango (hasta 1000; ninguno puede estar usado) | `POST /api/fiscal/inutilizaciones` (permiso `sistema.integraciones`) |
+
+Nota de crédito parcial: en el panel se eligen motivo, ítems y cantidades; `GET /api/fiscal/documentos/{id}/acreditable`
+dice cuánto queda de cada ítem. Una factura puede tener varias notas, sin pasarse de lo facturado. Si la
+factura tenía descuento, cada nota lleva la parte proporcional y la que acredita lo último se lleva lo que
+quede, así las notas suman justo la factura. La nota no mueve stock (si vuelve mercadería, se carga en
+Stock). Una factura con notas de crédito ya no se cancela: lo que falta se acredita con otra nota, y eso es
+lo que hace anular la venta.
 
 El plazo se toma con una hora de margen (47 h para facturas, 167 h para el resto) para no llegar al
 límite de SIFEN. Cada evento queda en la tabla `eventos_fiscales` (`GET /api/fiscal/eventos`).

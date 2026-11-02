@@ -4,6 +4,7 @@
 Permisos: emitir y ver documentos, los mismos que imprimir la factura de una venta (quien podía
 imprimir la factura en papel puede emitir la electrónica); configuración, sistema.configurar.
 """
+from decimal import Decimal
 from typing import Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -84,8 +85,14 @@ class Motivo(BaseModel):
     motivo: str = Field(min_length=5, max_length=500)
 
 
+class ItemNotaCredito(BaseModel):
+    indice: int = Field(ge=0)  # posición del ítem en la factura
+    cantidad: Decimal = Field(gt=0, max_digits=12, decimal_places=4)
+
+
 class PedidoNotaCredito(BaseModel):
     motivo: Literal[1, 2, 3, 4, 5, 6, 7, 8] = 2
+    items: Optional[list[ItemNotaCredito]] = Field(None, min_length=1, max_length=200)  # sin items: todo lo que queda
 
 
 class PedidoInutilizacion(BaseModel):
@@ -465,19 +472,31 @@ def crear_router(usuario_desde_jwt: Callable, tiene_algun_permiso: Callable) -> 
             raise HTTPException(status_code=409, detail=f"SIFEN rechazó la inutilización: {evento.mensaje}")
         return {"evento": evento_dict(evento), "documento": documento_dict(doc)}
 
+    @router.get("/documentos/{documento_id}/acreditable")
+    async def acreditable(documento_id: int, usuario: Usuario = Depends(requiere(EMITIR)), db: AsyncSession = Depends(get_db)):
+        """Ítems de la factura con lo ya acreditado en notas de crédito y lo que queda, y esas notas."""
+        doc = await _documento(db, documento_id, usuario)
+        if doc.tipo_documento != 1:
+            raise HTTPException(status_code=409, detail="Sólo las facturas tienen notas de crédito")
+        notas = await ServicioFiscal.notas_de(db, doc)
+        items = constructor.acreditable(doc.datos or {}, [n.datos for n in notas])
+        return {"items": items, "restante": any(i["restante"] > 0 for i in items),
+                "motivos": [{"codigo": k, "nombre": v} for k, v in constructor.MOTIVOS_NOTA_CREDITO.items()],
+                "notas": [documento_dict(n) for n in notas]}
+
     @router.post("/documentos/{documento_id}/nota-credito")
     async def nota_credito(documento_id: int, datos: PedidoNotaCredito, request: Request,
                            usuario: Usuario = Depends(requiere(ANULAR)), db: AsyncSession = Depends(get_db)):
-        """Nota de crédito electrónica por el total de una factura aprobada (motivo: catálogo de SIFEN)."""
+        """Nota de crédito electrónica de una factura aprobada (motivo: catálogo de SIFEN). Con items, sólo
+        esos ítems y cantidades (parcial); sin items, todo lo que queda por acreditar."""
         doc = await _documento(db, documento_id, usuario)
-        existente = (await db.execute(select(DocumentoFiscal).where(
-            DocumentoFiscal.documento_asociado_id == doc.id, DocumentoFiscal.tipo_documento == 5,
-            DocumentoFiscal.estado.notin_(("CANCELADO", "INUTILIZADO"))))).scalars().first()
-        if existente:
-            raise HTTPException(status_code=409, detail={"mensaje": "La factura ya tiene nota de crédito",
-                                                         "documento": documento_dict(existente)})
+        devolver = None
+        if datos.items is not None:
+            devolver = {}
+            for item in datos.items:
+                devolver[item.indice] = devolver.get(item.indice, 0) + item.cantidad
         try:
-            nota = await servicio(request).nota_de_credito(db, doc, datos.motivo, usuario)
+            nota = await servicio(request).nota_de_credito(db, doc, datos.motivo, usuario, devolver)
         except ErrorFiscal as e:
             raise _error_http(e)
         return documento_dict(nota)

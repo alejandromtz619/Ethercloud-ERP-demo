@@ -12,7 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from fiscal import catalogos
-from fiscal.puerto import DocumentoInvalido
+from fiscal.puerto import ConflictoFiscal, DocumentoInvalido
 
 CONSUMIDOR_FINAL = "44444401"
 FORMA_DE_PAGO = {"EFECTIVO": 1, "CHEQUE": 2, "TARJETA": 3, "TRANSFERENCIA": 5}
@@ -183,15 +183,72 @@ MOTIVOS_NOTA_CREDITO = {1: "Devolución y ajuste de precios", 2: "Devolución", 
                         5: "Crédito incobrable", 6: "Recupero de costo", 7: "Recupero de gasto", 8: "Ajuste de precio"}
 
 
-def nota_de_credito_total(factura_datos: dict, cdc: str, numero_factura: str, motivo: int = 2) -> dict:
-    """Nota de crédito (tipo 5) por el total de una factura aprobada: mismo receptor, mismos ítems y mismo
-    descuento que se facturaron (se copian del documento enviado, no de la venta, que pudo cambiar)."""
+def _clave_item(item: dict) -> tuple:
+    """Cómo se reconoce un mismo ítem en la factura y en sus notas de crédito."""
+    return (item.get("codigo"), str(item.get("precioUnitario")), item.get("iva"))
+
+
+def acreditable(factura_datos: dict, notas_datos: list) -> list:
+    """Por cada ítem de la factura: cantidad facturada, ya acreditada (en las notas de crédito que
+    valen) y la que queda. Un mismo ítem repetido en la factura se reparte en orden."""
+    acreditado = {}
+    for nota in notas_datos:
+        for item in nota.get("items", []):
+            clave = _clave_item(item)
+            acreditado[clave] = acreditado.get(clave, Decimal(0)) + Decimal(str(item["cantidad"]))
+    filas = []
+    for indice, item in enumerate(factura_datos.get("items", [])):
+        clave, cantidad = _clave_item(item), Decimal(str(item["cantidad"]))
+        usado = min(cantidad, acreditado.get(clave, Decimal(0)))
+        acreditado[clave] = acreditado.get(clave, Decimal(0)) - usado
+        filas.append({"indice": indice, "descripcion": item.get("descripcion"), "precio_unitario": float(item["precioUnitario"]),
+                      "iva": item.get("iva"), "cantidad": float(cantidad), "acreditada": float(usado),
+                      "restante": float(cantidad - usado)})
+    return filas
+
+
+def nota_de_credito(factura_datos: dict, cdc: str, numero_factura: str, motivo: int = 2, notas_datos: list = (),
+                    devolver: Optional[dict] = None) -> dict:
+    """Nota de crédito (tipo 5) de una factura aprobada: mismo receptor, ítems y precios que se facturaron
+    (copiados del documento enviado, no de la venta, que pudo cambiar).
+
+    devolver: {indice del ítem en la factura: cantidad}. Sin indicar: todo lo que todavía no se acreditó
+    (la factura entera si no tiene notas). El descuento global de la factura se reparte en proporción, y
+    la nota que acredita lo último se lleva lo que quede del descuento: la suma de las notas nunca pasa
+    el total de la factura."""
     if motivo not in MOTIVOS_NOTA_CREDITO:
         raise DocumentoInvalido([f"Motivo de nota de crédito inválido: {motivo}"])
-    datos = {k: factura_datos[k] for k in ("tipoEmision", "tipoImpuesto", "moneda", "cliente", "items") if k in factura_datos}
-    if factura_datos.get("descuentoGlobal"):
-        datos["descuentoGlobal"] = factura_datos["descuentoGlobal"]
+    filas = acreditable(factura_datos, list(notas_datos))
+    if devolver is None:
+        devolver = {f["indice"]: Decimal(str(f["restante"])) for f in filas if f["restante"] > 0}
+    errores = []
+    for indice, cantidad in devolver.items():
+        if indice < 0 or indice >= len(filas):
+            errores.append(f"La factura no tiene el ítem {indice + 1}")
+        elif cantidad <= 0 or cantidad > Decimal(str(filas[indice]["restante"])):
+            errores.append(f"“{filas[indice]['descripcion']}”: se pueden acreditar hasta {filas[indice]['restante']:g}")
+    if errores:
+        raise DocumentoInvalido(errores)
+    if not devolver:
+        raise ConflictoFiscal("La factura ya está acreditada por completo")
+    originales = factura_datos["items"]
+    items = [{**originales[i], "cantidad": _numero(Decimal(str(c)))} for i, c in sorted(devolver.items())]
+
+    datos = {k: factura_datos[k] for k in ("tipoEmision", "tipoImpuesto", "moneda", "cliente") if k in factura_datos}
+    datos["items"] = items
+    descuento_factura = Decimal(str(factura_datos.get("descuentoGlobal") or 0))
+    if descuento_factura > 0:
+        def bruto(lista):
+            return sum((Decimal(str(i["cantidad"])) * Decimal(str(i["precioUnitario"])) for i in lista), Decimal(0))
+        ya_descontado = sum((Decimal(str(n.get("descuentoGlobal") or 0)) for n in notas_datos), Decimal(0))
+        completa = all(Decimal(str(devolver.get(f["indice"], 0))) == Decimal(str(f["restante"])) for f in filas)
+        descuento = descuento_factura - ya_descontado if completa else \
+            _guaranies(descuento_factura * bruto(items) / bruto(originales))
+        if descuento > 0:
+            datos["descuentoGlobal"] = int(descuento)
     datos["notaCreditoDebito"] = {"motivo": motivo}
     datos["documentoAsociado"] = {"formato": 1, "cdc": cdc}
-    datos["observacion"] = f"{MOTIVOS_NOTA_CREDITO[motivo]} · anula la factura {numero_factura}"
+    total = not notas_datos and all(devolver.get(f["indice"]) == Decimal(str(f["cantidad"])) for f in filas)
+    datos["observacion"] = f"{MOTIVOS_NOTA_CREDITO[motivo]} · " + (
+        f"anula la factura {numero_factura}" if total else f"sobre la factura {numero_factura}")
     return datos

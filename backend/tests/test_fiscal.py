@@ -581,3 +581,50 @@ def test_inutilizar_rango_de_numeros(client, admin, falso, escenario):
     r = client.post("/api/fiscal/inutilizaciones", headers=admin, json={"desde": 9000, "hasta": 9002, "motivo": "Salto de numeración"})
     assert r.status_code == 200 and r.json()["numeros"] == "001-001-0009000 a 0009002"
     assert {(1, "001", "001", n) for n in (9000, 9001, 9002)} <= falso.inutilizados
+
+
+def test_nota_de_credito_parcial(client, admin, falso, escenario):
+    """Devolver parte de una factura con descuento: el descuento se reparte y la suma de las notas da
+    justo el total de la factura; no se puede acreditar más de lo facturado."""
+    doc = facturar(client, admin, escenario["vender"]()["id"]).json()  # 2 de cada ítem, cliente con 10 % de descuento
+    aprobar(client, admin, doc["id"])
+    factura = falso.documentos[(1, "001", "001", int(doc["numero"][-7:]))]["data"]
+    assert factura.get("descuentoGlobal")
+    ruta = f"/api/fiscal/documentos/{doc['id']}"
+    a = client.get(f"{ruta}/acreditable", headers=admin).json()
+    assert [i["restante"] for i in a["items"]] == [2, 2, 2] and a["restante"] and a["notas"] == []
+
+    r = client.post(f"{ruta}/nota-credito", headers=admin, json={"motivo": 2, "items": [{"indice": 0, "cantidad": 1}]})
+    assert r.status_code == 200, r.text
+    parcial = r.json()
+    enviada = falso.documentos[(5, "001", "001", int(parcial["numero"][-7:]))]["data"]
+    assert len(enviada["items"]) == 1 and enviada["items"][0]["cantidad"] == 1
+    assert enviada["items"][0]["precioUnitario"] == factura["items"][0]["precioUnitario"]
+    assert 0 < enviada["descuentoGlobal"] < factura["descuentoGlobal"] and "sobre la factura" in enviada["observacion"]
+    assert [i["restante"] for i in client.get(f"{ruta}/acreditable", headers=admin).json()["items"]] == [1, 2, 2]
+
+    # Más de lo que queda, o un ítem que no existe: 422 sin consumir número
+    for items in ([{"indice": 0, "cantidad": 2}], [{"indice": 9, "cantidad": 1}]):
+        assert client.post(f"{ruta}/nota-credito", headers=admin, json={"items": items}).status_code == 422
+    # Sin ítems: lo que queda. Las dos notas suman exactamente la factura
+    resto = client.post(f"{ruta}/nota-credito", headers=admin, json={"motivo": 2}).json()
+    assert round(parcial["total"] + resto["total"]) == round(doc["total"])
+    a = client.get(f"{ruta}/acreditable", headers=admin).json()
+    assert not a["restante"] and len(a["notas"]) == 2
+    assert client.post(f"{ruta}/nota-credito", headers=admin, json={}).status_code == 409
+
+
+def test_factura_con_nota_de_credito_no_se_cancela_y_anular_acredita_lo_que_queda(client, admin, falso, escenario):
+    venta = escenario["vender"]()
+    doc = facturar(client, admin, venta["id"]).json()
+    aprobar(client, admin, doc["id"])
+    ruta = f"/api/fiscal/documentos/{doc['id']}"
+    parcial = client.post(f"{ruta}/nota-credito", headers=admin, json={"items": [{"indice": 1, "cantidad": 1}]}).json()
+    r = client.post(f"{ruta}/cancelar", headers=admin, json={"motivo": "Error en la factura"})
+    assert r.status_code == 409 and "notas de crédito" in r.json()["detail"]
+    # Anular la venta (dentro de las 48 h): como no se puede cancelar, va una nota por lo que queda
+    anulada = client.post(f"/api/ventas/{venta['id']}/anular", headers=admin)
+    assert anulada.status_code == 200, anulada.text
+    assert "nota de crédito" in anulada.json()["aviso_fiscal"]
+    a = client.get(f"{ruta}/acreditable", headers=admin).json()
+    assert not a["restante"] and round(sum(n["total"] for n in a["notas"])) == round(doc["total"]) and parcial["id"] in [n["id"] for n in a["notas"]]

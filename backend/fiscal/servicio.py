@@ -13,6 +13,7 @@ import hashlib
 import logging
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Awaitable, Callable, Optional
 
 from sqlalchemy import select, text, update
@@ -212,6 +213,10 @@ class ServicioFiscal:
         documento queda CANCELADO y, si era la factura de una venta, la venta se puede volver a facturar."""
         if doc.estado != "APROBADO" or not doc.cdc:
             raise ConflictoFiscal(f"Sólo se cancela un documento aprobado (este está {doc.estado})")
+        if doc.tipo_documento == 1 and await self.notas_de(db, doc):
+            # La nota quedaría apuntando a una factura anulada: lo que falta se acredita con otra nota
+            raise ConflictoFiscal("La factura tiene notas de crédito: no se puede cancelar. "
+                                  "Emití una nota de crédito por lo que queda")
         r = await self.emisor.cancelar(doc.cdc, motivo, metadata(usuario))
         evento = await self._evento(db, doc=doc, tipo="cancelacion", tipo_documento=doc.tipo_documento,
                                     establecimiento=doc.establecimiento, punto=doc.punto, desde=doc.numero, hasta=doc.numero,
@@ -253,14 +258,27 @@ class ServicioFiscal:
         await db.commit()
         return evento
 
-    async def nota_de_credito(self, db: AsyncSession, factura: DocumentoFiscal, motivo: int = 2, usuario=None) -> DocumentoFiscal:
-        """Nota de crédito electrónica por el total de una factura aprobada (con su CDC como documento asociado)."""
+    @staticmethod
+    async def notas_de(db: AsyncSession, factura: DocumentoFiscal) -> list:
+        """Notas de crédito de la factura que cuentan (las anuladas o inválidas, no)."""
+        return (await db.execute(select(DocumentoFiscal).where(
+            DocumentoFiscal.documento_asociado_id == factura.id, DocumentoFiscal.tipo_documento == 5,
+            DocumentoFiscal.estado.notin_(("CANCELADO", "INUTILIZADO", "INVALIDO"))).order_by(DocumentoFiscal.id))).scalars().all()
+
+    async def nota_de_credito(self, db: AsyncSession, factura: DocumentoFiscal, motivo: int = 2, usuario=None,
+                              devolver: Optional[dict] = None) -> DocumentoFiscal:
+        """Nota de crédito electrónica de una factura aprobada (con su CDC como documento asociado). devolver:
+        {indice del ítem: cantidad}; sin indicar, todo lo que todavía no se acreditó."""
         if factura.tipo_documento != 1 or factura.estado != "APROBADO":
             raise ConflictoFiscal("La nota de crédito se hace sobre una factura aprobada")
+        # Una nota por vez por factura: dos a la vez podrían acreditar dos veces lo mismo
+        await db.execute(select(DocumentoFiscal.id).where(DocumentoFiscal.id == factura.id).with_for_update())
         numero = f"{factura.establecimiento}-{factura.punto}-{factura.numero:07d}"
-        contenido = constructor.nota_de_credito_total(factura.datos, factura.cdc, numero, motivo)
+        notas = [n.datos for n in await self.notas_de(db, factura)]
+        contenido = constructor.nota_de_credito(factura.datos, factura.cdc, numero, motivo, notas, devolver)
+        total = constructor.total_de(contenido["items"], Decimal(contenido.get("descuentoGlobal", 0)))
         return await self.emitir(db, empresa_id=factura.empresa_id, tipo=5, contenido=contenido, origen="nota_credito",
-                                 total=factura.total, usuario=usuario, venta_id=factura.venta_id,
+                                 total=total, usuario=usuario, venta_id=factura.venta_id,
                                  factura_grupal_id=factura.factura_grupal_id, documento_asociado_id=factura.id)
 
     async def regularizar_anulacion(self, db: AsyncSession, factura: DocumentoFiscal, motivo: str, usuario=None) -> str:
