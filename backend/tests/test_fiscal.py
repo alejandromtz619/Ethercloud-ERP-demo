@@ -628,3 +628,26 @@ def test_factura_con_nota_de_credito_no_se_cancela_y_anular_acredita_lo_que_qued
     assert "nota de crédito" in anulada.json()["aviso_fiscal"]
     a = client.get(f"{ruta}/acreditable", headers=admin).json()
     assert not a["restante"] and round(sum(n["total"] for n in a["notas"])) == round(doc["total"]) and parcial["id"] in [n["id"] for n in a["notas"]]
+def test_lista_de_documentos_con_filtros(client, admin, falso, escenario):
+    venta = escenario["vender"]()
+    doc = facturar(client, admin, venta["id"]).json()
+    aprobar(client, admin, doc["id"])
+
+    def buscar(**params):
+        r = client.get("/api/fiscal/documentos", headers=admin, params=params)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    for q in (doc["numero"], doc["cdc"], str(venta["id"])):
+        assert doc["id"] in [d["id"] for d in buscar(q=q)["items"]], q
+    assert buscar(q="no-es-un-numero")["items"] == []
+    todos = buscar()
+    assert todos["por_estado"].get("APROBADO", 0) >= 1 and sum(todos["por_estado"].values()) == todos["total"]
+    aprobados = buscar(estado="APROBADO")
+    assert aprobados["total"] == todos["por_estado"]["APROBADO"] and aprobados["por_estado"] == todos["por_estado"]
+    assert all(d["estado"] in ("APROBADO", "RECHAZADO") for d in buscar(estado="aprobado,rechazado")["items"])
+    assert buscar(tipo_documento=5, q=doc["numero"])["items"] == []
+    from datetime import date, timedelta
+    hoy = date.today()
+    assert doc["id"] in [d["id"] for d in buscar(desde=(hoy - timedelta(days=1)).isoformat(), hasta=(hoy + timedelta(days=1)).isoformat())["items"]]
+    assert buscar(hasta=(hoy - timedelta(days=30)).isoformat(), q=doc["numero"])["items"] == []

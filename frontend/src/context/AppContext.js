@@ -28,6 +28,8 @@ const ROUTE_PERMISSIONS = {
   '/stock': 'stock.ver',
   '/flota': 'flota.ver',
   '/facturas': 'facturas.ver',
+  // Los mismos permisos que emitir la factura electrónica de una venta (backend/fiscal/rutas.py, EMITIR)
+  '/documentos-electronicos': ['facturas.ver', 'ventas.crear', 'ventas.ver', 'ventas.ver_historial'],
   '/usuarios': 'usuarios.ver',
   '/permisos': 'usuarios.gestionar',
   '/sistema': 'sistema.configurar',

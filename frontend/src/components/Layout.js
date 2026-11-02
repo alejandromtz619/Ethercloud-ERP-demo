@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ShoppingCart, Truck, Package, Users, Building2, 
   FlaskConical, Warehouse, Car, FileText, Settings, UserCog, LogOut,
   Menu, X, ChevronDown, Sun, Moon, Tag, Shield, History, FileBarChart, Layers, BarChart2, Receipt,
-  FileSpreadsheet, MessagesSquare, SlidersHorizontal
+  FileSpreadsheet, MessagesSquare, SlidersHorizontal, FileCheck2
 } from 'lucide-react';
 import Clock from './Clock';
 import { Button } from '../components/ui/button';
@@ -37,6 +37,7 @@ const allMenuItems = [
   { path: '/stock', icon: Warehouse, label: 'Stock' },
   { path: '/flota', icon: Car, label: 'Flota' },
   { path: '/facturas', icon: FileText, label: 'Facturas' },
+  { path: '/documentos-electronicos', icon: FileCheck2, label: 'Docs. electrónicos', modulo: 'fe' },
   { path: '/reportes', icon: FileBarChart, label: 'Reportes' },
   { path: '/bi', icon: BarChart2, label: 'B.I.' },
   { path: '/usuarios', icon: Users, label: 'Usuarios' },
@@ -66,7 +67,8 @@ const Layout = ({ children }) => {
   React.useEffect(() => { setLogoError(false); }, [empresa?.logo_url]);
 
   // Filter menu items based on user permissions
-  const menuItems = allMenuItems.filter(item => canAccessRoute(item.path));
+  // Las pantallas de un módulo (p. ej. fe) aparecen sólo si la instancia lo tiene
+  const menuItems = allMenuItems.filter(item => canAccessRoute(item.path) && (!item.modulo || modulos[item.modulo]));
 
   const handleLogout = () => {
     logout();
