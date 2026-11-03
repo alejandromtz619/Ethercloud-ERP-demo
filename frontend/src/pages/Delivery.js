@@ -620,12 +620,12 @@ const [vehiculos, setVehiculos] = useState([]);
                 Eliminar
               </Button>
             )}
-            {entregaSeleccionada?.estado === 'PENDIENTE' && (
+            {entregaSeleccionada?.estado === 'PENDIENTE' && hasPermission('delivery.actualizar_estado') && (
               <Button onClick={handleAsignar}>
                 Asignar y Enviar
               </Button>
             )}
-            {entregaSeleccionada?.estado === 'EN_CAMINO' && (
+            {entregaSeleccionada?.estado === 'EN_CAMINO' && hasPermission('delivery.actualizar_estado') && (
               <>
                 <Button variant="outline" onClick={handleAsignar}>
                   Actualizar Asignación

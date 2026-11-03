@@ -173,6 +173,7 @@ const Laboratorio = () => {
     precio: ''
   });
 
+  const puedeCrear = hasPermission('laboratorio.crear');
   const puedeEditar = hasPermission('laboratorio.editar');
   const puedeEliminar = hasPermission('laboratorio.eliminar');
 
@@ -452,12 +453,14 @@ const Laboratorio = () => {
           </p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          {puedeCrear && (
           <DialogTrigger asChild>
             <Button data-testid="crear-materia-btn">
               <Plus className="mr-2 h-4 w-4" />
               Nueva Materia
             </Button>
           </DialogTrigger>
+          )}
           <DialogContent>
             <DialogDescription className="hidden">
               Formulario para crear una nueva materia de laboratorio

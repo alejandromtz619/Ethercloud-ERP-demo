@@ -338,6 +338,8 @@ const Clientes = () => {
                     max="100"
                     value={formData.descuento_porcentaje}
                     onChange={(e) => setFormData({...formData, descuento_porcentaje: e.target.value})}
+                    disabled={!userPermisos.includes('clientes.modificar_descuento')}
+                    title={userPermisos.includes('clientes.modificar_descuento') ? undefined : 'Sin permiso para cambiar descuentos'}
                   />
                 </div>
                 <div>

@@ -263,12 +263,14 @@ const Stock = () => {
         <div className="flex gap-2">
           {/* Crear Almacén */}
           <Dialog open={almacenDialogOpen} onOpenChange={setAlmacenDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <Plus className="mr-2 h-4 w-4" />
-                Almacén
-              </Button>
-            </DialogTrigger>
+            {userPermisos.includes('stock.ajustar') && (
+              <DialogTrigger asChild>
+                <Button variant="outline">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Almacén
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent>
               <DialogDescription className="hidden">Formulario para crear un nuevo almacén</DialogDescription>
               <DialogHeader>
@@ -512,6 +514,8 @@ const Stock = () => {
                             type="number"
                             className="w-20 h-8"
                             defaultValue={item.alerta_minima || ''}
+                            disabled={!userPermisos.includes('stock.configurar_alertas')}
+                            title={userPermisos.includes('stock.configurar_alertas') ? undefined : 'Sin permiso para configurar alertas'}
                             onBlur={(e) => {
                               if (e.target.value) {
                                 handleSetAlerta(item.id, parseInt(e.target.value));

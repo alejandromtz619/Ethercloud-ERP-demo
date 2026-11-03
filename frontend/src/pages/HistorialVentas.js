@@ -337,6 +337,7 @@ setTimeout(fetchVentas, 100);
               ))}
             </div>
           </div>
+          {userPermisos.includes('reportes.exportar') && (
           <Button 
             variant="outline"
             onClick={handleDescargarExcel}
@@ -345,6 +346,7 @@ setTimeout(fetchVentas, 100);
             <FileSpreadsheet className="mr-2 h-4 w-4" />
             Excel
           </Button>
+          )}
           <Button 
             onClick={handleDescargarPDF}
             disabled={ventas.length === 0}

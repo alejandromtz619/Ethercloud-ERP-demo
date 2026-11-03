@@ -52,6 +52,7 @@ const Productos = () => {
     if (modulos.fe) api('/fiscal/catalogos').then((c) => setUnidades(c.unidades_medida)).catch(() => {});
   }, [api, modulos.fe]);
   const isAdmin = userPermisos.includes('usuarios.gestionar');
+  const preciosBloqueados = (id) => !!id && !userPermisos.includes('productos.modificar_precio');
   // Página actual del catálogo (GET /productos/buscar): filtros y paginación en el servidor
   const [productosPagina, setProductosPagina] = useState({ items: [], total: 0 });
   const [cargandoMas, setCargandoMas] = useState(false);
@@ -420,6 +421,7 @@ const Productos = () => {
                   <Input
                     type="number"
                     value={formData.precio_venta}
+                    disabled={preciosBloqueados(editingId)}
                     onChange={(e) => setFormData({...formData, precio_venta: e.target.value})}
                     data-testid="producto-precio"
                   />
@@ -429,6 +431,7 @@ const Productos = () => {
                   <Input
                     type="number"
                     value={formData.precio_costo}
+                    disabled={preciosBloqueados(editingId)}
                     onChange={(e) => setFormData({...formData, precio_costo: e.target.value})}
                   />
                 </div>

@@ -34,7 +34,8 @@ import ProductoCombobox from '../components/ProductoCombobox';
 import ClienteCombobox from '../components/ClienteCombobox';
 
 const Reportes = () => {
-  const { empresa, API_URL, token, api } = useApp();
+  const { empresa, API_URL, token, api, hasPermission } = useApp();
+  const puedeExportar = hasPermission('reportes.exportar');
   const [loading, setLoading] = useState({});
 
   // Filters for Ventas report
@@ -585,7 +586,8 @@ const Reportes = () => {
                     variant="outline"
                     className="flex-1"
                     onClick={() => downloadReport(reporte.id, reporte.getParams(), 'excel')}
-                    disabled={loading[`${reporte.id}_excel`]}
+                    disabled={!puedeExportar || loading[`${reporte.id}_excel`]}
+                    title={puedeExportar ? undefined : 'Sin permiso para exportar reportes'}
                   >
                     {loading[`${reporte.id}_excel`] ? (
                       <>

@@ -341,6 +341,24 @@ def requiere_permiso(*claves: str):
         return usuario
     return _verificar
 
+async def exigir_permiso(db: AsyncSession, usuario: Usuario, permiso: str, detalle: str) -> None:
+    """Para las acciones que se controlan dentro de una ruta según lo que cambia (permisos_rutas.py)."""
+    if not await _tiene_algun_permiso(db, usuario.id, (permiso,)):
+        raise HTTPException(status_code=403, detail=detalle)
+
+
+async def _exigir_precios_de_lista(db: AsyncSession, usuario: Usuario, items) -> None:
+    """Vender a otro precio que el de lista del producto pide ventas.modificar_precio."""
+    ids = {i.producto_id for i in items if i.producto_id}
+    if not ids:
+        return
+    lista = dict((await db.execute(select(Producto.id, Producto.precio_venta).where(Producto.id.in_(ids)))).all())
+    if any(i.producto_id in lista and Decimal(str(i.precio_unitario)) != Decimal(str(lista[i.producto_id]))
+           for i in items if i.producto_id):
+        await exigir_permiso(db, usuario, "ventas.modificar_precio",
+                             "No tiene permiso para vender a un precio distinto del de lista")
+
+
 async def verificar_permiso_de_ruta(
     request: Request,
     usuario: Usuario = Depends(get_current_usuario),
@@ -774,7 +792,10 @@ async def obtener_permisos_usuario(usuario_id: int, db: AsyncSession = Depends(g
 
 # ==================== CLIENTES ====================
 @api_router.post("/clientes", response_model=ClienteResponse)
-async def crear_cliente(data: ClienteCreate, db: AsyncSession = Depends(get_db)):
+async def crear_cliente(data: ClienteCreate, db: AsyncSession = Depends(get_db),
+                        usuario: Usuario = Depends(get_current_usuario)):
+    if data.descuento_porcentaje and Decimal(str(data.descuento_porcentaje)) != 0:
+        await exigir_permiso(db, usuario, "clientes.modificar_descuento", "No tiene permiso para darle descuento a un cliente")
     ruc = (data.ruc or "").strip()
     cedula = (data.cedula or "").strip()
 
@@ -859,11 +880,15 @@ async def obtener_cliente(cliente_id: int, db: AsyncSession = Depends(get_db)):
     return cliente
 
 @api_router.put("/clientes/{cliente_id}", response_model=ClienteResponse)
-async def actualizar_cliente(cliente_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+async def actualizar_cliente(cliente_id: int, data: dict, db: AsyncSession = Depends(get_db),
+                             usuario: Usuario = Depends(get_current_usuario)):
     result = await db.execute(select(Cliente).where(Cliente.id == cliente_id))
     cliente = result.scalar_one_or_none()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    if data.get("descuento_porcentaje") not in (None, "") and \
+            Decimal(str(data["descuento_porcentaje"])) != Decimal(str(cliente.descuento_porcentaje or 0)):
+        await exigir_permiso(db, usuario, "clientes.modificar_descuento", "No tiene permiso para cambiar el descuento del cliente")
 
     if 'ruc' in data:
         ruc = (data['ruc'] or "").strip()
@@ -1740,11 +1765,16 @@ async def buscar_producto_por_codigo(codigo_barra: str, db: AsyncSession = Depen
     return ProductoConStock(**prod_dict)
 
 @api_router.put("/productos/{producto_id}", response_model=ProductoResponse)
-async def actualizar_producto(producto_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+async def actualizar_producto(producto_id: int, data: dict, db: AsyncSession = Depends(get_db),
+                              usuario: Usuario = Depends(get_current_usuario)):
     result = await db.execute(select(Producto).where(Producto.id == producto_id))
     producto = result.scalar_one_or_none()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+    precios_cambian = any(c in data and data[c] not in (None, "") and Decimal(str(data[c])) != Decimal(str(getattr(producto, c) or 0))
+                          for c in ("precio_venta", "precio_costo"))
+    if precios_cambian:
+        await exigir_permiso(db, usuario, "productos.modificar_precio", "No tiene permiso para cambiar precios de productos")
     
     for key, value in data.items():
         if hasattr(producto, key) and key != 'id':
@@ -2557,13 +2587,16 @@ async def _costo_y_tasa_iva(db: AsyncSession, item) -> tuple:
     return Decimal('0'), 10
 
 @api_router.post("/ventas", response_model=VentaResponse)
-async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: AsyncSession = Depends(get_db)):
-    venta = await armar_venta(db, data, crear_pendiente)
+async def crear_venta(data: VentaCreate, crear_pendiente: bool = False, db: AsyncSession = Depends(get_db),
+                      usuario: Usuario = Depends(get_current_usuario)):
+    await _exigir_precios_de_lista(db, usuario, data.items)
+    descuento = await _tiene_algun_permiso(db, usuario.id, ("ventas.aplicar_descuento",))
+    venta = await armar_venta(db, data, crear_pendiente, aplicar_descuento=descuento)
     await db.commit()
     await db.refresh(venta)
     return venta
 
-async def armar_venta(db: AsyncSession, data: VentaCreate, crear_pendiente: bool) -> Venta:
+async def armar_venta(db: AsyncSession, data: VentaCreate, crear_pendiente: bool, aplicar_descuento: bool = True) -> Venta:
     """Crea la venta (BORRADOR, o PENDIENTE si crear_pendiente) con sus ítems, sin confirmar la
     transacción: quien llama hace el commit. Calcula costo, descuento del cliente e IVA. También
     la usa la API de integración para los pedidos (integracion.py)."""
@@ -2587,7 +2620,8 @@ async def armar_venta(db: AsyncSession, data: VentaCreate, crear_pendiente: bool
         if data.tipo_pago == TipoPago.CHEQUE and not cliente_privilegios.acepta_cheque:
             raise HTTPException(status_code=400, detail="Este cliente no tiene habilitado el pago con cheque")
     
-    descuento_porcentaje = cliente_privilegios.descuento_porcentaje or Decimal('0')
+    # El descuento del cliente lo aplica quien tiene ventas.aplicar_descuento (la pantalla de Ventas hace lo mismo)
+    descuento_porcentaje = (cliente_privilegios.descuento_porcentaje or Decimal('0')) if aplicar_descuento else Decimal('0')
     
     subtotal = Decimal('0')
     costo_total = Decimal('0')
@@ -2759,8 +2793,11 @@ async def confirmar_venta(venta_id: int, db: AsyncSession = Depends(get_db)):
     return venta
 
 @api_router.put("/ventas/{venta_id}", response_model=VentaResponse)
-async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: AsyncSession = Depends(get_db)):
+async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: AsyncSession = Depends(get_db),
+                                     usuario: Usuario = Depends(get_current_usuario)):
     """Permite editar una venta PENDIENTE: cambiar cliente, items, descuentos, tipo de pago"""
+    if data.items is not None:
+        await _exigir_precios_de_lista(db, usuario, data.items)
     result = await db.execute(
         select(Venta).options(selectinload(Venta.items)).where(Venta.id == venta_id)
     )
@@ -2811,6 +2848,8 @@ async def actualizar_venta_pendiente(venta_id: int, data: VentaUpdate, db: Async
                 cliente_privilegios = representante
         
         descuento_porcentaje = cliente_privilegios.descuento_porcentaje or Decimal('0')
+        if not await _tiene_algun_permiso(db, usuario.id, ("ventas.aplicar_descuento",)):
+            descuento_porcentaje = Decimal('0')
         
         # Recalculate totals with new items
         subtotal = Decimal('0')
